@@ -37,6 +37,7 @@ The first run takes a few minutes while it downloads the packages. After that, i
 - The preview picture **updates automatically** whenever you change anything, and the **Preview time** slider always spans the whole video. Moving the slider is instant. You can untick *Live update* if your computer is slow and use **🔄 Refresh** instead.
 - **▶️ Quick motion** makes a small 6-second clip, with sound, starting at the slider time. It's ready in a few seconds, so you can check the animation and timer before the full render.
 - **🎬 Render video** makes the final full-quality MP4.
+- While a clip or video is being made, both buttons are locked (so a double-click can't start it twice) and you can keep editing. When it's ready it plays by itself in the **🎞️ Video** tab; if something is wrong, a warning tells you what and the buttons unlock.
 
 ### Text tricks
 - Multi-line fields: one row per line.
