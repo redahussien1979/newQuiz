@@ -21,6 +21,19 @@ def load_audio(path):
     return np.frombuffer(p.stdout, np.int16).reshape(-1, 2).astype(np.float64) / 32768.0
 
 
+def _moving_avg(x, k):
+    """Same result as np.convolve(x, np.ones(k) / k, mode="same"), but O(n) instead of O(n*k)
+    (the direct convolution took minutes on long narrated videos)."""
+    n = len(x)
+    if k > n:  # tiny input: keep np.convolve's exact behaviour (output length k)
+        return np.convolve(x, np.ones(k) / k, mode="same")
+    c = np.concatenate(([0.0], np.cumsum(x)))
+    j = np.arange(n) + (k - 1) // 2  # index into the full convolution
+    hi = np.minimum(j, n - 1) + 1
+    lo = np.maximum(j - k + 1, 0)
+    return (c[hi] - c[lo]) / k
+
+
 _len_cache = {}
 
 
@@ -183,7 +196,7 @@ class Mixer:
         if self.has_voice:  # duck the music under the voice
             mono = np.abs(self.voice).mean(axis=1)
             k = int(0.25 * SR)
-            env = np.convolve(mono, np.ones(k) / k, mode="same")
+            env = _moving_avg(mono, k)
             ref = np.percentile(env[env > 1e-4], 95) if np.any(env > 1e-4) else 1.0
             duck = 1 - 0.6 * np.clip(env / (ref + 1e-9), 0, 1)
             bed = bed * duck[:, None]
