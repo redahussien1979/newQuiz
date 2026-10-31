@@ -1,5 +1,6 @@
 """Sound design: synthesized SFX, music beds, external music/voice loading and the final mix."""
 import math
+import os
 import subprocess
 import wave
 
@@ -18,6 +19,17 @@ def load_audio(path):
     if p.returncode != 0 or not p.stdout:
         raise RuntimeError(f"Could not read audio file: {path}")
     return np.frombuffer(p.stdout, np.int16).reshape(-1, 2).astype(np.float64) / 32768.0
+
+
+_len_cache = {}
+
+
+def audio_length(path):
+    """Length of an audio file in seconds (cached per file and modification time)."""
+    key = (os.path.abspath(path), os.path.getmtime(path))
+    if key not in _len_cache:
+        _len_cache[key] = len(load_audio(path)) / SR
+    return _len_cache[key]
 
 
 class Mixer:

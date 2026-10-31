@@ -7,14 +7,23 @@ Questions are written as blocks separated by an empty line:
     Option 3
     Option 4            (optional 4th option)
     > Explanation shown after the reveal (optional)
+
+Narration (optional): upload audio clips named after what they read, e.g.
+    q1.mp3   -> question 1        q1a.mp3 / q1-b.wav / q1_3.m4a -> an option of question 1
+    q1e.mp3  -> the explanation of question 1
+Each question's timing stretches to fit its clips: options appear as they are read and the countdown starts after.
 """
+import bisect
 import math
+import os
+import re
 
 from PIL import Image, ImageDraw, ImageFilter
 
 from ..core import (GREY, WHITE, Stars, draw_ending, draw_scene, ease_out_back, fade, get_theme, global_fade,
                     make_bg, parse_lines, paste, prog, shade, stack_lines, text_img, to_rgb, wrap)
-from ..mcq_styles import STYLE_NAMES, Backdrop, build_box, get_style, letter_badge
+from ..audio import audio_length
+from ..mcq_styles import STYLE_NAMES, Backdrop, build_box, get_style, letter_badge, with_theme_colors
 from ..strings import S
 from ..timers import TIMER_NAMES, draw_timer
 
@@ -45,8 +54,80 @@ EXAMPLE = {
         "accent": "gold",
         "style": "Game Show",
         "timer": "Ring",
+        "colors": "style",
+        "narration": [],
+        "narration_gain": 1.0,
     },
 }
+
+COLOR_MODES = ["style", "theme"]
+AUDIO_EXT = (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".wma")
+_NARR_RE = re.compile(r"^q\s*0*(\d{1,2})(?:[\s_.\-]*([a-e])|[\s_.\-]+([1-4]))?$", re.I)
+GAP = 0.15  # pause between narration clips (s)
+
+
+def _narr_key(path):
+    """'q3' -> (3, 'q'), 'q3b' / 'q3_2' -> (3, 1), 'q3e' -> (3, 'e'); None if the name does not match."""
+    stem, ext = os.path.splitext(os.path.basename(str(path)))
+    mt = _NARR_RE.match(stem.strip())
+    if not mt or ext.lower() not in AUDIO_EXT:
+        return None
+    qn = int(mt.group(1))
+    if mt.group(3):
+        return qn, int(mt.group(3)) - 1
+    letter = (mt.group(2) or "").lower()
+    if not letter:
+        return qn, "q"
+    return qn, ("e" if letter == "e" else "abcd".index(letter))
+
+
+def match_narration(paths, qs):
+    """Map uploaded clips to questions. Returns ({(q_index, slot): path}, [problems])."""
+    found, problems = {}, []
+    for path in paths or []:
+        if not path or not os.path.isfile(str(path)):
+            continue
+        name = os.path.basename(str(path))
+        key = _narr_key(path)
+        if key is None:
+            problems.append(f"`{name}`: name not recognised (use q1, q1a … q1d, q1e)")
+            continue
+        qn, slot = key
+        if not 1 <= qn <= len(qs):
+            problems.append(f"`{name}`: there is no question {qn}")
+            continue
+        if isinstance(slot, int) and slot >= len(qs[qn - 1]["opts"]):
+            problems.append(f"`{name}`: question {qn} has only {len(qs[qn - 1]['opts'])} options")
+            continue
+        if not qs[qn - 1]["expl"] and slot == "e":
+            problems.append(f"`{name}`: question {qn} has no explanation line (> …), clip is still played")
+        if (qn - 1, slot) in found:
+            problems.append(f"`{name}`: replaces `{os.path.basename(found[(qn - 1, slot)])}`")
+        found[(qn - 1, slot)] = str(path)
+    return found, problems
+
+
+def narration_report(paths, questions_text):
+    """Short Markdown summary of which clips belong to which question (for the app)."""
+    paths = [p for p in (paths or []) if p]
+    if not paths:
+        return "No narration clips yet."
+    try:
+        qs = parse_questions(questions_text)
+    except ValueError as e:
+        return f"⚠️ Fix the questions first: {e}"
+    found, problems = match_narration(paths, qs)
+    rows = []
+    letters = "ABCD"
+    for i, q in enumerate(qs):
+        parts = (["question"] if (i, "q") in found else []) + \
+                [letters[k] for k in range(len(q["opts"])) if (i, k) in found] + \
+                (["explanation"] if (i, "e") in found else [])
+        rows.append(f"**Q{i + 1}:** " + (", ".join(parts) if parts else "—"))
+    out = " · ".join(rows)
+    if problems:
+        out += "\n\n⚠️ " + "  \n⚠️ ".join(problems)
+    return out
 
 
 def parse_questions(text):
@@ -86,15 +167,24 @@ class MCQVideo:
         self.accent = to_rgb(m.get("accent") or "gold")
         self.st = get_style(m.get("style"))
         self.timer = m.get("timer") if m.get("timer") in TIMER_NAMES else "Ring"
+        if m.get("colors") == "theme":
+            self.st = with_theme_colors(self.st, s.get("theme"))
         self.backdrop = Backdrop(self.st, s.get("theme"), self.accent)
         self.ink = self.st["ink"]
         self.card_ink = self.st["card_text"]
         self.qs = parse_questions(m.get("questions", ""))
         self.T = max(2.0, float(m.get("think_seconds") or 5))
         self.R = max(1.5, float(m.get("reveal_seconds") or 2.8))
-        self.qdur = 0.9 + self.T + self.R
         self.q0 = 2.6
-        self.E = self.q0 + len(self.qs) * self.qdur
+        self.narr_gain = float(m.get("narration_gain") if m.get("narration_gain") is not None else 1.0)
+        narr, _ = match_narration(m.get("narration") or [], self.qs)
+        t = self.q0
+        for i, q in enumerate(self.qs):
+            self._plan(i, q, narr)
+            q["t0"] = t
+            t += q["D"]
+        self.starts = [q["t0"] for q in self.qs]
+        self.E = t
         self.base_duration = self.dur = self.E + 4.0
         self.silences = []
         if self.st["card"] is None:
@@ -109,6 +199,35 @@ class MCQVideo:
         self.scenes = [dict(t_in=0.1, t_out=2.4, lines=lines)]
         self.ending = (e.get("intro", ""), parse_lines(e.get("question", ""), ["white", "gold"]),
                        e.get("cta", ""), s.get("handle", ""))
+
+    # ------------------------------------------------------------ timing
+    def _plan(self, i, q, narr):
+        """Per-question timing (seconds from the question start). Without narration this is the classic
+        0.9 s intro + think time + reveal time; with clips the intro stretches so every clip is heard first."""
+        q["voice"] = []
+        cur = 0.35  # first clip starts when the card has landed
+        if (i, "q") in narr:
+            q["voice"].append((cur, narr[(i, "q")]))
+            cur += audio_length(narr[(i, "q")]) + GAP
+        opt_audio = any((i, k) in narr for k in range(len(q["opts"])))
+        q["opt_t"] = []
+        for k in range(len(q["opts"])):
+            if not opt_audio:
+                q["opt_t"].append(0.35 + 0.12 * k)
+            elif (i, k) in narr:
+                q["opt_t"].append(cur)
+                q["voice"].append((cur, narr[(i, k)]))
+                cur += audio_length(narr[(i, k)]) + GAP
+            else:
+                q["opt_t"].append(cur)
+                cur += 0.3
+        q["ts"] = max(0.9, cur + 0.2) if q["voice"] else 0.9  # countdown start
+        q["r"] = q["ts"] + self.T  # reveal
+        rev = self.R
+        if (i, "e") in narr:
+            q["voice"].append((q["r"] + 0.3, narr[(i, "e")]))
+            rev = max(rev, 0.3 + audio_length(narr[(i, "e")]) + 0.6)
+        q["D"] = q["r"] + rev
 
     # ------------------------------------------------------------ assets
     def _assets(self, i):
@@ -162,9 +281,9 @@ class MCQVideo:
         frame = self.backdrop.draw(t)
         d = ImageDraw.Draw(frame)
         n = len(self.qs)
-        i = int((t - self.q0) // self.qdur) if self.q0 <= t < self.E else -1
+        i = bisect.bisect_right(self.starts, t) - 1 if self.q0 <= t < self.E else -1
         if 0 <= i < n:
-            self._question(frame, d, i, t - self.q0 - i * self.qdur)
+            self._question(frame, d, i, t - self.qs[i]["t0"])
         for sc in self.scenes:
             draw_scene(frame, t, sc)
         draw_ending(frame, t, self.E, *self.ending, self.accent)
@@ -173,8 +292,8 @@ class MCQVideo:
 
     def _question(self, frame, d, i, u):
         q, n = self._assets(i), len(self.qs)
-        D, T = self.qdur, self.T
-        r = 0.9 + T
+        D, T = q["D"], self.T
+        r, ts = q["r"], q["ts"]
         out = prog(u, D - 0.3, D)
         a_in = prog(u, 0, 0.3)
 
@@ -202,7 +321,7 @@ class MCQVideo:
         # options
         for k, img in enumerate(q["imgs"]):
             y = q["opt_y0"] + k * 140
-            pk = prog(u, 0.35 + 0.12 * k, 0.7 + 0.12 * k)
+            pk = prog(u, q["opt_t"][k], q["opt_t"][k] + 0.35)
             dx = (1 - ease_out_back(pk)) * (320 if self.rtl else -320)
             alpha = min(1, pk * 1.5) * (1 - out)
             if u >= r:
@@ -219,13 +338,13 @@ class MCQVideo:
         # timer ring, then explanation
         ty = q["opt_y0"] + (len(q["opts"]) - 1) * 140 + 150
         ty = min(ty, 1450)
-        if 0.6 <= u < r + 0.2:
-            rem = 1 - prog(u, 0.9, r)
-            left = max(0, math.ceil(r - u)) if u >= 0.9 else int(T)
-            col = RED if (r - u) <= 2 and u >= 0.9 else self.accent
-            a = prog(u, 0.6, 0.9) * (1 - prog(u, r, r + 0.2))
+        if ts - 0.3 <= u < r + 0.2:
+            rem = 1 - prog(u, ts, r)
+            left = max(0, math.ceil(r - u)) if u >= ts else int(T)
+            col = RED if (r - u) <= 2 and u >= ts else self.accent
+            a = prog(u, ts - 0.3, ts) * (1 - prog(u, r, r + 0.2))
             total = int(math.ceil(T))
-            draw_timer(self.timer, frame, 540, ty, rem, min(total, left), total, col, self.ink, max(0.0, u - 0.9), a, self.rtl)
+            draw_timer(self.timer, frame, 540, ty, rem, min(total, left), total, col, self.ink, max(0.0, u - ts), a, self.rtl)
         if q["expl_lines"] and u >= r + 0.2:
             pe = prog(u, r + 0.2, r + 0.5)
             for k, line in enumerate(q["expl_lines"]):
@@ -236,16 +355,18 @@ class MCQVideo:
     def sound(self, mx):
         mx.add(0.05, mx.hit(1.6), 0.55)
         for i, q in enumerate(self.qs):
-            t0 = self.q0 + i * self.qdur
+            t0, ts = q["t0"], q["t0"] + q["ts"]
             s, pn = mx.whoosh(0.8)
             mx.add(t0 - 0.05, s, 0.45, pn[::-1] if self.rtl else pn)
             for k in range(len(q["opts"])):
-                mx.add(t0 + 0.4 + 0.12 * k, mx.pop(), 0.22)
+                mx.add(t0 + q["opt_t"][k] + 0.05, mx.pop(), 0.22)
             secs = int(math.ceil(self.T))
             for k in range(secs):
                 hi = k >= secs - 2
-                mx.add(t0 + 0.9 + k, mx.tick(2400 if hi else 1500), 0.32 if hi else 0.24)
+                mx.add(ts + k, mx.tick(2400 if hi else 1500), 0.32 if hi else 0.24)
             if self.timer == "Fuse":
-                mx.add(t0 + 0.9, mx.sizzle(self.T), 0.22)
-            mx.add(t0 + 0.9 + self.T, mx.ding(), 0.55)
+                mx.add(ts, mx.sizzle(self.T), 0.22)
+            mx.add(t0 + q["r"], mx.ding(), 0.55)
+            for off, path in q["voice"]:
+                mx.add_voice(path, t0 + off, self.narr_gain)
         mx.add(self.E + 0.2, mx.chime(), 0.3)
