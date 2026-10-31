@@ -1,15 +1,19 @@
-"""Timeline Collision: 2-5 events on a flying timeline, gap counters, comparison bars and a reveal."""
+"""Timeline Collision: 2-5 events on a flying timeline (or any number line), gap counters, comparison bars and a reveal."""
 import math
+import os
 import random
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from ..core import (GREY, W, WHITE, Stars, clamp, composite, draw_ending, draw_scene, ease_io, ease_out_back, fade,
+from .. import countries as CT
+from ..core import (COLORS, GREY, W, WHITE, Stars, clamp, composite, draw_ending, draw_scene, ease_io, ease_out_back, fade,
                     get_theme, global_fade, make_bg, nice_step, parse_lines, paste, prog, shade, stack_lines,
                     text_img, to_rgb)
 from ..icons import make_card
-from ..strings import S, fmt_num, gap_str, gap_years, year_str, years_word
+from ..timers import draw_timer
+from ..strings import (S, amount_str, fmt_num, fmt_val, gap_str, gap_years, ratio_str, with_unit, year_str,
+                       years_word)
 
 NAME = "Timeline Collision"
 DEFAULT_COLORS = ["sand", "gold", "blue", "green", "pink"]
@@ -106,7 +110,8 @@ class TimelineVideo:
         e = project.get("ending", {})
         self.lang = s.get("language", "ar")
         self.L = S(self.lang)
-        self.mode = d.get("mode", "calendar")
+        self.mode = d.get("mode") or "calendar"
+        self.unit = str(d.get("unit") or "").strip()  # number-line mode: km, m, °C, ${n}…
         self.theme = get_theme(s.get("theme"))
         self.bg = make_bg(self.theme)
         self.stars = Stars() if self.theme["stars"] else None
@@ -114,19 +119,28 @@ class TimelineVideo:
 
         evs = []
         for i, ev in enumerate(d.get("events", [])):
-            name = str(ev.get("name") or "").strip()
+            code = str(ev.get("country") or "").strip().upper()
+            code = code if CT.info(code) else ""
+            outline = str(ev.get("outline") or "")
+            outline = outline if outline and os.path.isfile(outline) else ""
+            name = str(ev.get("name") or "").strip() or (CT.name(code, self.lang) if code else "")
             if not name or ev.get("year") in (None, "") or ev.get("enabled") is False:
                 continue
             try:
                 year = float(ev["year"])
             except (TypeError, ValueError):
-                raise ValueError(f"Event '{name}': year must be a number.")
-            v = year if self.mode == "calendar" else -abs(year)
-            evs.append(dict(name=name, v=v, col=to_rgb(ev.get("color") or DEFAULT_COLORS[len(evs) % 5]),
-                            icon=ev.get("icon") or "none", image=ev.get("image") or "",
+                raise ValueError(f"Event '{name}': {'value' if self.mode == 'scale' else 'year'} must be a number.")
+            v = -abs(year) if self.mode == "ago" else year
+            col = to_rgb(ev.get("color") or DEFAULT_COLORS[len(evs) % 5])
+            icon, image = ev.get("icon") or "none", ev.get("image") or ""
+            if (code or outline) and not image and icon in ("none", "flag", "map"):
+                # a country shows its flag on the card (or its map when the icon is "map")
+                image = (CT.flag_path(code) if icon != "map" else "") or CT.map_icon(code, outline, col)
+            evs.append(dict(name=name, v=v, col=col, icon=icon, image=image, code=code, outline=outline,
                             label=str(ev.get("label") or "").strip()))
         if len(evs) < 2:
-            raise ValueError("The timeline needs at least 2 events, each with a name and a year.")
+            raise ValueError("The timeline needs at least 2 events, each with a name and a "
+                             + ("value." if self.mode == "scale" else "year."))
         evs = sorted(evs[:5], key=lambda x: x["v"])
         self.evs = evs
         N = self.N = len(evs)
@@ -134,7 +148,14 @@ class TimelineVideo:
         ys = self.ys = [x["v"] for x in evs]
         span = ys[-1] - ys[0]
         if span <= 0:
-            raise ValueError("Events must have different years.")
+            raise ValueError("Events must have different " + ("values." if self.mode == "scale" else "years."))
+
+        # ---------------- optional scenes: guess moment, true-size maps (values must be positive)
+        mev = [x for x in evs if x["code"] or x["outline"]]
+        self.use_maps = bool(d.get("maps")) and len(mev) >= 2 and mev[0]["v"] > 0 and self.mode == "scale"
+        pair = (mev[0], mev[-1]) if self.use_maps else (evs[0], evs[-1])
+        self.use_guess = bool(d.get("guess")) and pair[0]["v"] > 0
+        compact = self.use_maps or self.use_guess
 
         # ---------------- camera plan
         self.z_full = z_full = 680.0 / span
@@ -151,7 +172,7 @@ class TimelineVideo:
         hook2 = (hook[0], hook[1] * 1.03)
         K = [(0.0, 2.6, hook, hook2), (2.6, 4.2, hook2, FULL), (4.2, 5.0, FULL, FULL), (5.0, 5.9, FULL, (ys[0], zg[0]))]
         t = 5.9
-        fd = clamp(13.0 / G, 3.5, 6.5)
+        fd = clamp(10.0 / G, 3.2, 5.0) if compact else clamp(13.0 / G, 3.5, 6.5)
         self.flights = []
         for i in range(G):
             a, b = (ys[i], zg[i]), (ys[i + 1], zg[i])
@@ -164,26 +185,41 @@ class TimelineVideo:
             unit = nice_step((ys[i + 1] - ys[i]) / 25.0)
             self.flights.append(dict(i=i, fs=fs, fe=fe, unit=unit, vis=fe + (0.4 if last else 0.55),
                                      out=fe + (0.4 if last else 0.5), col=evs[i + 1]["col"],
-                                     final=gap_str(gap_years(ys[i], ys[i + 1], self.mode), self.lang)))
+                                     final=self.fmt_gap(gap_years(ys[i], ys[i + 1], self.mode))))
             t = fe + hold
         K.append((t, t + 0.9, (ys[-1], zg[-1]), FULL))
         self.Tc = Tc = t + 0.9
         K.append((Tc, 1e9, FULL, FULL))
         self.K = K
 
-        # ---------------- comparison / reveal / ending timing
-        self.s0 = Tc + 0.1 + 0.25 * (G - 1) + 0.45 + 0.05
+        # ---------------- guess / maps or bars / reveal / ending timing
+        T = Tc
+        self.silences = []
+        self.t_hide = Tc + 0.05 if compact else None  # the timeline fades away for the guess and the maps
+        if self.use_guess:
+            self.g0 = T + 0.1
+            self.g_tick = self.g0 + 0.8  # 3-second countdown
+            self.g_ans = self.g_tick + 3.0
+            T = self.g_ans + 0.75
+            self.silences.append((self.g_tick, self.g_ans - 0.6))
+        if self.use_maps:
+            self.m0 = T
+            self.m_t = [T + 0.7 + 1.35 * k for k in range(len(mev) - 1)]
+            self.s0 = T + 0.7 + 1.35 * (len(mev) - 1) + 0.25
+        else:
+            self.bars_t0 = T + 0.1
+            self.s0 = self.bars_t0 + 0.25 * (G - 1) + 0.5
         self.reveal_in = self.s0 + 0.5
-        self.E = self.reveal_in + 4.55
+        self.E = self.reveal_in + (3.4 if self.use_maps else 4.55)
         self.base_duration = self.dur = self.E + 4.0
-        self.silences = [(self.s0, self.s0 + 0.5)]
+        self.silences.append((self.s0, self.s0 + 0.5))
         self.gaps = [gap_years(ys[i], ys[i + 1], self.mode) for i in range(G)]
         self.hi = min(range(G), key=lambda i: self.gaps[i])
 
         # ---------------- cards
         card_bg = self.theme["card"]
         for k, ev in enumerate(evs):
-            sub = ev["label"] or year_str(ev["v"], self.mode, self.lang)
+            sub = ev["label"] or self.fmt_pos(ev["v"])
             ev["img"] = make_card(ev["name"], sub, ev["col"], ev["icon"], ev["image"], card_bg)
         for ev in evs:
             ev["halo"] = _halo(ev["img"], ev["col"])
@@ -218,12 +254,31 @@ class TimelineVideo:
                 t_in=5.05 if i == 0 else f["fs"] - 0.15, t_out=f["out"],
                 lines=[(L["frm"].format(a=evs[i]["name"]), 72, evs[i]["col"], 370),
                        (L["to"].format(b=evs[i + 1]["name"]), 72, evs[i + 1]["col"], 470)]))
-        self.scenes.append(dict(t_in=Tc + 0.05, t_out=self.s0, lines=[(d.get("compare_title", ""), 84, WHITE, 430)]))
+        self.scenes.append(dict(t_in=(self.m0 + 0.05) if self.use_maps else self.bars_t0 - 0.05, t_out=self.s0,
+                                lines=[(d.get("compare_title", ""), 84, WHITE, 430)]))
+        if self.use_guess:
+            self._setup_guess(d, pair)
+        if self.use_maps:
+            self._setup_maps(mev)
         rv = parse_lines(d.get("reveal", ""), ["white"])
         self.scenes.append(dict(t_in=self.reveal_in, t_out=self.E, lines=stack_lines(rv, 380, 88, 76)))
         self.ending = (e.get("intro", ""), parse_lines(e.get("question", ""), ["white", "gold"]),
                        e.get("cta", ""), s.get("handle", ""))
         self.accent = evs[1]["col"] if N > 2 else evs[-1]["col"]
+
+    # ------------------------------------------------------------ number formatting (years or any unit)
+    def fmt_pos(self, v, short=False):
+        if self.mode == "scale":  # ruler labels show the number only (the unit is on the cards and counter)
+            return fmt_val(v, self.lang) if short else with_unit(fmt_val(v, self.lang), self.unit)
+        return year_str(v, self.mode, self.lang, short=short)
+
+    def fmt_gap(self, g):
+        return amount_str(g, self.unit, self.lang) if self.mode == "scale" else gap_str(g, self.lang)
+
+    def fmt_running(self, g):
+        if self.mode == "scale":
+            return "+ " + with_unit(fmt_val(g, self.lang), self.unit)
+        return f"+ {fmt_num(g, self.lang)} {years_word(g, self.lang)}"
 
     # ------------------------------------------------------------ camera
     def camera(self, t):
@@ -278,7 +333,6 @@ class TimelineVideo:
         # ambient light: tinted by the era the camera is in, brighter while travelling
         a_amb = (0.20 + 0.16 * (flying is not None) + 0.04 * math.sin(t * 2.2)) * (1 - prog(t, self.E, self.E + 0.4))
         frame = self.background(self.ambient_color(cam), max(0.0, a_amb))
-        sx = lambda v: 540 + (v - cam) * z
         d = ImageDraw.Draw(frame)
         if self.stars:
             self.stars.draw(d, t, (cam - self.cam_full) * z)
@@ -294,6 +348,33 @@ class TimelineVideo:
                     if x + ln2 > 0 and x < W and ln2 > 1:
                         composite(frame, Image.new("RGBA", (ln2, wd), c + (int(150 * br * k),)), int(x), int(y - wd / 2))
 
+        # timeline (ribbon, cards, counters); fades out for the guess and the maps
+        tl_a = 1.0
+        if self.t_hide is not None:
+            tl_a = 1 - prog(t, self.t_hide, self.t_hide + 0.35)
+            if not self.use_maps:  # the ribbon comes back with the comparison bars
+                tl_a = max(tl_a, prog(t, self.bars_t0 - 0.35, self.bars_t0))
+        if tl_a > 0.01:
+            cv = frame if tl_a >= 0.999 else Image.new("RGBA", frame.size, (0, 0, 0, 0))
+            self._timeline(cv, t, cam, z, flying)
+            if cv is not frame:
+                frame.alpha_composite(fade(cv, tl_a))
+
+        if not self.use_maps and t >= self.bars_t0 - 0.05:
+            self._bars(frame, t)
+        if self.use_guess and self.g0 <= t <= self.g_ans + 0.8:
+            self._guess(frame, t)
+        if self.use_maps and t >= self.m0:
+            self._maps(frame, t)
+        for sc_ in self.scenes:
+            draw_scene(frame, t, sc_)
+        draw_ending(frame, t, self.E, *self.ending, self.accent)
+        global_fade(frame, t, self.dur)
+        return frame.convert("RGB")
+
+    def _timeline(self, frame, t, cam, z, flying):
+        sx = lambda v: 540 + (v - cam) * z
+        d = ImageDraw.Draw(frame)
         # ribbon + ticks
         wave = any(f["fe"] < t < f["fe"] + 0.6 for f in self.flights)
         strip_h, ry = (300, 150) if wave else (160, 80)
@@ -357,7 +438,7 @@ class TimelineVideo:
         frame.alpha_composite(strip, (0, top))
         for v, x in labels:
             if 50 < x < W - 50:
-                paste(frame, text_img(year_str(v, self.mode, self.lang, short=True), 28, GREY, "SemiBold",
+                paste(frame, text_img(self.fmt_pos(v, short=True), 28, GREY, "SemiBold",
                                       shadow=False, max_w=220), x, RIBBON_Y + 52, 1.0, 0.8)
 
         # cards
@@ -405,22 +486,150 @@ class TimelineVideo:
                 if fr > 0.01:  # fills in the comet's direction (the ribbon runs left to right in every language)
                     pd.rounded_rectangle([0, 0, 719 * fr, 13], 7, fill=f["col"] + (255,))
                 paste(frame, pb, 540, RIBBON_Y + 395, 1.0, a)
-                paste(frame, text_img(year_str(cam, self.mode, self.lang), 112, WHITE, max_w=980), 540, RIBBON_Y + 200, 1.0, a)
+                paste(frame, text_img(self.fmt_pos(cam), 112, WHITE, max_w=980), 540, RIBBON_Y + 200, 1.0, a)
                 if t >= f["fe"]:
                     el, pop = f["final"], 1 + 0.15 * (1 - prog(t, f["fe"], f["fe"] + 0.3))
                 else:
                     g = max(0.0, cam - self.ys[f["i"]])
-                    el, pop = f"+ {fmt_num(g, self.lang)} {years_word(g, self.lang)}", 1
+                    el, pop = self.fmt_running(g), 1
                 paste(frame, text_img(el, 64, f["col"], max_w=980), 540, RIBBON_Y + 320, pop, a)
 
-        # comparison bars
-        if t >= self.Tc + 0.05:
-            self._bars(frame, t)
-        for sc_ in self.scenes:
-            draw_scene(frame, t, sc_)
-        draw_ending(frame, t, self.E, *self.ending, self.accent)
-        global_fade(frame, t, self.dur)
-        return frame.convert("RGB")
+    # ------------------------------------------------------------ guess moment
+    def _setup_guess(self, d, pair):
+        small, big = pair
+        r = big["v"] / small["v"]
+        right = ratio_str(r)
+        opts = [right]
+        for k in (0.5, 1.8, 0.7, 2.6, 1.35, 3.5):
+            cand = r * k
+            txt = ratio_str(cand)
+            if cand >= 1.2 and txt not in opts:
+                opts.append(txt)
+            if len(opts) == 3:
+                break
+        n = 2
+        while len(opts) < 3:  # ratios close to 1
+            opts.append(ratio_str(r + n))
+            n += 1
+        wrong = opts[1:]
+        pos = int(r * 997) % 3
+        opts = wrong[:pos] + [right] + wrong[pos:]
+        self.g_col = big["col"]
+        L, card_bg = self.L, self.theme["card"]
+        letters = L["letters"]
+        self.g_imgs = [(self._opt(letters[k], txt, card_bg, False), self._opt(letters[k], txt, card_bg, True), txt == right)
+                       for k, txt in enumerate(opts)]
+        q = str(d.get("guess_q") or "").strip() or L["guess_area" if self.use_maps else "guess_ratio"]
+        q = q.replace("{ca}", "#%02x%02x%02x" % tuple(small["col"]))  # {ca} = colour of the smaller item
+        q = q.replace("{a}", small["name"]).replace("{b}", big["name"])
+        lines = parse_lines(q, ["white", "white"])
+        self.scenes.append(dict(t_in=self.g0, t_out=self.g_ans + 0.55, lines=stack_lines(lines, 330, 76, 64)))
+
+    def _opt(self, letter, txt, card_bg, right):
+        """Answer option pill; the 'right' version is green with a glow."""
+        w, h, S = 760, 118, 2
+        col = COLORS["green"] if right else self.g_col
+        im = Image.new("RGBA", ((w + 60) * S, (h + 60) * S), (0, 0, 0, 0))
+        if right:
+            g = Image.new("RGBA", im.size, (0, 0, 0, 0))
+            ImageDraw.Draw(g).rounded_rectangle([30 * S, 30 * S, (w + 30) * S, (h + 30) * S], h * S // 2,
+                                                fill=col + (200,))
+            im = Image.alpha_composite(im, g.filter(ImageFilter.GaussianBlur(16 * S)))
+        dr = ImageDraw.Draw(im)
+        dr.rounded_rectangle([30 * S, 30 * S, (w + 30) * S, (h + 30) * S], h * S // 2,
+                             fill=(shade(col, 0.45) if right else tuple(card_bg)) + (235,), outline=col + (255,), width=4 * S)
+        cx = (w + 30 - h / 2) if self.rtl else (30 + h / 2)
+        r = h / 2 - 14
+        dr.ellipse([(cx - r) * S, (30 + h / 2 - r) * S, (cx + r) * S, (30 + h / 2 + r) * S], fill=col + (255,))
+        im = im.resize((w + 60, h + 60), Image.LANCZOS)
+        lt = text_img(letter, 48, (15, 18, 30), "Black", shadow=False)
+        im.alpha_composite(lt, (int(cx - lt.width / 2), int(30 + h / 2 - lt.height / 2)))
+        tt = text_img(txt, 66, WHITE, "Black", shadow=False)
+        im.alpha_composite(tt, (int(30 + w / 2 - tt.width / 2), int(30 + h / 2 - tt.height / 2)))
+        return im
+
+    def _guess(self, frame, t):
+        out = 1 - prog(t, self.g_ans + 0.55, self.g_ans + 0.8)
+        if out <= 0:
+            return
+        u = t - self.g_tick
+        a_tm = prog(t, self.g_tick - 0.3, self.g_tick) * (1 - prog(t, self.g_ans + 0.1, self.g_ans + 0.35))
+        if a_tm > 0.01:
+            left = 3 if u <= 0 else max(0, math.ceil(3.0 - u - 1e-9))
+            col = COLORS["red"] if 0 < left <= 1 else self.g_col
+            draw_timer("Neon Ring", frame, 540, 730, clamp(1 - u / 3.0), left, 3, col, WHITE, max(0.0, u),
+                       a_tm * out, self.rtl, ("pulse", "glow"))
+        rv = prog(t, self.g_ans, self.g_ans + 0.25)
+        for k, (plain, green, ok) in enumerate(self.g_imgs):
+            p = prog(t, self.g0 + 0.3 + 0.12 * k, self.g0 + 0.65 + 0.12 * k)
+            if p <= 0:
+                continue
+            y = 1010 + k * 150
+            sc = (0.8 + 0.2 * ease_out_back(p)) * (1 + (0.07 * math.sin(rv * math.pi) if ok else 0))
+            a = min(1, p * 1.5) * out
+            if ok:
+                paste(frame, plain, 540, y, sc, a * (1 - rv))
+                paste(frame, green, 540, y, sc, a * rv)
+            else:
+                paste(frame, plain, 540, y, sc, a * (1 - 0.65 * rv))
+
+    # ------------------------------------------------------------ true-size maps
+    def _setup_maps(self, mev):
+        prs = [CT.projected(x["code"], x["outline"]) for x in mev]
+        km_px = min(860.0 / max(p[1] for p in prs), 700.0 / max(p[2] for p in prs))
+        unit = self.unit
+        for x, pr in zip(mev, prs):
+            fill = 255 if x is mev[-1] else 235
+            x["tile"] = CT.map_tile(x["code"], x["outline"], km_px, x["col"], 14 if x is mev[-1] else 10, True, fill)
+            x["tiny"] = max(pr[1], pr[2]) * km_px < 120
+            x["tag"] = CT.name_tag(x["name"], with_unit(fmt_val(x["v"], self.lang), unit), x["col"], x["code"], self.rtl)
+        self.m_base, self.m_ovs = mev[-1], mev[-2::-1]  # overlays from the largest down to the smallest
+        b = self.m_base
+        b["dim"] = CT.map_tile(b["code"], b["outline"], km_px, b["col"], 14, False, 90)
+        self.m_grid = CT.globe_grid(tuple(b["col"]))
+
+    def _maps(self, frame, t):
+        a_all = prog(t, self.m0, self.m0 + 0.4) * (1 - prog(t, self.E - 0.1, self.E + 0.3))
+        if a_all <= 0:
+            return
+        paste(frame, self.m_grid, 540, 960, 1.0, a_all)
+        cy, b = 1010, self.m_base
+        pb = prog(t, self.m0, self.m0 + 0.6)
+        sc = 0.6 + 0.4 * ease_out_back(pb)
+        cur = max([k for k, tk in enumerate(self.m_t) if t >= tk], default=-1)
+        dim = 0.0
+        if cur >= 0 and self.m_ovs[cur]["tiny"]:
+            dim = prog(t, self.m_t[cur], self.m_t[cur] + 0.4)
+        if cur >= 1 and self.m_ovs[cur - 1]["tiny"]:
+            dim = max(dim, 1 - prog(t, self.m_t[cur], self.m_t[cur] + 0.4))
+        a_b = a_all * min(1, pb * 1.6)
+        paste(frame, b["tile"], 540, cy, sc, a_b * (1 - dim))
+        if dim > 0:
+            paste(frame, b["dim"], 540, cy, sc, a_b * dim)
+        tag_x = (780, 300) if self.rtl else (300, 780)
+        paste(frame, b["tag"], tag_x[0], 1580, 1.0, a_b)
+        for k, ov in enumerate(self.m_ovs):
+            tk = self.m_t[k]
+            if t < tk:
+                break
+            nxt = self.m_t[k + 1] if k + 1 < len(self.m_t) else None
+            fo = 1 - prog(t, nxt, nxt + 0.3) if nxt else 1.0
+            if fo <= 0:
+                continue
+            p = prog(t, tk, tk + 0.5)
+            x = 540 + (1 - ease_out_back(p)) * (620 if self.rtl else -620)
+            bump = 1 + 0.06 * math.sin(prog(t, tk + 0.5, tk + 0.8) * math.pi)
+            a = a_all * fo * min(1, p * 2)
+            paste(frame, ov["tile"], x, cy, bump, a)
+            if ov["tiny"]:
+                paste(frame, CT.ring(tuple(ov["col"])), x, cy, 1 + 0.08 * math.sin(t * 6), a * prog(t, tk + 0.4, tk + 0.7))
+            paste(frame, ov["tag"], tag_x[1], 1580, 1.0, a)
+            pc = prog(t, tk + 0.45, tk + 1.0)
+            if pc > 0:
+                r = b["v"] / ov["v"]
+                val = 1 + (r - 1) * ease_io(pc)
+                paste(frame, CT.badge(ratio_str(val), ov["col"]), 820 if self.rtl else 260, 690,
+                      0.7 + 0.3 * ease_out_back(prog(t, tk + 0.45, tk + 0.75)), a_all * fo)
 
     def _bars(self, frame, t):
         G = self.G
@@ -434,7 +643,7 @@ class TimelineVideo:
         scale = 660.0 / max(self.gaps)
         for i in range(G):
             f = self.flights[i]
-            t0 = self.Tc + 0.1 + 0.25 * i
+            t0 = self.bars_t0 + 0.25 * i
             by = y0 + i * pitch
             g = ease_io(prog(t, t0, t0 + 0.45))
             Lw = self.gaps[i] * scale * g
@@ -486,8 +695,19 @@ class TimelineVideo:
                 tt += 1 / 600
             mx.add(f["fe"], mx.pop(), 0.4)
         s, pn = mx.whoosh(1.0); mx.add(self.flights[-1]["fe"], s, 0.5, pn[::-1])
-        for i in range(self.G):
-            mx.add(self.Tc + 0.1 + 0.25 * i, mx.pop(), 0.3)
+        if self.use_guess:
+            for k in range(3):
+                mx.add(self.g0 + 0.3 + 0.12 * k, mx.pop(), 0.3)
+                mx.add(self.g_tick + k, mx.tick(2400 if k == 2 else 1500), 0.32)
+            mx.add(self.g_ans, mx.ding(), 0.5)
+        if self.use_maps:
+            mx.add(self.m0 + 0.05, mx.pop(), 0.4)
+            for tk in self.m_t:
+                s, pn = mx.whoosh(0.7); mx.add(tk - 0.1, s, 0.45, pn[::-1])
+                mx.add(tk + 0.5, mx.pop(), 0.45)
+        else:
+            for i in range(self.G):
+                mx.add(self.bars_t0 + 0.25 * i, mx.pop(), 0.3)
         mx.add(self.s0 - 1.1, mx.riser(1.1), 0.3)
         mx.add(self.s0 + 0.47, mx.hit(2.4), 0.95)
         mx.add(self.E + 0.2, mx.chime(), 0.35)

@@ -6,13 +6,15 @@ STR = {
                frm="من {a}", to="إلى {b}", from_to="من {a} إلى {b}",
                million="مليون", billion="مليار",
                clue="الدليل {i} من {n}", answer_intro="الجواب…",
-               question="السؤال {i} من {n}", letters=["أ", "ب", "ج", "د"]),
+               question="السؤال {i} من {n}", letters=["أ", "ب", "ج", "د"],
+               guess_area="خمّن: كم مرة تدخل\n[{ca}]{a} في {b}؟", guess_ratio="خمّن: {b} أكبر من\n[{ca}]{a} بكم مرة؟"),
     "en": dict(bce="BC", ce="AD", years="years", years_few="years", now="Now",
                ago_short="{n} ago", ago_full="{n} years ago",
                frm="From {a}", to="to {b}", from_to="{a} to {b}",
                million="million", billion="billion",
                clue="Clue {i} of {n}", answer_intro="The answer…",
-               question="Question {i} of {n}", letters=["A", "B", "C", "D"]),
+               question="Question {i} of {n}", letters=["A", "B", "C", "D"],
+               guess_area="Guess: how many times does\n[{ca}]{a} fit in {b}?", guess_ratio="Guess: how many times is {b}\n[{ca}]bigger than {a}?"),
 }
 
 
@@ -70,3 +72,48 @@ def gap_str(g, lang="ar"):
         r = float(f"{g:.3g}")
     approx = abs(r - g) > 0.5
     return f"{'≈ ' if approx else ''}{fmt_num(r, lang)} {years_word(r, lang)}"
+
+
+# ---------------------------------------------------------------- number-line mode (any unit)
+def fmt_val(x, lang="ar"):
+    """Signed number for the number-line mode: keeps decimals for small values (2.5, 0.75, -89.2)."""
+    a = abs(x)
+    if a >= 1e9:
+        body = fmt_num(a, lang)
+    elif a >= 100 or a == int(a):
+        n = int(round(a))
+        body = f"{n:,}" if n >= 10000 else str(n)  # full digits so close values stay distinct
+    else:
+        body = f"{a:.{1 if a >= 10 else 2}f}".rstrip("0").rstrip(".")
+    return ("-" if x < 0 and body not in ("0", "") else "") + body
+
+
+def with_unit(num, unit):
+    """'5' + 'km' -> '5 km'; a unit containing {n} places the number itself: '${n}' -> '$5'."""
+    unit = (unit or "").strip()
+    if "{n}" in unit:
+        neg = num.startswith("-") and not unit.startswith("{n}")
+        return ("-" if neg else "") + unit.replace("{n}", num[1:] if neg else num)
+    return f"{num} {unit}" if unit else num
+
+
+def amount_str(g, unit, lang="ar"):
+    """Gap between two values with its unit; '≈' only when the displayed number had to be rounded."""
+    num = fmt_val(g, lang)
+    a = abs(g)
+    if a >= 1e9:
+        shown = float(f"{a / 1e9:.1f}") * 1e9
+    else:
+        shown = float(fmt_val(a, lang).replace(",", ""))
+    approx = abs(shown - a) > max(1e-9, a * 1e-9)
+    return f"{'≈ ' if approx else ''}{with_unit(num, unit)}"
+
+
+def ratio_str(r):
+    """'× 2.1', '× 205', '× 1,250'."""
+    if r < 10:
+        txt = f"{r:.1f}".rstrip("0").rstrip(".")
+    else:
+        n = int(round(r))
+        txt = f"{n:,}" if n >= 10000 else str(n)
+    return "× " + txt

@@ -1,0 +1,57 @@
+{
+  "template": "timeline",
+  "settings": {
+    "theme": "Ocean",
+    "language": "ar",
+    "fps": 30,
+    "music": "Tension",
+    "music_gain": 1.0,
+    "music_file": "",
+    "voice_file": "",
+    "voice_offset": 0.5,
+    "voice_gain": 1.0,
+    "handle": "@Ma3loomaFast",
+    "font_file": ""
+  },
+  "ending": {
+    "intro": "سؤال الحلقة القادمة:",
+    "question": "ما أعمق نقطة\n[cyan]في محيطات الأرض؟",
+    "cta": "اكتب جوابك في التعليقات"
+  },
+  "timeline": {
+    "mode": "scale",
+    "unit": "متر",
+    "events": [
+      {
+        "name": "برج خليفة",
+        "year": 828,
+        "label": "",
+        "color": "sand",
+        "icon": "star",
+        "image": ""
+      },
+      {
+        "name": "قمة إيفرست",
+        "year": 8849,
+        "label": "",
+        "color": "gold",
+        "icon": "pyramid",
+        "image": ""
+      },
+      {
+        "name": "طائرة الركاب",
+        "year": 11000,
+        "label": "نحو 11000 متر",
+        "color": "blue",
+        "icon": "rocket",
+        "image": ""
+      }
+    ],
+    "hook": "قمة إيفرست أقرب إلى\n[blue]طائرة الركاب في السماء\n[sand]منها إلى قمة برج خليفة!",
+    "hide_first_in_hook": true,
+    "doubt": "مستحيل؟",
+    "doubt_sub": "تابع الارتفاع…",
+    "compare_title": "قارن بنفسك…",
+    "reveal": "[gold]إيفرست أعلى من برج خليفة\nبأكثر من 10 مرات!"
+  }
+}
