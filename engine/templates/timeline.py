@@ -1,10 +1,12 @@
 """Timeline Collision: 2-5 events on a flying timeline, gap counters, comparison bars and a reveal."""
 import math
+import random
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from ..core import (GREY, W, WHITE, Stars, clamp, draw_ending, draw_scene, ease_io, ease_out_back, fade,
-                    get_theme, global_fade, make_bg, nice_step, parse_lines, paste, prog, stack_lines,
+from ..core import (GREY, W, WHITE, Stars, clamp, composite, draw_ending, draw_scene, ease_io, ease_out_back, fade,
+                    get_theme, global_fade, make_bg, nice_step, parse_lines, paste, prog, shade, stack_lines,
                     text_img, to_rgb)
 from ..icons import make_card
 from ..strings import S, fmt_num, gap_str, gap_years, year_str, years_word
@@ -58,6 +60,43 @@ def _spread(xs, D):
                 break
         if not merged:
             return [pos[i] for i in range(len(xs))]
+
+
+# ---------------------------------------------------------------- visual effects (built once, reused per frame)
+AMB_TOP, AMB_H = RIBBON_Y - 900, 1500
+_amb_mask = None
+
+
+def _ambient_mask():
+    """Soft elliptical light centred just above the ribbon (L image, 0-255)."""
+    global _amb_mask
+    if _amb_mask is None:
+        yy, xx = np.mgrid[0:AMB_H, 0:W]
+        g = np.exp(-(((xx - 540) / 640.0) ** 2 + ((yy - 760) / 560.0) ** 2) * 2.0)
+        _amb_mask = Image.fromarray((g * 255).astype(np.uint8), "L")
+    return _amb_mask
+
+
+def _mix(a, b, k):
+    return tuple(int(a[j] + (b[j] - a[j]) * k) for j in range(3))
+
+
+def _halo(card, col):
+    """Coloured glow the size of an event card, shown behind the active card."""
+    m = 40
+    im = Image.new("RGBA", card.size, (0, 0, 0, 0))
+    ImageDraw.Draw(im).rounded_rectangle([m - 6, m - 6, card.width - m + 6, card.height - m + 6], 46,
+                                         fill=col + (255,))
+    return im.filter(ImageFilter.GaussianBlur(26))
+
+
+def _panel(col, card_bg, w=880, h=320):
+    """Glass panel behind the year counter."""
+    S = 2
+    im = Image.new("RGBA", ((w + 40) * S, (h + 40) * S), (0, 0, 0, 0))
+    ImageDraw.Draw(im).rounded_rectangle([20 * S, 20 * S, (w + 20) * S, (h + 20) * S], 36 * S,
+                                         fill=tuple(card_bg) + (190,), outline=col + (150,), width=3 * S)
+    return im.resize((w + 40, h + 40), Image.LANCZOS)
 
 
 class TimelineVideo:
@@ -146,6 +185,17 @@ class TimelineVideo:
         for k, ev in enumerate(evs):
             sub = ev["label"] or year_str(ev["v"], self.mode, self.lang)
             ev["img"] = make_card(ev["name"], sub, ev["col"], ev["icon"], ev["image"], card_bg)
+        for ev in evs:
+            ev["halo"] = _halo(ev["img"], ev["col"])
+        self.panels = [_panel(evs[i + 1]["col"], card_bg) for i in range(G)]
+        rnd = random.Random(11)
+        # speed streaks: (x0, y, length, width, parallax, brightness)
+        self.streaks = [(rnd.uniform(0, W + 600), rnd.uniform(RIBBON_Y - 620, RIBBON_Y + 470), rnd.uniform(90, 300),
+                         rnd.choice((2, 3, 3, 4)), rnd.uniform(1.6, 4.2), rnd.uniform(0.35, 1.0)) for _ in range(30)]
+        # comet sparks: (phase, vertical spread, size)
+        self.sparks = [(rnd.random(), rnd.uniform(-1, 1), rnd.uniform(2.5, 6)) for _ in range(26)]
+        self.rtl = self.lang == "ar"
+        self._amb_cache = {}
         order = list(range(N))
         later = order[1:] if self.hidden_first else order
         for k, i in enumerate(later):
@@ -189,16 +239,65 @@ class TimelineVideo:
         return clamp(self.s_full + (1 - self.s_full) * r, self.s_full, 1.0)
 
     # ------------------------------------------------------------ render
+    def speed(self, t, h=1 / 60):
+        """Camera speed in screen pixels per second."""
+        a, z = self.camera(t - h)
+        b, _ = self.camera(t + h)
+        return abs(b - a) * z / (2 * h)
+
+    def ambient_color(self, cam):
+        """Event colour blended by where the camera is on the timeline."""
+        ys, evs = self.ys, self.evs
+        if cam <= ys[0]:
+            return evs[0]["col"]
+        for i in range(self.G):
+            if cam <= ys[i + 1]:
+                return _mix(evs[i]["col"], evs[i + 1]["col"], ease_io((cam - ys[i]) / (ys[i + 1] - ys[i])))
+        return evs[-1]["col"]
+
+    def background(self, col, a):
+        """Theme background with the ambient light baked in (cached; colour/strength quantised invisibly)."""
+        col, a = tuple(min(255, int(round(c / 6.0)) * 6) for c in col), round(a / 0.01) * 0.01
+        key = (col, a)
+        bg = self._amb_cache.get(key)
+        if bg is None:
+            bg = self.bg.copy()
+            if a > 0.005:
+                lay = Image.new("RGBA", (W, AMB_H), col + (0,))
+                lay.putalpha(_ambient_mask().point([int(v * a) for v in range(256)]))
+                bg.alpha_composite(lay, (0, AMB_TOP))
+            if len(self._amb_cache) > 96:
+                self._amb_cache.clear()
+            self._amb_cache[key] = bg
+        return bg.copy()
+
+    # ------------------------------------------------------------ render
     def render(self, t):
-        frame = self.bg.copy()
         cam, z = self.camera(t)
+        flying = next((f for f in self.flights if f["fs"] <= t < f["fe"]), None)
+        # ambient light: tinted by the era the camera is in, brighter while travelling
+        a_amb = (0.20 + 0.16 * (flying is not None) + 0.04 * math.sin(t * 2.2)) * (1 - prog(t, self.E, self.E + 0.4))
+        frame = self.background(self.ambient_color(cam), max(0.0, a_amb))
         sx = lambda v: 540 + (v - cam) * z
         d = ImageDraw.Draw(frame)
         if self.stars:
             self.stars.draw(d, t, (cam - self.cam_full) * z)
 
+        # speed streaks during the flights
+        if flying:
+            k = clamp(self.speed(t) / 420.0) * min(1, prog(t, flying["fs"], flying["fs"] + 0.4))
+            if k > 0.02:
+                c = _mix(flying["col"], WHITE, 0.45)
+                for x0, y, ln, wd, par, br in self.streaks:
+                    x = (x0 - cam * z * par) % (W + 600) - 300
+                    ln2 = int(ln * (0.4 + 0.6 * k))
+                    if x + ln2 > 0 and x < W and ln2 > 1:
+                        composite(frame, Image.new("RGBA", (ln2, wd), c + (int(150 * br * k),)), int(x), int(y - wd / 2))
+
         # ribbon + ticks
-        strip_h, top, ry = 160, RIBBON_Y - 80, 80
+        wave = any(f["fe"] < t < f["fe"] + 0.6 for f in self.flights)
+        strip_h, ry = (300, 150) if wave else (160, 80)
+        top = RIBBON_Y - ry
         strip = Image.new("RGBA", (W, strip_h), (0, 0, 0, 0))
         sd = ImageDraw.Draw(strip)
         sd.line([(0, ry), (W, ry)], fill=(120, 135, 170, 200), width=5)
@@ -219,7 +318,6 @@ class TimelineVideo:
                     sd.line([(x, ry - 7), (x, ry + 7)], fill=(140, 155, 190, 110), width=2)
         glow = Image.new("RGBA", (W, strip_h), (0, 0, 0, 0))
         gd = ImageDraw.Draw(glow)
-        flying = None
         for f in self.flights:
             i = f["i"]
             if t < f["fs"]:
@@ -228,11 +326,32 @@ class TimelineVideo:
             xa, xb = sx(self.ys[i]), sx(end)
             gd.line([(xa, ry), (xb, ry)], fill=f["col"] + (255,), width=26)
             sd.line([(xa, ry), (xb, ry)], fill=f["col"] + (255,), width=14)
-            if t < f["fe"]:
-                flying = f
+            # arrival shockwave
+            pa = prog(t, f["fe"], f["fe"] + 0.6)
+            if 0 < pa < 1:
+                xr, r = sx(self.ys[i + 1]), 18 + 110 * (1 - (1 - pa) ** 3)
+                al = int(255 * (1 - pa))
+                gd.ellipse([xr - r, ry - r, xr + r, ry + r], outline=f["col"] + (al,), width=10)
+                sd.ellipse([xr - r, ry - r, xr + r, ry + r], outline=WHITE + (al,), width=3)
         if flying:
             tx = sx(cam)
-            gd.ellipse([tx - 34, ry - 34, tx + 34, ry + 34], fill=flying["col"] + (255,))
+            k = clamp(self.speed(t) / 420.0)
+            tail = min(tx - sx(self.ys[flying["i"]]), 60 + 240 * k)
+            for j in range(12):  # tapering comet tail
+                q = j / 12
+                r = 14 * (1 - q)
+                xj = tx - tail * q
+                gd.ellipse([xj - r * 2, ry - r * 2, xj + r * 2, ry + r * 2], fill=flying["col"] + (int(200 * (1 - q)),))
+            for ph, vy, sz in self.sparks:  # sparks shed behind the head
+                age = (t * 1.7 + ph) % 1.0
+                xs = tx - age * (40 + 200 * k)
+                if xs < sx(self.ys[flying["i"]]):
+                    continue
+                ys_ = ry + vy * age * 46
+                r = sz * (1 - age)
+                sd.ellipse([xs - r, ys_ - r, xs + r, ys_ + r], fill=_mix(flying["col"], WHITE, 0.5) + (int(255 * (1 - age)),))
+            pr = 34 + 5 * math.sin(t * 14)
+            gd.ellipse([tx - pr, ry - pr, tx + pr, ry + pr], fill=flying["col"] + (255,))
             sd.ellipse([tx - 14, ry - 14, tx + 14, ry + 14], fill=WHITE + (255,))
         strip = Image.alpha_composite(glow.filter(ImageFilter.GaussianBlur(14)), strip)
         frame.alpha_composite(strip, (0, top))
@@ -250,21 +369,42 @@ class TimelineVideo:
             lo, hi = 250 * sc + 12, W - 250 * sc - 12
             shift = (lo - min(cx)) if min(cx) < lo else ((hi - max(cx)) if max(cx) > hi else 0)
             cx = [c + shift for c in cx]
-        for ev, x, xc in zip(self.evs, anchors, cx):
+        for k_ev, (ev, x, xc) in enumerate(zip(self.evs, anchors, cx)):
             p = prog(t, ev["t_app"], ev["t_app"] + 0.45)
             if p <= 0 or xc < -400 or xc > W + 400:
                 continue
             img = ev["img"]
             ch = img.height * sc
-            cy = RIBBON_Y - 40 * sc - ch / 2
+            cy = RIBBON_Y - 40 * sc - ch / 2 + (1 - ease_out_back(p)) * 60
+            # highlight: the card the comet is flying to, and a pop when it lands
+            hl, bump = 0.0, 0.0
+            for f in self.flights:
+                if f["i"] + 1 == k_ev:
+                    if f["fs"] <= t < f["fe"]:
+                        hl = max(hl, 0.35 + 0.15 * math.sin(t * 6))
+                    pa = prog(t, f["fe"], f["fe"] + 0.9)
+                    if 0 < pa < 1:
+                        hl = max(hl, 1 - pa)
+                        bump = max(bump, math.sin(pa * math.pi) * (1 - pa) * 0.18)
+            s_card = sc * (0.7 + 0.3 * ease_out_back(p)) * (1 + bump)
             d.line([(x, RIBBON_Y - 10), (xc, RIBBON_Y - 80 * sc + 4)], fill=ev["col"] + (255,), width=4)
             d.ellipse([x - 11, RIBBON_Y - 11, x + 11, RIBBON_Y + 11], fill=ev["col"] + (255,), outline=WHITE + (255,), width=3)
-            paste(frame, img, xc, cy + (1 - ease_out_back(p)) * 60, sc * (0.7 + 0.3 * ease_out_back(p)), min(1, p * 1.6))
+            if hl > 0.01:
+                paste(frame, ev["halo"], xc, cy, s_card, hl * min(1, p * 1.6))
+            paste(frame, img, xc, cy, s_card, min(1, p * 1.6))
 
         # counters
         for f in self.flights:
             if f["fs"] <= t <= f["vis"]:
                 a = min(1, prog(t, f["fs"], f["fs"] + 0.3)) * (1 - prog(t, f["vis"] - 0.2, f["vis"]))
+                paste(frame, self.panels[f["i"]], 540, RIBBON_Y + 270, 1.0, a)
+                fr = clamp((cam - self.ys[f["i"]]) / (self.ys[f["i"] + 1] - self.ys[f["i"]]))
+                pb = Image.new("RGBA", (720, 14), (0, 0, 0, 0))
+                pd = ImageDraw.Draw(pb)
+                pd.rounded_rectangle([0, 0, 719, 13], 7, fill=shade(f["col"], 0.35) + (255,))
+                if fr > 0.01:  # fills in the comet's direction (the ribbon runs left to right in every language)
+                    pd.rounded_rectangle([0, 0, 719 * fr, 13], 7, fill=f["col"] + (255,))
+                paste(frame, pb, 540, RIBBON_Y + 395, 1.0, a)
                 paste(frame, text_img(year_str(cam, self.mode, self.lang), 112, WHITE, max_w=980), 540, RIBBON_Y + 200, 1.0, a)
                 if t >= f["fe"]:
                     el, pop = f["final"], 1 + 0.15 * (1 - prog(t, f["fe"], f["fe"] + 0.3))
@@ -299,21 +439,33 @@ class TimelineVideo:
             g = ease_io(prog(t, t0, t0 + 0.45))
             Lw = self.gaps[i] * scale * g
             lab = self.L["from_to"].format(a=self.evs[i]["name"], b=self.evs[i + 1]["name"])
-            paste(frame, text_img(lab, lab_sz, WHITE, "Bold", max_w=900), 70, by - lab_dy,
-                  1.0, min(1, g * 2) * a_all, anchor="l")
+            paste(frame, text_img(lab, lab_sz, WHITE, "Bold", max_w=900), W - 70 if self.rtl else 70, by - lab_dy,
+                  1.0, min(1, g * 2) * a_all, anchor="r" if self.rtl else "l")
+            rtl = self.rtl
+            bw = 660 + 60
+            bar = Image.new("RGBA", (bw, bar_h + 60), (0, 0, 0, 0))
+            ImageDraw.Draw(bar).rounded_rectangle([30, 30, 30 + 660, 30 + bar_h], bar_h // 2,
+                                                  fill=f["col"] + (int(45 * min(1, g * 2)),))
+            x0, x1 = (30 + 660 - Lw, 30 + 660) if rtl else (30, 30 + Lw)
             if Lw > 2:
-                bar = Image.new("RGBA", (int(Lw) + 60, bar_h + 60), (0, 0, 0, 0))
-                bd = ImageDraw.Draw(bar)
                 if i == self.hi and t >= self.s0 + 0.45:
                     pulse = 0.5 + 0.5 * math.sin((t - self.s0 - 0.45) * 6)
-                    bd.rounded_rectangle([30, 30, 30 + Lw, 30 + bar_h], bar_h // 2, fill=f["col"] + (int(160 * pulse),))
-                    bar = bar.filter(ImageFilter.GaussianBlur(12))
-                    bd = ImageDraw.Draw(bar)
-                bd.rounded_rectangle([30, 30, 30 + Lw, 30 + bar_h], bar_h // 2, fill=f["col"] + (255,))
+                    gl = Image.new("RGBA", bar.size, (0, 0, 0, 0))
+                    ImageDraw.Draw(gl).rounded_rectangle([x0, 30, x1, 30 + bar_h], bar_h // 2,
+                                                         fill=f["col"] + (int(200 * pulse),))
+                    bar = Image.alpha_composite(bar, gl.filter(ImageFilter.GaussianBlur(12)))
+                ImageDraw.Draw(bar).rounded_rectangle([x0, 30, x1, 30 + bar_h], bar_h // 2, fill=f["col"] + (255,))
+            if rtl:
+                paste(frame, fade(bar, a_all), W - 70, by + bar_h / 2, anchor="r")
+            else:
                 paste(frame, fade(bar, a_all), 70, by + bar_h / 2, anchor="l")
             if g >= 1:
-                paste(frame, text_img(f["final"], 40 if not compact else 30, WHITE), 100 + Lw + 10, by + bar_h / 2,
-                      1.0, prog(t, t0 + 0.45, t0 + 0.65) * a_all, anchor="l")
+                val = text_img(f["final"], 40 if not compact else 30, WHITE)
+                va = prog(t, t0 + 0.45, t0 + 0.65) * a_all
+                if rtl:
+                    paste(frame, val, W - 100 - Lw - 14, by + bar_h / 2, 1.0, va, anchor="r")
+                else:
+                    paste(frame, val, 100 + Lw + 14, by + bar_h / 2, 1.0, va, anchor="l")
 
     # ------------------------------------------------------------ sound
     def sound(self, mx):
