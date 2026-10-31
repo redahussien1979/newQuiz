@@ -39,7 +39,7 @@ SHARED_KEYS = [("settings", "theme"), ("settings", "language"), ("settings", "mu
                ("ending", "intro"), ("ending", "question"), ("ending", "cta"),
                ("settings", "intro_sound"), ("settings", "tick_sound"), ("settings", "tick_gain")]
 TL_KEYS = ["mode", "hook", "hide_first_in_hook", "doubt", "doubt_sub", "compare_title", "reveal", "unit",
-           "maps", "guess", "guess_q"]
+           "maps", "guess", "guess_q", "intro", "map_style"]
 EV_KEYS = ["enabled", "name", "year", "label", "color", "icon", "image", "country", "outline"]
 QZ_KEYS = ["title", "subtitle", "clues", "clue_seconds", "answer_intro", "answer", "answer_sub", "answer_image", "accent"]
 MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", "accent", "style", "timer",
@@ -48,7 +48,7 @@ KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline"}
 MEDIA_LISTS = {"narration"}  # fields holding several files
 DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": "", "maps": False, "guess": False,
-            "guess_q": "",
+            "guess_q": "", "intro": "hook", "map_style": "auto",
             "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
@@ -97,6 +97,10 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 - **🗺️ True-size map scene** (number line, values = areas): the countries are drawn at their real relative size and slide
   on top of each other, with a "× 2.1" badge. It replaces the comparison bars. Far overseas parts (e.g. French Guiana)
   are left out. Borders come from Natural Earth; upload your own *outline* (GeoJSON) to draw a country differently.
+- **Map scene style:** *Overlay* (the smaller slides on top), *Tile fill* (copies of the smallest fill the largest
+  while the badge counts up, for 2× to 400×), *Side by side* (on platforms, best for near-equal sizes).
+  **Auto** picks: tile fill from 20× apart, side by side within 1.5×, overlay otherwise.
+- **⚔️ VS battle intro:** the two flags crash together with "VS" before the hook (first and last event).
 - **🤔 Guess moment:** before the answer, 3 choices (× ratio) and a 3-second timer, so viewers comment their guess.
 - 2 to 5 events; they are sorted by value automatically. The shortest gap gets the glowing highlight.
 - Leave *Card subtitle* empty to show the year (or value with its unit) automatically.
@@ -660,6 +664,12 @@ def build_ui():
                                     guess = gr.Checkbox(value=False, label="🤔 Guess moment (3 choices + 3 s timer)")
                                 guess_q = gr.Textbox(lines=2, max_lines=3, rtl=True, label="Guess question (optional)",
                                                      placeholder="Empty = automatic. {a} = smaller, {b} = bigger")
+                                with gr.Row():
+                                    intro = gr.Radio([("Hook text", "hook"), ("⚔️ VS battle", "vs")], value="hook",
+                                                     label="Intro")
+                                    map_style = gr.Radio([("Auto", "auto"), ("Overlay", "overlay"),
+                                                          ("Tile fill", "tiles"), ("Side by side", "side")],
+                                                         value="auto", label="Map scene style")
                         with gr.Tab("🗓️ Events"):
                             ev_fields = []
                             with gr.Tabs():
@@ -687,7 +697,8 @@ def build_ui():
                         tl_st = style_tab()
                         tl_end = ending_tab()
                     tl_fields = (shared_fields(tl_st, tl_end)
-                                 + [mode, hook, hide_first, doubt, doubt_sub, compare_title, reveal, unit, maps, guess, guess_q]
+                                 + [mode, hook, hide_first, doubt, doubt_sub, compare_title, reveal, unit, maps, guess, guess_q,
+                                    intro, map_style]
                                  + ev_fields)
                 tl_pv = preview_panel("timeline")
             wire(tl_proj, tl_pv, tl_fields)

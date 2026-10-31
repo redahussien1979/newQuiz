@@ -7,14 +7,16 @@ STR = {
                million="مليون", billion="مليار",
                clue="الدليل {i} من {n}", answer_intro="الجواب…",
                question="السؤال {i} من {n}", letters=["أ", "ب", "ج", "د"],
-               guess_area="خمّن: كم مرة تدخل\n[{ca}]{a} في {b}؟", guess_ratio="خمّن: {b} أكبر من\n[{ca}]{a} بكم مرة؟"),
+               guess_area="خمّن: كم مرة تدخل\n[{ca}]{a} في {b}؟", guess_ratio="خمّن: {b} أكبر من\n[{ca}]{a} بكم مرة؟",
+               diff="الفرق {p}% فقط!"),
     "en": dict(bce="BC", ce="AD", years="years", years_few="years", now="Now",
                ago_short="{n} ago", ago_full="{n} years ago",
                frm="From {a}", to="to {b}", from_to="{a} to {b}",
                million="million", billion="billion",
                clue="Clue {i} of {n}", answer_intro="The answer…",
                question="Question {i} of {n}", letters=["A", "B", "C", "D"],
-               guess_area="Guess: how many times does\n[{ca}]{a} fit in {b}?", guess_ratio="Guess: how many times is {b}\n[{ca}]bigger than {a}?"),
+               guess_area="Guess: how many times does\n[{ca}]{a} fit in {b}?", guess_ratio="Guess: how many times is {b}\n[{ca}]bigger than {a}?",
+               diff="Only {p}% apart!"),
 }
 
 

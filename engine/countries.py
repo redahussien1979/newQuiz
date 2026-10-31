@@ -324,3 +324,101 @@ def globe_grid(accent):
     spot = Image.new("RGBA", (W, H), tuple(accent) + (0,))
     spot.putalpha(a.filter(ImageFilter.GaussianBlur(160)))
     return Image.alpha_composite(lay, spot)
+
+
+# ---------------------------------------------------------------- tile fill / side by side / VS intro
+@lru_cache(maxsize=16)
+def flat_tile(code, outline, km_px, col):
+    """Small flat silhouette (flag-filled when there is a flag) used to fill a bigger country."""
+    pr = projected(code, outline)
+    m = _mask(pr[0], km_px, 4)
+    fp = flag_path(code)
+    if fp:
+        face = ImageOps.fit(Image.open(fp).convert("RGBA"), m.size, Image.LANCZOS, centering=(0.3, 0.5))
+    else:
+        face = Image.new("RGBA", m.size, tuple(col) + (255,))
+    face.putalpha(m)
+    rim = ImageChops.subtract(m.filter(ImageFilter.MaxFilter(3)), m)
+    rl = Image.new("RGBA", m.size, (0, 0, 0, 0))
+    rl.paste(WHITE + (230,), (0, 0), rim)
+    return Image.alpha_composite(face, rl)
+
+
+@lru_cache(maxsize=16)
+def fill_cells(big_code, big_outline, small_code, small_outline, km_px, pad):
+    """Centres (in the big tile's mask coordinates) of a hexagonal grid whose cells each have the area of the
+    small country, kept where they fall inside the big one; ordered from the middle outwards."""
+    big = _mask(projected(big_code, big_outline)[0], km_px, pad)
+    small = _mask(projected(small_code, small_outline)[0], km_px, 4)
+    area = sum(k * n for k, n in enumerate(small.histogram())) / 255.0
+    if area < 4:
+        return ()
+    d = math.sqrt(area / (math.sqrt(3) / 2))
+    cells, row, y = [], 0, d / 2
+    while y < big.height:
+        x = (d / 2) * (row % 2) + d / 4
+        while x < big.width:
+            if big.getpixel((int(x), int(y))) > 128:
+                cells.append((x, y))
+            x += d
+        y += d * math.sqrt(3) / 2
+        row += 1
+    bb = big.getbbox() or (0, 0, big.width, big.height)
+    cx, cy = (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
+    cells.sort(key=lambda c: math.hypot(c[0] - cx, c[1] - cy))
+    return tuple(cells)
+
+
+@lru_cache(maxsize=8)
+def podium(col, w=420):
+    """Glowing elliptical platform under a country (side-by-side scene)."""
+    S = 2
+    im = Image.new("RGBA", ((w + 40) * S, 120 * S), (0, 0, 0, 0))
+    ImageDraw.Draw(im).ellipse([20 * S, 20 * S, (w + 20) * S, 100 * S], fill=shade(col, 0.35) + (255,),
+                               outline=tuple(col) + (255,), width=3 * S)
+    g = im.filter(ImageFilter.GaussianBlur(14 * S))
+    g.alpha_composite(im)
+    return g.resize((w + 40, 120), Image.LANCZOS)
+
+
+@lru_cache(maxsize=8)
+def vs_panel(code, col, side):
+    """Half-screen slanted panel for the VS intro: the flag (or a colour gradient), darker towards the middle."""
+    from .core import H, W
+    fp = flag_path(code)
+    if fp:
+        fl = ImageOps.fit(Image.open(fp).convert("RGBA"), (W, H), Image.LANCZOS)
+    else:
+        g = Image.linear_gradient("L").resize((W, H))
+        fl = Image.composite(Image.new("RGBA", (W, H), shade(col, 0.35) + (255,)),
+                             Image.new("RGBA", (W, H), tuple(col) + (255,)), g)
+    mask = Image.new("L", (W, H), 0)
+    d = ImageDraw.Draw(mask)
+    if side == "right":
+        d.polygon([(620, 0), (W, 0), (W, H), (460, H)], fill=255)
+    else:
+        d.polygon([(0, 0), (600, 0), (440, H), (0, H)], fill=255)
+    shadow = Image.linear_gradient("L").rotate(90 if side == "right" else -90).resize((W, H))
+    dark = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    dark.putalpha(shadow.point(lambda v: int(v * 0.55)))
+    fl = Image.alpha_composite(fl, dark)
+    fl = Image.alpha_composite(fl, Image.new("RGBA", (W, H), (5, 8, 20, 120)))
+    fl.putalpha(mask)
+    return fl
+
+
+@lru_cache(maxsize=4)
+def vs_bolt(col):
+    """Lightning along the diagonal split of the VS intro."""
+    from .core import H, W
+    pts, y, x = [], 0, 610
+    while y < H:
+        pts.append((x, y))
+        y += 120
+        x = 610 - (170 * y / H) + (40 if (y // 120) % 2 else -40)
+    pts.append((450, H))
+    im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(im).line(pts, fill=(255, 255, 255, 255), width=10, joint="curve")
+    g = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(g).line(pts, fill=tuple(col) + (255,), width=40, joint="curve")
+    return Image.alpha_composite(g.filter(ImageFilter.GaussianBlur(18)), im)

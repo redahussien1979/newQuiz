@@ -156,6 +156,7 @@ class TimelineVideo:
         pair = (mev[0], mev[-1]) if self.use_maps else (evs[0], evs[-1])
         self.use_guess = bool(d.get("guess")) and pair[0]["v"] > 0
         compact = self.use_maps or self.use_guess
+        self.intro = "vs" if str(d.get("intro") or "hook") == "vs" else "hook"
 
         # ---------------- camera plan
         self.z_full = z_full = 680.0 / span
@@ -204,8 +205,20 @@ class TimelineVideo:
             self.silences.append((self.g_tick, self.g_ans - 0.6))
         if self.use_maps:
             self.m0 = T
-            self.m_t = [T + 0.7 + 1.35 * k for k in range(len(mev) - 1)]
-            self.s0 = T + 0.7 + 1.35 * (len(mev) - 1) + 0.25
+            self.map_style = self._pick_style(str(d.get("map_style") or "auto"), mev)
+            if self.map_style == "side":
+                self.m_t = []
+                self.side_t = [T + 0.3 + 0.4 * k for k in range(len(mev))]
+                self.side_sym = self.side_t[-1] + 0.7
+                self.s0 = self.side_sym + 1.3
+            else:
+                n_ov = len(mev) - (1 if self.map_style == "overlay" else 2)  # tiles: the smallest fills instead
+                self.m_t = [T + 0.7 + 1.35 * k for k in range(n_ov)]
+                end = T + 0.7 + 1.35 * n_ov
+                if self.map_style == "tiles":
+                    self.tf = end
+                    end += 3.2
+                self.s0 = end + 0.25
         else:
             self.bars_t0 = T + 0.1
             self.s0 = self.bars_t0 + 0.25 * (G - 1) + 0.5
@@ -238,13 +251,16 @@ class TimelineVideo:
             evs[i]["t_app"] = 0.15 + 0.3 * k
         if self.hidden_first:
             evs[0]["t_app"] = 3.3
+        if self.intro == "vs":  # the timeline appears after the VS clash
+            for k, ev in enumerate(evs):
+                ev["t_app"] = 2.6 + 0.12 * k
 
         # ---------------- scenes
         L = self.L
         hook_lines = parse_lines(d.get("hook", ""), ["white", evs[-1]["col"], evs[0]["col"]])
         doubt = d.get("doubt", "")
         self.scenes = [
-            dict(t_in=0.1, t_out=2.55, lines=stack_lines(hook_lines, 330, 76, 64)),
+            dict(t_in=1.25 if self.intro == "vs" else 0.1, t_out=2.55, lines=stack_lines(hook_lines, 330, 76, 64)),
             dict(t_in=2.65, t_out=4.95, shake=True,
                  lines=[(doubt, 160, WHITE, 410), (d.get("doubt_sub", ""), 52, GREY, 565)]),
         ]
@@ -260,6 +276,8 @@ class TimelineVideo:
             self._setup_guess(d, pair)
         if self.use_maps:
             self._setup_maps(mev)
+        if self.intro == "vs":
+            self._setup_vs(pair)
         rv = parse_lines(d.get("reveal", ""), ["white"])
         self.scenes.append(dict(t_in=self.reveal_in, t_out=self.E, lines=stack_lines(rv, 380, 88, 76)))
         self.ending = (e.get("intro", ""), parse_lines(e.get("question", ""), ["white", "gold"]),
@@ -354,6 +372,8 @@ class TimelineVideo:
             tl_a = 1 - prog(t, self.t_hide, self.t_hide + 0.35)
             if not self.use_maps:  # the ribbon comes back with the comparison bars
                 tl_a = max(tl_a, prog(t, self.bars_t0 - 0.35, self.bars_t0))
+        if self.intro == "vs":
+            tl_a *= prog(t, 2.45, 2.8)
         if tl_a > 0.01:
             cv = frame if tl_a >= 0.999 else Image.new("RGBA", frame.size, (0, 0, 0, 0))
             self._timeline(cv, t, cam, z, flying)
@@ -366,6 +386,8 @@ class TimelineVideo:
             self._guess(frame, t)
         if self.use_maps and t >= self.m0:
             self._maps(frame, t)
+        if self.intro == "vs" and t < 2.85:
+            self._vs(frame, t)
         for sc_ in self.scenes:
             draw_scene(frame, t, sc_)
         draw_ending(frame, t, self.E, *self.ending, self.accent)
@@ -583,16 +605,53 @@ class TimelineVideo:
             x["tile"] = CT.map_tile(x["code"], x["outline"], km_px, x["col"], 14 if x is mev[-1] else 10, True, fill)
             x["tiny"] = max(pr[1], pr[2]) * km_px < 120
             x["tag"] = CT.name_tag(x["name"], with_unit(fmt_val(x["v"], self.lang), unit), x["col"], x["code"], self.rtl)
-        self.m_base, self.m_ovs = mev[-1], mev[-2::-1]  # overlays from the largest down to the smallest
+        # overlays from the largest down to the smallest (tile fill: the smallest fills the largest instead)
+        self.m_base = mev[-1]
+        self.m_ovs = mev[-2::-1] if self.map_style == "overlay" else mev[-2:0:-1]
         b = self.m_base
         b["dim"] = CT.map_tile(b["code"], b["outline"], km_px, b["col"], 14, False, 90)
         self.m_grid = CT.globe_grid(tuple(b["col"]))
+        if self.map_style == "tiles":
+            sm = self.m_small = mev[0]
+            self.m_flat = CT.flat_tile(sm["code"], sm["outline"], km_px, tuple(sm["col"]))
+            self.m_cells = CT.fill_cells(b["code"], b["outline"], sm["code"], sm["outline"], km_px, 74)
+        if self.map_style == "side":
+            self._setup_side(mev)
+
+    def _pick_style(self, style, mev):
+        """overlay / tiles / side; 'auto' picks by the size ratio of the largest to the smallest."""
+        r = mev[-1]["v"] / mev[0]["v"]
+        can_tile = 2.0 <= r <= 400.0  # beyond 400 the tiles get too small to read
+        if style == "tiles":
+            return "tiles" if can_tile else "overlay"
+        if style in ("overlay", "side"):
+            return style
+        if can_tile and r >= 20:
+            return "tiles"
+        return "side" if r <= 1.5 else "overlay"
+
+    def _setup_side(self, mev):
+        n = len(mev)
+        slot = 980.0 / n
+        prs = [CT.projected(x["code"], x["outline"]) for x in mev]
+        km_px = min((slot - 40) / max(p[1] for p in prs), 560.0 / max(p[2] for p in prs))
+        for k, x in enumerate(mev):  # smallest first: on the right in Arabic, on the left in English
+            x["sx"] = (1030 - slot * (k + 0.5)) if self.rtl else (50 + slot * (k + 0.5))
+            x["stile"] = CT.map_tile(x["code"], x["outline"], km_px, x["col"], 12, True, 255)
+            x["pod"] = CT.podium(tuple(x["col"]), int(min(420, slot - 30)))
+            x["stag"] = CT.name_tag(x["name"], with_unit(fmt_val(x["v"], self.lang), self.unit), x["col"], x["code"],
+                                    self.rtl, max_w=int(min(470, slot - 26)))
+        self.m_side = mev
 
     def _maps(self, frame, t):
         a_all = prog(t, self.m0, self.m0 + 0.4) * (1 - prog(t, self.E - 0.1, self.E + 0.3))
         if a_all <= 0:
             return
         paste(frame, self.m_grid, 540, 960, 1.0, a_all)
+        if self.map_style == "side":
+            self._maps_side(frame, t, a_all)
+            return
+        tiles = self.map_style == "tiles"
         cy, b = 1010, self.m_base
         pb = prog(t, self.m0, self.m0 + 0.6)
         sc = 0.6 + 0.4 * ease_out_back(pb)
@@ -602,6 +661,8 @@ class TimelineVideo:
             dim = prog(t, self.m_t[cur], self.m_t[cur] + 0.4)
         if cur >= 1 and self.m_ovs[cur - 1]["tiny"]:
             dim = max(dim, 1 - prog(t, self.m_t[cur], self.m_t[cur] + 0.4))
+        if tiles and t >= self.tf:
+            dim = max(dim, 0.85 * prog(t, self.tf, self.tf + 0.4))
         a_b = a_all * min(1, pb * 1.6)
         paste(frame, b["tile"], 540, cy, sc, a_b * (1 - dim))
         if dim > 0:
@@ -612,7 +673,7 @@ class TimelineVideo:
             tk = self.m_t[k]
             if t < tk:
                 break
-            nxt = self.m_t[k + 1] if k + 1 < len(self.m_t) else None
+            nxt = self.m_t[k + 1] if k + 1 < len(self.m_t) else (self.tf if tiles else None)
             fo = 1 - prog(t, nxt, nxt + 0.3) if nxt else 1.0
             if fo <= 0:
                 continue
@@ -630,6 +691,102 @@ class TimelineVideo:
                 val = 1 + (r - 1) * ease_io(pc)
                 paste(frame, CT.badge(ratio_str(val), ov["col"]), 820 if self.rtl else 260, 690,
                       0.7 + 0.3 * ease_out_back(prog(t, tk + 0.45, tk + 0.75)), a_all * fo)
+        if tiles and t >= self.tf:
+            self._maps_tiles(frame, t, a_all, tag_x[1])
+
+    def _maps_tiles(self, frame, t, a_all, tag_x):
+        """Copies of the smallest country pop in until they fill the largest; the badge counts the real ratio."""
+        b, sm = self.m_base, self.m_small
+        ox, oy = 540 - b["tile"].width / 2, 1010 - b["tile"].height / 2
+        fill = ease_io(prog(t, self.tf + 0.3, self.tf + 2.9))
+        shown = fill * len(self.m_cells)
+        for k, (x, y) in enumerate(self.m_cells):
+            if k >= shown:
+                break
+            p = clamp(shown - k)
+            paste(frame, self.m_flat, ox + x, oy + y, 0.4 + 0.6 * ease_out_back(p), a_all * min(1, p * 2))
+        paste(frame, sm["tag"], tag_x, 1580, 1.0, a_all * prog(t, self.tf, self.tf + 0.4))
+        if t >= self.tf + 0.3:
+            r = b["v"] / sm["v"]
+            done = prog(t, self.tf + 2.9, self.tf + 3.2)
+            sc = 0.8 + 0.2 * ease_out_back(prog(t, self.tf + 0.3, self.tf + 0.6)) + 0.12 * math.sin(done * math.pi)
+            paste(frame, CT.badge(ratio_str(1 + (r - 1) * fill), sm["col"]), 820 if self.rtl else 260, 690, sc, a_all)
+
+    def _maps_side(self, frame, t, a_all):
+        """The countries rise side by side on platforms, at the same scale."""
+        mev = self.m_side
+        for k, x in enumerate(mev):
+            t0 = self.side_t[k]
+            p = prog(t, t0, t0 + 0.7)
+            if p <= 0:
+                continue
+            e = ease_out_back(p)
+            paste(frame, x["pod"], x["sx"], 1330, 0.6 + 0.4 * e, a_all * min(1, p * 2))
+            tl = x["stile"]
+            paste(frame, tl, x["sx"], 1330 - tl.height / 2 + 20 + (1 - e) * 260, 0.3 + 0.7 * e, a_all * min(1, p * 2))
+            paste(frame, x["stag"], x["sx"], 1520, 1.0, a_all * prog(t, t0 + 0.5, t0 + 0.9))
+        pe = prog(t, self.side_sym, self.side_sym + 0.4)
+        if pe <= 0:
+            return
+        r = mev[-1]["v"] / mev[0]["v"]
+        if len(mev) == 2 and r <= 1.15:  # near-twins: "≈" and how small the difference is
+            paste(frame, text_img("≈", 170, COLORS["gold"], "Black"), 540, 1000, 0.5 + 0.5 * ease_out_back(pe), a_all * pe)
+            pct = (r - 1) * 100
+            txt = f"{pct:.1f}".rstrip("0").rstrip(".") if pct < 10 else str(int(round(pct)))
+            paste(frame, text_img(self.L["diff"].format(p=txt), 60, WHITE, max_w=960), 540, 1690, 1.0,
+                  a_all * prog(t, self.side_sym + 0.4, self.side_sym + 0.8))
+        else:
+            paste(frame, CT.badge(ratio_str(r), mev[-1]["col"]), 540, 690, 0.6 + 0.4 * ease_out_back(pe), a_all * pe)
+
+    # ------------------------------------------------------------ VS intro
+    def _setup_vs(self, pair):
+        a, b = pair  # a = smaller / first, shown on the reading side (right in Arabic)
+        sides = ("right", "left") if self.rtl else ("left", "right")
+        self.vs = []
+        for ev, side in zip((a, b), sides):
+            if ev["code"] or ev["outline"]:
+                emb = CT.map_icon(ev["code"], ev["outline"], tuple(ev["col"]), 420)
+            else:
+                emb = ev["img"].resize((ev["img"].width * 3 // 4, ev["img"].height * 3 // 4), Image.LANCZOS)
+            pos = ((845, 790, 1030) if side == "right" else (240, 1310, 1550))  # map y, name y
+            self.vs.append(dict(panel=CT.vs_panel(ev["code"], tuple(ev["col"]), side), side=side, emb=emb, pos=pos,
+                                name=text_img(ev["name"], 96, WHITE, max_w=430)))
+        self.vs_bolt = CT.vs_bolt(COLORS["gold"])
+        self.vs_txt = text_img("VS", 300, WHITE, "Black")
+        self.vs_glow = text_img("VS", 300, COLORS["gold"], "Black", shadow=False).filter(ImageFilter.GaussianBlur(26))
+
+    def _vs(self, frame, t):
+        a = 1 - prog(t, 2.45, 2.8)
+        if a <= 0:
+            return
+        lay = Image.new("RGBA", frame.size, (0, 0, 0, 0))
+        slide = ease_io(prog(t, 0.0, 0.45))
+        shake = math.sin(t * 70) * 22 * (1 - prog(t, 0.5, 0.95)) if t >= 0.45 else 0
+        for k, v in enumerate(self.vs):
+            dx = (1 - slide) * (700 if v["side"] == "right" else -700)
+            paste(lay, v["panel"], 540 + dx + shake, 960, 1.0, 1.0)
+        clash = prog(t, 0.45, 0.6)
+        if clash > 0:
+            paste(lay, self.vs_bolt, 540 + shake, 960, 1.0, min(1, clash * 2) * (0.75 + 0.25 * math.sin(t * 30)))
+        for k, v in enumerate(self.vs):
+            x, ye, yn = v["pos"]
+            pi_ = prog(t, 0.55 + 0.1 * k, 1.0 + 0.1 * k)
+            paste(lay, v["emb"], x + shake, ye, 0.6 + 0.4 * ease_out_back(pi_), pi_)
+            paste(lay, v["name"], x + shake, yn, 1.0, prog(t, 0.75 + 0.1 * k, 1.05 + 0.1 * k))
+        pv = prog(t, 0.45, 0.75)
+        if pv > 0:
+            sc = 2.2 - 1.2 * ease_out_back(pv) + 0.04 * math.sin(t * 8)
+            paste(lay, self.vs_glow, 540 + shake, 960, sc, pv)
+            paste(lay, self.vs_txt, 540 + shake, 960, sc, pv)
+        if t >= 0.45:
+            fl = 1 - prog(t, 0.45, 0.7)
+            if fl > 0:
+                lay.alpha_composite(Image.new("RGBA", frame.size, (255, 255, 255, int(200 * fl))))
+        ph = prog(t, 1.1, 1.4) * (1 - prog(t, 2.45, 2.7))  # dark band behind the hook text
+        if ph > 0:
+            band = Image.new("RGBA", (W, 400), (5, 8, 20, int(210 * ph)))
+            lay.alpha_composite(band, (0, 190))
+        frame.alpha_composite(fade(lay, a))
 
     def _bars(self, frame, t):
         G = self.G
@@ -678,7 +835,14 @@ class TimelineVideo:
 
     # ------------------------------------------------------------ sound
     def sound(self, mx):
-        mx.intro(0.05)
+        if self.intro == "vs":
+            s, pn = mx.whoosh(0.5); mx.add(0.0, s, 0.5, pn)
+            s, pn = mx.whoosh(0.5); mx.add(0.0, s, 0.5, pn[::-1])
+            mx.add(0.45, mx.hit(1.6), 0.85)
+            mx.add(0.6, mx.pop(), 0.35)
+            mx.add(0.7, mx.pop(), 0.35)
+        else:
+            mx.intro(0.05)
         for ev in self.evs:
             mx.add(ev["t_app"], mx.pop(), 0.35)
         s, pn = mx.whoosh(1.4); mx.add(2.6, s, 0.55, pn)
@@ -701,10 +865,25 @@ class TimelineVideo:
                 mx.add(self.g_tick + k, mx.tick(2400 if k == 2 else 1500), 0.32)
             mx.add(self.g_ans, mx.ding(), 0.5)
         if self.use_maps:
-            mx.add(self.m0 + 0.05, mx.pop(), 0.4)
+            if self.map_style == "side":
+                for k, t0 in enumerate(self.side_t):
+                    s, pn = mx.whoosh(0.5); mx.add(t0, s, 0.35, pn)
+                    mx.add(t0 + 0.45, mx.pop(), 0.45)
+                mx.add(self.side_sym, mx.ding(), 0.5)
+            else:
+                mx.add(self.m0 + 0.05, mx.pop(), 0.4)
             for tk in self.m_t:
                 s, pn = mx.whoosh(0.7); mx.add(tk - 0.1, s, 0.45, pn[::-1])
                 mx.add(tk + 0.5, mx.pop(), 0.45)
+            if self.map_style == "tiles":  # ticks speed up and slow down with the filling, then a ding
+                n, a, b = 28, self.tf + 0.3, self.tf + 2.9
+                for j in range(1, n):
+                    lo, hi = 0.0, 1.0
+                    for _ in range(30):  # time at which ease_io reaches j/n
+                        mid = (lo + hi) / 2
+                        lo, hi = (mid, hi) if ease_io(mid) < j / n else (lo, mid)
+                    mx.add(a + (b - a) * lo, mx.tick(1700 + 900 * j / n), 0.22)
+                mx.add(b, mx.ding(), 0.55)
         else:
             for i in range(self.G):
                 mx.add(self.bars_t0 + 0.25 * i, mx.pop(), 0.3)
