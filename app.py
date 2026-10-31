@@ -714,6 +714,16 @@ def build_ui():
                   outputs=m_narr_info, trigger_mode="always_last", show_progress="hidden")
             wire_batch(xl, mq_pv, mq_fields, m_qs, m_narr, m_title)
 
+            def theme_follows(style, colors):
+                """Picking a Theme should visibly change the video: switch the style to Theme colours."""
+                if style != "Classic" and colors != "theme":
+                    gr.Info(f"Colours switched to “Theme colours” so the {style} style uses your theme "
+                            f"(change it back in ⏱️ Design & timing).", duration=6)
+                    return "theme"
+                return gr.update()
+            # .select = only when the user picks a theme (not when an example or project is loaded)
+            mq_st["theme"].select(theme_follows, [m_style, m_colors], m_colors, show_progress="hidden")
+
         with gr.Tab("📘 Help"):
             gr.Markdown(HELP)
 
