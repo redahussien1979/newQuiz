@@ -37,6 +37,19 @@ def get_style(name):
     return STYLES.get(name or "Classic", STYLES["Classic"])
 
 
+def with_theme_colors(st, theme_name):
+    """Keep a style's shapes, borders, glow and badges, but take background and card colours from a theme."""
+    if st["bg"] is None:  # Classic already uses the theme
+        return st
+    th = get_theme(theme_name)
+    st = dict(st, theme_bg=True, ink=(245, 245, 250), card_text=(245, 245, 250), light=False, light_cards=False)
+    if st["bg"] != "glass":  # glass keeps its see-through white cards
+        st.update(card=th["card"], card_alpha=max(st["card_alpha"], 235))
+    if st["border"] is not None and sum(to_rgb(st["border"])) < 200:  # dark ink border would vanish on a dark theme
+        st.update(border=None, shadow="soft" if st["shadow"] == "hard" else st["shadow"])
+    return st
+
+
 # ------------------------------------------------------------------ shapes
 def shape_box(d, box, shape, S2, **kw):
     x0, y0, x1, y1 = box
@@ -152,7 +165,7 @@ class Backdrop:
     """Static base image + per-frame animated layer for a style."""
 
     def __init__(self, st, theme_name, accent):
-        self.kind = st["bg"]
+        self.kind = None if st.get("theme_bg") else st["bg"]
         self.stars = None
         self.extra = []
         if self.kind is None:

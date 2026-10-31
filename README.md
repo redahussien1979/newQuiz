@@ -60,12 +60,24 @@ Write each question as a block, with an empty line between questions:
 
 | Style | Look |
 |---|---|
-| Classic | Uses the colour Theme you chose in the "🎨 Style & sound" tab |
+| Classic | Always uses the colour Theme you chose in the "🎨 Style & sound" tab |
 | Neon | Black grid, glowing neon outlines, outlined letters |
 | Glass | Frosted see-through cards over moving colour blobs |
 | Game Show | Deep blue spotlight rays, gold hexagon answer bars |
 | Paper | Light cream page, bold black borders with hard shadows |
 | Sunset | Orange-pink-purple gradient, white pill cards, floating bokeh |
+
+**Colours:** each style has its own colours. Choose **Theme colours** (⏱️ Design & timing tab) to keep the style's shapes, borders and glow but take the background and cards from your Theme.
+
+**Narration for each question** (🎙️ Narration tab): upload your recordings, all at once, named after what they read:
+
+| File name | Plays |
+|---|---|
+| `q1.mp3` | question 1 |
+| `q1a.mp3` … `q1d.mp3` (or `q1_1` … `q1_4`, `q1-b`) | options A–D of question 1, each option appears as it is read |
+| `q1e.mp3` | the explanation of question 1, after the reveal |
+
+Each question waits for its clips (the countdown starts after the last option is read), the music ducks under them, and the tab lists which clips matched and warns about names it doesn't recognise. Saving the project copies the clips into `projects/media`.
 
 **Timer types:** Ring, Pie, Bar, Hourglass, Digital (00:05), Segments (battery blocks) and Fuse (a burning fuse running to a bomb, with a sizzle sound). All of them turn red with faster, higher ticks in the last 2 seconds.
 

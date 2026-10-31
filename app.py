@@ -18,6 +18,7 @@ from engine.mcq_styles import STYLE_NAMES
 from engine.timers import TIMER_NAMES
 from engine.render import render_clip, render_still, render_video
 from engine.templates import TEMPLATES
+from engine.templates.mcq import narration_report
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(ROOT, "outputs")
@@ -34,9 +35,17 @@ SHARED_KEYS = [("settings", "theme"), ("settings", "language"), ("settings", "mu
 TL_KEYS = ["mode", "hook", "hide_first_in_hook", "doubt", "doubt_sub", "compare_title", "reveal"]
 EV_KEYS = ["enabled", "name", "year", "label", "color", "icon", "image"]
 QZ_KEYS = ["title", "subtitle", "clues", "clue_seconds", "answer_intro", "answer", "answer_sub", "answer_image", "accent"]
-MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", "accent", "style", "timer"]
+MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", "accent", "style", "timer",
+           "colors", "narration", "narration_gain"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image"}
+MEDIA_LISTS = {"narration"}  # fields holding several files
+DEFAULTS = {"colors": "style", "narration_gain": 1.0}  # for projects saved before these options existed
+
+NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
+`q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
+Any audio type works (mp3, wav, m4a…). Each question waits for its clips: options appear as they are read and
+the countdown starts after the last one. The music gets quieter while a clip plays."""
 
 HELP = """
 ### How to use
@@ -62,6 +71,8 @@ Neptune
 One question per block, 3 or 4 options, a `*` after the correct one, optional `>` explanation, and an empty line between questions.
 
 **Design styles:** Classic (uses your Theme), Neon, Glass, Game Show, Paper (light), Sunset.
+**Colours:** pick *Theme colours* (Design & timing) so any style follows your Theme; Classic always does.
+**Narration:** in the 🎙️ Narration tab upload clips named `q1` (question 1), `q1a`…`q1d` (its options) and `q1e` (its explanation). Each question waits for its clips.
 **Timers:** Ring, Pie, Bar, Hourglass, Digital (00:05), Segments (battery blocks), Fuse (burning fuse and bomb, with a sizzle sound).
 
 ### Timeline tips
@@ -106,8 +117,13 @@ def project_to_values(p, tpl):
                 vals.append(v if v is not None else ("" if k in ("name", "label") else None))
     else:
         d = p.get(tpl, {})
-        vals += [d.get(k) if k not in MEDIA_FIELDS or (d.get(k) and os.path.isfile(d.get(k))) else None
-                 for k in KEYS[tpl]]
+        for k in KEYS[tpl]:
+            v = d.get(k, DEFAULTS.get(k))
+            if k in MEDIA_FIELDS:
+                v = v if v and os.path.isfile(v) else None
+            elif k in MEDIA_LISTS:
+                v = [f for f in (v or []) if f and os.path.isfile(f)] or None
+            vals.append(v)
     for i, (sec, k) in enumerate(SHARED_KEYS):
         if k in MEDIA_FIELDS and not (vals[i] and os.path.isfile(vals[i])):
             vals[i] = None
@@ -149,6 +165,22 @@ def _keep_media(path):
         n += 1
     shutil.copy2(path, dst)
     return dst
+
+
+def _keep_media_list(paths, folder):
+    """Copy a group of files into one sub-folder of projects/media, keeping their names (they carry meaning)."""
+    out = []
+    for path in paths or []:
+        if not path or not os.path.isfile(path):
+            continue
+        if os.path.abspath(path).startswith(MEDIA_DIR + os.sep):
+            out.append(path)
+            continue
+        os.makedirs(folder, exist_ok=True)
+        dst = os.path.join(folder, os.path.basename(path))
+        shutil.copy2(path, dst)
+        out.append(dst)
+    return out
 
 
 def _stamp():
@@ -197,7 +229,11 @@ def make_actions(tpl):
                 ev["image"] = _keep_media(ev.get("image"))
         elif tpl == "quiz":
             p["quiz"]["answer_image"] = _keep_media(p["quiz"].get("answer_image"))
-        path = os.path.join(PROJ_DIR, f"{tpl}_{_stamp()}.json")
+        stamp = _stamp()
+        if tpl == "mcq":
+            p["mcq"]["narration"] = _keep_media_list(p["mcq"].get("narration"),
+                                                     os.path.join(MEDIA_DIR, f"narration_{stamp}"))
+        path = os.path.join(PROJ_DIR, f"{tpl}_{stamp}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(p, f, ensure_ascii=False, indent=2)
         return f"💾 Project saved to `{os.path.relpath(path, ROOT)}`"
@@ -434,20 +470,33 @@ def build_ui():
                         with gr.Tab("⏱️ Design & timing"):
                             with gr.Column(elem_classes="pane"):
                                 with gr.Row():
-                                    m_style = gr.Dropdown(STYLE_NAMES, value="Game Show", label="Design style",
-                                                          info="Classic uses the Theme from 'Style & sound'")
+                                    m_style = gr.Dropdown(STYLE_NAMES, value="Game Show", label="Design style")
                                     m_timer = gr.Dropdown(TIMER_NAMES, value="Ring", label="Timer type")
                                     m_acc = gr.Dropdown(COLOR_NAMES, value="gold", allow_custom_value=True,
                                                         label="Accent color")
                                 with gr.Row():
                                     m_think = gr.Slider(2, 10, value=5, step=0.5, label="Seconds to think (countdown)")
                                     m_rev = gr.Slider(1.5, 5, value=2.8, step=0.1, label="Seconds to show the answer")
+                                m_colors = gr.Radio([("Style's own colours", "style"), ("Theme colours", "theme")],
+                                                    value="style", label="Colours",
+                                                    info="Theme colours = background and cards follow the Theme in "
+                                                         "'🎨 Style & sound', with this style's shapes, borders and glow. "
+                                                         "(Classic always uses the Theme.)")
+                        with gr.Tab("🎙️ Narration"):
+                            with gr.Column(elem_classes="pane"):
+                                gr.Markdown(NARRATION_HELP)
+                                m_narr = gr.File(file_count="multiple", type="filepath", file_types=["audio"],
+                                                 label="Narration clips (select many at once)", height=170)
+                                m_narr_gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Narration volume")
+                                m_narr_info = gr.Markdown("No narration clips yet.")
                         mq_st = style_tab()
                         mq_end = ending_tab()
                     mq_fields = shared_fields(mq_st, mq_end) + [m_title, m_sub, m_qs, m_think, m_rev, m_acc, m_style,
-                                                                 m_timer]
+                                                                 m_timer, m_colors, m_narr, m_narr_gain]
                 mq_pv = preview_panel("mcq")
             wire(mq_proj, mq_pv, mq_fields)
+            gr.on(triggers=[m_narr.change, m_qs.change], fn=narration_report, inputs=[m_narr, m_qs],
+                  outputs=m_narr_info, trigger_mode="always_last", show_progress="hidden")
 
         with gr.Tab("📘 Help"):
             gr.Markdown(HELP)
