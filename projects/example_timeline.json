@@ -1,0 +1,56 @@
+{
+  "template": "timeline",
+  "settings": {
+    "theme": "Night Sky",
+    "language": "ar",
+    "fps": 30,
+    "music": "Tension",
+    "music_gain": 1.0,
+    "music_file": "",
+    "voice_file": "",
+    "voice_offset": 0.5,
+    "voice_gain": 1.0,
+    "handle": "@Ma3loomaFast",
+    "font_file": ""
+  },
+  "ending": {
+    "intro": "سؤال الحلقة القادمة:",
+    "question": "أيّ جامعة عربية\n[gold]أقدم من أكسفورد؟",
+    "cta": "اكتب جوابك في التعليقات"
+  },
+  "timeline": {
+    "mode": "calendar",
+    "events": [
+      {
+        "name": "الهرم الأكبر",
+        "year": -2560,
+        "label": "نحو 2560 ق.م",
+        "color": "sand",
+        "icon": "pyramid",
+        "image": ""
+      },
+      {
+        "name": "كليوباترا",
+        "year": -30,
+        "label": "توفيت 30 ق.م",
+        "color": "gold",
+        "icon": "ankh",
+        "image": ""
+      },
+      {
+        "name": "الهبوط على القمر",
+        "year": 1969,
+        "label": "1969 م",
+        "color": "blue",
+        "icon": "moon",
+        "image": ""
+      }
+    ],
+    "hook": "كليوباترا أقرب إلى\n[blue]هبوط الإنسان على القمر\n[sand]منها إلى بناء الهرم!",
+    "hide_first_in_hook": true,
+    "doubt": "مستحيل؟",
+    "doubt_sub": "تابع الخط الزمني…",
+    "compare_title": "قارن بنفسك…",
+    "reveal": "[gold]كليوباترا أقرب إلينا\nمن الأهرامات!"
+  }
+}

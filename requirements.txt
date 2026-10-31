@@ -1,0 +1,7 @@
+gradio>=5.0
+pillow>=10.0
+numpy>=1.24
+imageio-ffmpeg>=0.5
+arabic-reshaper>=3.0
+python-bidi>=0.4
+fonttools>=4.40

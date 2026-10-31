@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+outputs/*
+!outputs/.keep
+projects/media/*
+!projects/media/.keep

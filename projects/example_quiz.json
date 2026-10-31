@@ -1,0 +1,32 @@
+{
+  "template": "quiz",
+  "settings": {
+    "theme": "Deep Purple",
+    "language": "ar",
+    "fps": 30,
+    "music": "Pulse",
+    "music_gain": 1.0,
+    "music_file": "",
+    "voice_file": "",
+    "voice_offset": 0.5,
+    "voice_gain": 1.0,
+    "handle": "@Ma3loomaFast",
+    "font_file": ""
+  },
+  "ending": {
+    "intro": "تحدي الحلقة القادمة:",
+    "question": "خمّن المدينة\n[gold]من 5 أدلة فقط!",
+    "cta": "كم دليلاً احتجت؟ اكتب في التعليقات"
+  },
+  "quiz": {
+    "title": "خمّن… من أنا؟",
+    "subtitle": "5 أدلة — حاول قبل الجواب!",
+    "clues": "وُلدتُ في البصرة نحو سنة 965م\nقضيتُ سنوات في القاهرة أدرس الضوء\nأثبتُّ أن الضوء يدخل العين ولا يخرج منها\nكتابي «المناظر» غيّر علم البصريات في أوروبا\nيسمّيني كثيرون «أبو المنهج العلمي»",
+    "clue_seconds": 4.0,
+    "answer_intro": "الجواب…",
+    "answer": "ابن الهيثم",
+    "answer_sub": "عالم البصريات (965 – 1040م)",
+    "answer_image": "",
+    "accent": "gold"
+  }
+}
