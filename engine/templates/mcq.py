@@ -25,7 +25,7 @@ from ..core import (GREY, WHITE, Stars, draw_ending, draw_scene, ease_out_back, 
 from ..audio import audio_length
 from ..mcq_styles import STYLE_NAMES, Backdrop, build_box, get_style, letter_badge, with_theme_colors
 from ..strings import S
-from ..timers import TIMER_NAMES, draw_timer
+from ..timers import TIMER_FX, TIMER_NAMES, draw_timer
 
 NAME = "Multiple Choice"
 OPT_COLORS = ["gold", "blue", "pink", "purple"]
@@ -55,6 +55,7 @@ EXAMPLE = {
         "style": "Game Show",
         "timer": "Ring",
         "colors": "style",
+        "timer_fx": ["pulse", "glow", "ripple", "shake"],
         "narration": [],
         "narration_gain": 1.0,
     },
@@ -167,6 +168,8 @@ class MCQVideo:
         self.accent = to_rgb(m.get("accent") or "gold")
         self.st = get_style(m.get("style"))
         self.timer = m.get("timer") if m.get("timer") in TIMER_NAMES else "Ring"
+        valid_fx = {k for _, k in TIMER_FX}
+        self.timer_fx = [k for k in (m.get("timer_fx") or []) if k in valid_fx]
         if m.get("colors") == "theme":
             self.st = with_theme_colors(self.st, s.get("theme"))
         self.backdrop = Backdrop(self.st, s.get("theme"), self.accent)
@@ -347,7 +350,8 @@ class MCQVideo:
             col = RED if (r - u) <= 2 and u >= ts else self.accent
             a = prog(u, ts - 0.3, ts) * (1 - prog(u, r, r + 0.2))
             total = int(math.ceil(T))
-            draw_timer(self.timer, frame, 540, ty, rem, min(total, left), total, col, self.ink, max(0.0, u - ts), a, self.rtl)
+            draw_timer(self.timer, frame, 540, ty, rem, min(total, left), total, col, self.ink, max(0.0, u - ts), a, self.rtl,
+                       self.timer_fx)
         if q["expl_lines"] and u >= r + 0.2:
             pe = prog(u, r + 0.2, r + 0.5)
             for k, line in enumerate(q["expl_lines"]):

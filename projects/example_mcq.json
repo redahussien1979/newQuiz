@@ -26,6 +26,7 @@
     "reveal_seconds": 2.8,
     "accent": "gold",
     "style": "Game Show",
-    "timer": "Ring"
+    "timer": "Ring",
+    "timer_fx": ["pulse", "glow", "ripple", "shake"]
   }
 }

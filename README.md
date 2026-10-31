@@ -100,7 +100,9 @@ Each question waits for its clips (the countdown starts after the last option is
 4. Pick a video and press **📥 Load into editor** to preview it, then **🎬 Render all videos**. They are saved in `outputs/batch_<date>/` together with a project file for each video, which you can open later to change one video.
 Rows with problems (no question, fewer than 2 options, unclear correct answer) are skipped and listed; a missing audio file is reported and the question is kept without it.
 
-**Timer types:** Ring, Pie, Bar, Hourglass, Digital (00:05), Segments (battery blocks) and Fuse (a burning fuse running to a bomb, with a sizzle sound). All of them turn red with faster, higher ticks in the last 2 seconds.
+**Timer types:** Ring, Pie, Bar, Hourglass, Digital (00:05), Segments (battery blocks), Fuse (a burning fuse running to a bomb, with a sizzle sound), Neon Ring (glowing arc with a bright tip), Dots (a clock of 12 dots going dark), Flip Clock (cards that flip every second), Stopwatch (sweeping hand), Liquid (a glass draining with a wavy surface and bubbles) and Big Number (a huge number that pops in each second). All of them turn red with faster, higher ticks in the last 2 seconds.
+
+**Timer effects** (⏱️ Design & timing, any mix, with every timer type): **Pulse** on every tick, **Glow** halo, **Ripple** wave from each tick, **Shake** in the last 3 seconds and a **Red flash** of the screen edges in the last 3 seconds.
 
 ### Sound
 - **Built-in moods** (Tension, Mystery, Calm, Pulse) are generated from scratch, so there are no copyright claims.

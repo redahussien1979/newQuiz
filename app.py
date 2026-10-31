@@ -17,7 +17,7 @@ from engine.audio import MOODS
 from engine.core import COLOR_NAMES, THEME_NAMES
 from engine.icons import ICON_NAMES
 from engine.mcq_styles import STYLE_NAMES
-from engine.timers import TIMER_NAMES
+from engine.timers import TIMER_FX, TIMER_NAMES
 from engine.render import render_clip, render_still, render_video
 from engine.templates import TEMPLATES
 from engine.templates.mcq import narration_report, parse_questions
@@ -39,11 +39,11 @@ TL_KEYS = ["mode", "hook", "hide_first_in_hook", "doubt", "doubt_sub", "compare_
 EV_KEYS = ["enabled", "name", "year", "label", "color", "icon", "image"]
 QZ_KEYS = ["title", "subtitle", "clues", "clue_seconds", "answer_intro", "answer", "answer_sub", "answer_image", "accent"]
 MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", "accent", "style", "timer",
-           "colors", "narration", "narration_gain"]
+           "colors", "narration", "narration_gain", "timer_fx"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image"}
 MEDIA_LISTS = {"narration"}  # fields holding several files
-DEFAULTS = {"colors": "style", "narration_gain": 1.0}  # for projects saved before these options existed
+DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": []}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -78,7 +78,8 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 **Colours:** pick *Theme colours* (Design & timing) so any style follows your Theme; Classic always does.
 **Excel batch:** in the 📊 Excel batch tab upload a sheet (get the template there), choose how many questions per video, and render all the videos at once (30 questions at 5 per video = 6 videos).
 **Narration:** in the 🎙️ Narration tab upload clips named `q1` (question 1), `q1a`…`q1d` (its options) and `q1e` (its explanation). Each question waits for its clips.
-**Timers:** Ring, Pie, Bar, Hourglass, Digital (00:05), Segments (battery blocks), Fuse (burning fuse and bomb, with a sizzle sound).
+**Timers:** Ring, Pie, Bar, Hourglass, Digital (00:05), Segments (battery blocks), Fuse (burning fuse and bomb, with a sizzle sound), Neon Ring, Dots, Flip Clock, Stopwatch, Liquid, Big Number.
+**Timer effects** (Design & timing): Pulse on every tick, Glow, Ripple wave, Shake and Red flash in the last 3 seconds — any mix, with every timer.
 
 ### Timeline tips
 - **Calendar years**: type BC years as negative numbers (2560 BC → `-2560`).
@@ -693,6 +694,9 @@ def build_ui():
                                 with gr.Row():
                                     m_think = gr.Slider(2, 10, value=5, step=0.5, label="Seconds to think (countdown)")
                                     m_rev = gr.Slider(1.5, 5, value=2.8, step=0.1, label="Seconds to show the answer")
+                                m_fx = gr.CheckboxGroup(TIMER_FX, value=["pulse", "glow", "ripple", "shake"],
+                                                        label="Timer effects while ticking",
+                                                        info="Pick any mix — they work with every timer type.")
                                 m_colors = gr.Radio([("Style's own colours", "style"), ("Theme colours", "theme")],
                                                     value="style", label="Colours",
                                                     info="Theme colours = background and cards follow the Theme in "
@@ -711,7 +715,7 @@ def build_ui():
                         mq_st = style_tab()
                         mq_end = ending_tab(COUNT_NOTE)
                     mq_fields = shared_fields(mq_st, mq_end) + [m_title, m_sub, m_qs, m_think, m_rev, m_acc, m_style,
-                                                                 m_timer, m_colors, m_narr, m_narr_gain]
+                                                                 m_timer, m_colors, m_narr, m_narr_gain, m_fx]
                 mq_pv = preview_panel("mcq")
             wire(mq_proj, mq_pv, mq_fields)
             gr.on(triggers=[m_narr.change, m_qs.change], fn=narration_report, inputs=[m_narr, m_qs],
