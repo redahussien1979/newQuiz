@@ -243,7 +243,7 @@ def make_actions(tpl):
         try:
             project = values_to_project(tpl, vals)
             out = os.path.join(OUT_DIR, f"{tpl}_{_stamp()}.mp4")
-            progress(0, desc="Rendering…")
+            progress(0, desc="Preparing sound…")
 
             def cb(x):
                 try:
@@ -448,7 +448,7 @@ def wire(proj, pv, fields):
 # ------------------------------------------------------------------ Excel batch (Multiple Choice)
 BATCH_HELP = """**Make many videos from one spreadsheet.** One question per row with the columns
 `Question · Option A–D · Correct · Explanation` and, optionally, `Question audio · A–D audio · Explanation audio`
-(English or Arabic headers — get the **template** below). Every video uses the design, timer, music and ending
+(English or Arabic headers — get the **template** on the right). Every video uses the design, timer, music and ending
 you set in the other tabs. In the title, `{n}` becomes the video number and `{total}` the number of videos
 (leave it empty to use the Title from 📝 Questions)."""
 
@@ -465,11 +465,14 @@ def _template_path():
 
 
 def batch_tab():
-    gr.Markdown(BATCH_HELP)
+    with gr.Row(equal_height=True):
+        gr.Markdown(BATCH_HELP)
+        tpl = _template_path()
+        gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), size="sm", min_width=130, scale=0)
     with gr.Row():
         sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Questions sheet (.xlsx or .csv)",
-                        height=130)
-        clips = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=130,
+                        height=120)
+        clips = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=120,
                         label="Audio clips named in the sheet (optional)")
     folder = gr.Textbox(label="…or the folder on this computer that holds the clips (optional)",
                         placeholder=r"C:\quiz\audio")
@@ -477,14 +480,14 @@ def batch_tab():
         per = gr.Slider(1, batch.MAX_PER_VIDEO, value=5, step=1, label="Questions per video")
         title = gr.Textbox(label="Title of each video (optional)", rtl=True,
                            placeholder="اختبر معلوماتك — الجزء {n} من {total}")
-    info = gr.Markdown("Upload a sheet to see how many videos it makes.")
     with gr.Row(equal_height=True):
-        part = gr.Dropdown([], label="Preview video", scale=2)
+        info = gr.Markdown("Upload a sheet to see how many videos it makes.")
+        go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, min_width=230, scale=0)
+    files = gr.File(label="Rendered videos (each is a separate file)", file_count="multiple", visible=False,
+                    height=150)
+    with gr.Row(equal_height=True):
+        part = gr.Dropdown([], label="Preview one video in the editor", scale=2)
         load = gr.Button("📥 Load into editor", scale=1, min_width=120)
-        tpl = _template_path()
-        gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), scale=1, min_width=120)
-    go = gr.Button("🎬 Render all videos", variant="primary")
-    files = gr.File(label="Rendered videos", file_count="multiple", visible=False, height=150)
     return dict(sheet=sheet, clips=clips, folder=folder, per=per, title=title, info=info, part=part, load=load,
                 go=go, files=files)
 
@@ -499,16 +502,20 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
     inputs = [xl["sheet"], xl["clips"], xl["folder"], xl["per"]]
 
     def check(sheet, clips, folder, per):
+        off = gr.update(value="🎬 Render all videos", interactive=False)
         if not sheet:
-            return "Upload a sheet to see how many videos it makes.", gr.update(choices=[], value=None)
+            return "Upload a sheet to see how many videos it makes.", gr.update(choices=[], value=None), off
         try:
             items, problems = _read_batch(sheet, clips, folder)
         except Exception as e:
-            return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None)
+            return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
         parts = batch.split(items, per)
         choices = [(f"Video {k} — {len(p)} questions (rows {p[0]['row']}–{p[-1]['row']})", k)
                    for k, p in enumerate(parts, 1)]
-        return batch.summary(items, problems, per), gr.update(choices=choices, value=1 if choices else None)
+        n = len(parts)
+        go = gr.update(value=f"🎬 Render all {n} video{'s' if n != 1 else ''}" if n else "🎬 Render all videos",
+                       interactive=bool(n))
+        return batch.summary(items, problems, per), gr.update(choices=choices, value=1 if choices else None), go
 
     def load_part(sheet, clips, folder, per, k, title_tpl, cur_title):
         try:
@@ -522,7 +529,8 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
         except Exception as e:
             raise gr.Error(_msg(e))
         new_title = batch.fill_title(title_tpl, k, len(parts)) if str(title_tpl or "").strip() else cur_title
-        gr.Info(f"Video {k} of {len(parts)} is in the editor — the preview shows it.")
+        gr.Info(f"Video {k} of {len(parts)} is in the editor. 🎬 Render video makes only this one — "
+                f"use 🎬 Render all in 📊 Excel batch for all {len(parts)}.", duration=8)
         return batch.questions_text(chunk), narr or None, new_title
 
     def start(request: gr.Request):
@@ -551,16 +559,17 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
                 with open(os.path.join(out_dir, name + ".json"), "w", encoding="utf-8") as f:
                     json.dump(project, f, ensure_ascii=False, indent=2)
                 out = os.path.join(out_dir, name + ".mp4")
-                progress((k - 1) / total, desc=f"Video {k} of {total}…")
+                progress((k - 1) / total, desc=f"Video {k} of {total}: preparing sound…")
 
                 def cb(x, k=k):
                     try:
-                        progress((k - 1 + x) / total, desc=f"Video {k} of {total}…")
+                        progress((k - 1 + x) / total, desc=f"Video {k} of {total}: rendering frames…")
                     except Exception:
                         pass
                 render_video(project, out, cb)
                 done.append(out)
-            msg = f"✅ {total} video{'s' if total != 1 else ''} saved in `{os.path.relpath(out_dir, ROOT)}`"
+            msg = (f"✅ {total} video{'s' if total != 1 else ''} saved in `{os.path.relpath(out_dir, ROOT)}`"
+                   + (" — the player shows the last one" if total > 1 else ""))
             return (done[-1], msg, gr.update(value=done, visible=True), *unlock)
         except Exception as e:
             gr.Warning(_msg(e))
@@ -570,7 +579,7 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
         finally:
             _release(request)
 
-    gr.on(triggers=[c.change for c in inputs], fn=check, inputs=inputs, outputs=[xl["info"], xl["part"]],
+    gr.on(triggers=[c.change for c in inputs], fn=check, inputs=inputs, outputs=[xl["info"], xl["part"], xl["go"]],
           trigger_mode="always_last", show_progress="hidden")
     xl["load"].click(load_part, inputs + [xl["part"], xl["title"], m_title], [m_qs, m_narr, m_title])
     xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"]], queue=False) \
