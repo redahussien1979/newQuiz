@@ -7,7 +7,7 @@ Three ready templates:
 | Template | What it makes |
 |---|---|
 | **⏳ Timeline Collision** | 2–5 events on a flying timeline, year counters, comparison bars, a bass-hit reveal and an ending teaser. Works with calendar years (BC/AD) or deep time ("150 million years ago"). |
-| **✅ Multiple Choice** | Up to 10 questions with 3 or 4 options each, a countdown ring with ticking, then the correct answer turns green with a "ding" and an optional explanation. |
+| **✅ Multiple Choice** | Up to 10 questions with 2–4 options each, a countdown timer with ticking, then the correct answer turns green with a "ding" and an optional explanation. Optional narration clips, and many videos at once from an Excel sheet. |
 | **❓ Clue Quiz** | One mystery answer revealed after 1–8 clues, each with a countdown bar and ticking sound, then a big reveal with confetti and an optional photo. |
 
 ---
@@ -88,6 +88,17 @@ Write each question as a block, with an empty line between questions:
 
 Each question waits for its clips (the countdown starts after the last option is read), the music ducks under them, and the tab lists which clips matched and warns about names it doesn't recognise. Saving the project copies the clips into `projects/media`.
 
+**Many videos from an Excel sheet** (📊 Excel batch tab):
+1. Press **⬇️ Excel template** (also in `projects/questions_template.xlsx`) and fill one question per row:
+   `Question · Option A · Option B · Option C · Option D · Correct · Explanation`, plus optional audio columns
+   `Question audio · A audio · B audio · C audio · D audio · Explanation audio`. Arabic headers (السؤال، الخيار أ، الإجابة الصحيحة، الشرح، صوت السؤال …) work too.
+   - **Correct**: A/B/C/D, أ/ب/ج/د, 1–4, or the exact text of the right option.
+   - **Audio cells**: the clip's file name. Upload the clips in the tab, or type the folder that holds them (or put full paths in the cells).
+2. Upload the sheet, choose **Questions per video** (1–10). 30 questions at 5 per video → 6 videos; a smaller remainder becomes the last video.
+3. Optional **Title of each video** with `{n}` and `{total}`, e.g. `اختبر معلوماتك — الجزء {n} من {total}`.
+4. Pick a video and press **📥 Load into editor** to preview it, then **🎬 Render all videos**. They are saved in `outputs/batch_<date>/` together with a project file for each video, which you can open later to change one video.
+Rows with problems (no question, fewer than 2 options, unclear correct answer) are skipped and listed; a missing audio file is reported and the question is kept without it.
+
 **Timer types:** Ring, Pie, Bar, Hourglass, Digital (00:05), Segments (battery blocks) and Fuse (a burning fuse running to a bomb, with a sizzle sound). All of them turn red with faster, higher ticks in the last 2 seconds.
 
 ### Sound
@@ -108,6 +119,7 @@ Each question waits for its clips (the countdown starts after the last option is
 | **Gradio** | The browser interface (forms, preview, video player). |
 | **arabic-reshaper + python-bidi** | Correct joined, right-to-left Arabic text on systems without native text shaping (usually Windows). |
 | **fontTools** | Checks which Arabic letter forms the font has, so no letters show as boxes. |
+| **openpyxl** | Reads your Excel question sheets and writes the Excel template (Excel batch). |
 | **Cairo font** (Google Fonts, OFL licence) | The Arabic/Latin typeface. You can upload any other .ttf in the app. |
 
 ### How a video is made

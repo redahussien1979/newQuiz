@@ -20,7 +20,8 @@ from engine.mcq_styles import STYLE_NAMES
 from engine.timers import TIMER_NAMES
 from engine.render import render_clip, render_still, render_video
 from engine.templates import TEMPLATES
-from engine.templates.mcq import narration_report
+from engine.templates.mcq import narration_report, parse_questions
+from engine import batch
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(ROOT, "outputs")
@@ -75,6 +76,7 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 **Design styles:** Classic (uses your Theme), Neon, Glass, Game Show, Paper (light), Sunset, Minimal, Luxury (black & gold), Clean Light (light), Tech HUD, Aurora, Blueprint.
 **Themes:** Night Sky, Desert Night, Emerald, Deep Purple, Charcoal, Royal Blue, Ocean, Midnight Gold, Crimson, Slate, Aurora, Rose Wine, Cyber Night.
 **Colours:** pick *Theme colours* (Design & timing) so any style follows your Theme; Classic always does.
+**Excel batch:** in the 📊 Excel batch tab upload a sheet (get the template there), choose how many questions per video, and render all the videos at once (30 questions at 5 per video = 6 videos).
 **Narration:** in the 🎙️ Narration tab upload clips named `q1` (question 1), `q1a`…`q1d` (its options) and `q1e` (its explanation). Each question waits for its clips.
 **Timers:** Ring, Pie, Bar, Hourglass, Digital (00:05), Segments (battery blocks), Fuse (burning fuse and bomb, with a sizzle sound).
 
@@ -443,6 +445,139 @@ def wire(proj, pv, fields):
         .success(do_render, fields, work_out)
 
 
+# ------------------------------------------------------------------ Excel batch (Multiple Choice)
+BATCH_HELP = """**Make many videos from one spreadsheet.** One question per row with the columns
+`Question · Option A–D · Correct · Explanation` and, optionally, `Question audio · A–D audio · Explanation audio`
+(English or Arabic headers — get the **template** below). Every video uses the design, timer, music and ending
+you set in the other tabs. In the title, `{n}` becomes the video number and `{total}` the number of videos
+(leave it empty to use the Title from 📝 Questions)."""
+
+
+def _template_path():
+    path = os.path.join(PROJ_DIR, "questions_template.xlsx")
+    if not os.path.isfile(path):
+        try:
+            items = parse_questions(TEMPLATES["mcq"][2]["mcq"]["questions"])
+            batch.write_template(path, [dict(it, n=i) for i, it in enumerate(items, 1)])
+        except Exception:  # openpyxl missing: no template button
+            return None
+    return path
+
+
+def batch_tab():
+    gr.Markdown(BATCH_HELP)
+    with gr.Row():
+        sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Questions sheet (.xlsx or .csv)",
+                        height=130)
+        clips = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=130,
+                        label="Audio clips named in the sheet (optional)")
+    folder = gr.Textbox(label="…or the folder on this computer that holds the clips (optional)",
+                        placeholder=r"C:\quiz\audio")
+    with gr.Row():
+        per = gr.Slider(1, batch.MAX_PER_VIDEO, value=5, step=1, label="Questions per video")
+        title = gr.Textbox(label="Title of each video (optional)", rtl=True,
+                           placeholder="اختبر معلوماتك — الجزء {n} من {total}")
+    info = gr.Markdown("Upload a sheet to see how many videos it makes.")
+    with gr.Row(equal_height=True):
+        part = gr.Dropdown([], label="Preview video", scale=2)
+        load = gr.Button("📥 Load into editor", scale=1, min_width=120)
+        tpl = _template_path()
+        gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), scale=1, min_width=120)
+    go = gr.Button("🎬 Render all videos", variant="primary")
+    files = gr.File(label="Rendered videos", file_count="multiple", visible=False, height=150)
+    return dict(sheet=sheet, clips=clips, folder=folder, per=per, title=title, info=info, part=part, load=load,
+                go=go, files=files)
+
+
+def _read_batch(sheet, clips, folder):
+    if not sheet:
+        raise ValueError("Upload a questions sheet first.")
+    return batch.load_sheet(sheet, clips or [], folder or "")
+
+
+def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
+    inputs = [xl["sheet"], xl["clips"], xl["folder"], xl["per"]]
+
+    def check(sheet, clips, folder, per):
+        if not sheet:
+            return "Upload a sheet to see how many videos it makes.", gr.update(choices=[], value=None)
+        try:
+            items, problems = _read_batch(sheet, clips, folder)
+        except Exception as e:
+            return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None)
+        parts = batch.split(items, per)
+        choices = [(f"Video {k} — {len(p)} questions (rows {p[0]['row']}–{p[-1]['row']})", k)
+                   for k, p in enumerate(parts, 1)]
+        return batch.summary(items, problems, per), gr.update(choices=choices, value=1 if choices else None)
+
+    def load_part(sheet, clips, folder, per, k, title_tpl, cur_title):
+        try:
+            items, _ = _read_batch(sheet, clips, folder)
+            parts = batch.split(items, per)
+            k = int(k or 1)
+            if not 1 <= k <= len(parts):
+                raise ValueError("Pick a video to preview.")
+            chunk = parts[k - 1]
+            narr = batch.narration_files(chunk, os.path.join(OUT_DIR, "_batch_preview", f"video_{k:02d}"))
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        new_title = batch.fill_title(title_tpl, k, len(parts)) if str(title_tpl or "").strip() else cur_title
+        gr.Info(f"Video {k} of {len(parts)} is in the editor — the preview shows it.")
+        return batch.questions_text(chunk), narr or None, new_title
+
+    def start(request: gr.Request):
+        if not _claim(request):
+            raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+        return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
+                gr.update(interactive=False), "⏳ Rendering all videos…")
+
+    def render_all(request: gr.Request, sheet, clips, folder, per, title_tpl, *vals, progress=gr.Progress()):
+        done = []
+        unlock = (False, gr.update(selected="vid"), gr.update(interactive=True), gr.update(interactive=True),
+                  gr.update(interactive=True))
+        try:
+            items, problems = _read_batch(sheet, clips, folder)
+            parts = batch.split(items, per)
+            if not parts:
+                raise ValueError("The sheet has no usable questions." + (f" First problem: {problems[0]}" if problems else ""))
+            base = values_to_project("mcq", vals)
+            out_dir = os.path.join(OUT_DIR, f"batch_{_stamp()}")
+            os.makedirs(out_dir, exist_ok=True)
+            total = len(parts)
+            for k, chunk in enumerate(parts, 1):
+                name = f"mcq_video_{k:02d}_of_{total:02d}"
+                project = batch.part_project(base, chunk, k, total, os.path.join(out_dir, f"{name}_audio"),
+                                             title_tpl if str(title_tpl or "").strip() else None)
+                with open(os.path.join(out_dir, name + ".json"), "w", encoding="utf-8") as f:
+                    json.dump(project, f, ensure_ascii=False, indent=2)
+                out = os.path.join(out_dir, name + ".mp4")
+                progress((k - 1) / total, desc=f"Video {k} of {total}…")
+
+                def cb(x, k=k):
+                    try:
+                        progress((k - 1 + x) / total, desc=f"Video {k} of {total}…")
+                    except Exception:
+                        pass
+                render_video(project, out, cb)
+                done.append(out)
+            msg = f"✅ {total} video{'s' if total != 1 else ''} saved in `{os.path.relpath(out_dir, ROOT)}`"
+            return (done[-1], msg, gr.update(value=done, visible=True), *unlock)
+        except Exception as e:
+            gr.Warning(_msg(e))
+            got = f" ({len(done)} finished before the error)" if done else ""
+            return (done[-1] if done else gr.update(), f"⚠️ {_msg(e)}{got}",
+                    gr.update(value=done or None, visible=bool(done)), *unlock)
+        finally:
+            _release(request)
+
+    gr.on(triggers=[c.change for c in inputs], fn=check, inputs=inputs, outputs=[xl["info"], xl["part"]],
+          trigger_mode="always_last", show_progress="hidden")
+    xl["load"].click(load_part, inputs + [xl["part"], xl["title"], m_title], [m_qs, m_narr, m_title])
+    xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"]], queue=False) \
+        .success(render_all, inputs + [xl["title"]] + fields,
+                 [pv["vid"], pv["info"], xl["files"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]])
+
+
 def build_ui():
     kw = {"css": CSS} if "css" in inspect.signature(gr.Blocks.__init__).parameters else {}
     with gr.Blocks(title="Video Studio", **kw) as demo:
@@ -557,6 +692,9 @@ def build_ui():
                                                  label="Narration clips (select many at once)", height=170)
                                 m_narr_gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Narration volume")
                                 m_narr_info = gr.Markdown("No narration clips yet.")
+                        with gr.Tab("📊 Excel batch"):
+                            with gr.Column(elem_classes="pane"):
+                                xl = batch_tab()
                         mq_st = style_tab()
                         mq_end = ending_tab()
                     mq_fields = shared_fields(mq_st, mq_end) + [m_title, m_sub, m_qs, m_think, m_rev, m_acc, m_style,
@@ -565,6 +703,7 @@ def build_ui():
             wire(mq_proj, mq_pv, mq_fields)
             gr.on(triggers=[m_narr.change, m_qs.change], fn=narration_report, inputs=[m_narr, m_qs],
                   outputs=m_narr_info, trigger_mode="always_last", show_progress="hidden")
+            wire_batch(xl, mq_pv, mq_fields, m_qs, m_narr, m_title)
 
         with gr.Tab("📘 Help"):
             gr.Markdown(HELP)
