@@ -1,5 +1,8 @@
 """Build a video from a project dict (the same JSON the app saves)."""
+import json
 import os
+import threading
+from collections import OrderedDict
 
 from .audio import SR, Mixer, load_audio
 from .core import draw_safe_zone, encode, set_font
@@ -20,8 +23,47 @@ def build(project):
     return video
 
 
-def render_still(project, t, safe_zone=False):
-    video = build(project)
+_cache = OrderedDict()
+_cache_lock = threading.Lock()
+
+
+def _project_key(project):
+    key = json.dumps(project, sort_keys=True, ensure_ascii=False, default=str)
+    stamps = []
+
+    def walk(v):  # re-build if an uploaded file was replaced on disk
+        if isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+        elif isinstance(v, str) and 0 < len(v) < 1024 and "\n" not in v and os.path.isfile(v):
+            stamps.append(os.path.getmtime(v))
+    walk(project)
+    return key + repr(stamps)
+
+
+def build_cached(project, size=6):
+    """Like build(), but re-uses the last few built videos so scrubbing the preview time is instant."""
+    key = _project_key(project)
+    with _cache_lock:
+        video = _cache.get(key)
+        if video is not None:
+            _cache.move_to_end(key)
+    if video is None:
+        video = build(project)
+        with _cache_lock:
+            _cache[key] = video
+            while len(_cache) > size:
+                _cache.popitem(last=False)
+    else:
+        set_font(project.get("settings", {}).get("font_file"))
+    return video
+
+
+def render_still(project, t, safe_zone=False, cached=False):
+    video = build_cached(project) if cached else build(project)
     t = max(0.0, min(float(t), video.dur - 1.0 / video.fps))
     img = video.render(t).convert("RGBA")
     if safe_zone:

@@ -4,6 +4,7 @@ Run:  python app.py   (opens http://127.0.0.1:7860 in your browser)
 """
 import copy
 import datetime as dt
+import inspect
 import json
 import os
 import shutil
@@ -39,9 +40,10 @@ MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image"
 
 HELP = """
 ### How to use
-1. Pick a tab (**Timeline Collision** or **Clue Quiz**), or press **Load example** to start from a finished video.
-2. Fill in the fields. Use **Preview frame** with the time slider to check any moment instantly.
-3. Press **Render video**. The MP4 appears on the right and is also saved in the `outputs` folder.
+1. Pick a tab (**Timeline Collision**, **Clue Quiz** or **Multiple Choice**), or press **Load example** to start from a finished video.
+2. Fill in the fields. They are grouped in small tabs on the left (content, 🎨 Style & sound, 🔚 Ending), so everything fits on one screen.
+   The preview on the right **updates by itself** as you type. Move the time slider to check any moment.
+3. Press **Render video**. The MP4 appears on the right (🎞️ Video tab) and is also saved in the `outputs` folder.
 4. **Save project** keeps everything (including your images and audio) as a `.json` file you can reopen later.
 
 ### Text tricks
@@ -73,12 +75,14 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 - Upload a **voiceover** (mp3/wav/m4a): the music automatically lowers while you speak, and the video gets longer if your voice is longer.
 
 ### Previewing before you render
-- The preview picture **updates automatically** whenever you change anything. Move the **Preview time** slider to look at any moment.
-- **▶️ Quick motion preview** makes a small 6-second clip, with sound, starting at the slider time. It's ready in a few seconds, so you can check the animation and timer before the full render.
+- The preview picture **updates automatically** whenever you change anything, and the **Preview time** slider always spans the
+  whole video. Untick **Live update** if your computer is slow, then use **🔄 Refresh**.
+- If a field is half-typed (for example a question without options), the last good picture stays and a ⚠️ note explains what is missing.
+- **▶️ Quick motion** makes a small 6-second clip, with sound, starting at the slider time. It's ready in a few seconds, so you can check the animation and timer before the full render.
 - **🎬 Render video** makes the final full-quality MP4.
 
 ### Shorts safe zone
-Tick **Show safe zone** in the preview: red areas are covered by YouTube/TikTok buttons and captions, so keep important text out of them.
+Tick **Safe zone** under the preview: red areas are covered by YouTube/TikTok buttons and captions, so keep important text out of them.
 """
 
 
@@ -155,10 +159,10 @@ def _stamp():
 def make_actions(tpl):
     def preview(t, safe, *vals):
         try:
-            img, dur = render_still(values_to_project(tpl, vals), t, safe)
+            img, dur = render_still(values_to_project(tpl, vals), t, safe, cached=True)
         except Exception as e:
             raise gr.Error(str(e))
-        return img, f"Video length: **{dur:.1f} s**"
+        return img, f"Video length: **{dur:.1f} s**", gr.update(maximum=max(1.0, round(dur, 1)))
 
     def clip(t, *vals):
         try:
@@ -182,7 +186,7 @@ def make_actions(tpl):
             render_video(project, out, cb)
         except Exception as e:
             raise gr.Error(str(e))
-        return out, f"Saved to `{out}`"
+        return out, f"✅ Video saved to `{os.path.relpath(out, ROOT)}`"
 
     def save(*vals):
         p = values_to_project(tpl, vals)
@@ -196,7 +200,7 @@ def make_actions(tpl):
         path = os.path.join(PROJ_DIR, f"{tpl}_{_stamp()}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(p, f, ensure_ascii=False, indent=2)
-        return path
+        return f"💾 Project saved to `{os.path.relpath(path, ROOT)}`"
 
     def load(file):
         path = file if isinstance(file, str) else getattr(file, "name", None)
@@ -213,168 +217,251 @@ def make_actions(tpl):
 
 
 # ------------------------------------------------------------------ UI
-def shared_panel():
-    with gr.Accordion("🎨 Style, sound & ending", open=False):
-        with gr.Row():
-            theme = gr.Dropdown(THEME_NAMES, value="Night Sky", label="Theme")
-            lang = gr.Radio([("العربية", "ar"), ("English", "en")], value="ar", label="Language of auto texts")
-            fps = gr.Radio([30, 60], value=30, label="FPS")
-        with gr.Row():
-            music = gr.Dropdown(MOODS, value="Tension", label="Built-in music mood")
-            music_gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Music volume")
-            music_file = gr.Audio(type="filepath", label="Or your own music (optional)")
-        with gr.Row():
-            voice_file = gr.Audio(type="filepath", label="Voiceover (optional)")
-            with gr.Column():
+# One-page layout: editor sections in tabs on the left (each scrolls on its own if it is too tall),
+# the live preview with all playback / render controls fixed on the right.
+CSS = """
+.gradio-container {max-width: 100% !important; padding: 4px 14px !important;}
+footer {display: none !important;}
+#app-title h2 {margin: 0; font-size: 1.2rem;}
+.pane {max-height: calc(100vh - 225px); overflow-y: auto !important; overflow-x: hidden; flex-wrap: nowrap !important;
+       padding-right: 6px;}
+.pane > * {flex-shrink: 0 !important;}
+.preview-col {position: sticky; top: 4px; align-self: flex-start; gap: 8px !important;}
+.preview-col .row {gap: 8px !important;}
+.preview-col .tabitem {padding: 4px 0 0 0 !important;}
+.opt-row {align-items: center;}
+.opt-row label {padding: 4px 6px !important; white-space: nowrap;}
+.compact-btn button, button.compact-btn {min-width: 0 !important;}
+.info-line {height: 24px; overflow: hidden;}
+.info-line p {margin: 0 !important; font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+@media (max-width: 900px) { .pane {max-height: none;} .preview-col {position: static;} }
+"""
+PREVIEW_H = "calc(100vh - 404px)"
+
+
+def project_bar():
+    with gr.Row(equal_height=True):
+        ex_btn = gr.Button("✨ Load example", size="sm", elem_classes="compact-btn")
+        open_btn = gr.UploadButton("📂 Open project", file_types=[".json"], size="sm", elem_classes="compact-btn")
+        save_btn = gr.Button("💾 Save project", size="sm", elem_classes="compact-btn")
+    return dict(ex=ex_btn, open=open_btn, save=save_btn)
+
+
+def style_tab():
+    with gr.Tab("🎨 Style & sound"):
+        with gr.Column(elem_classes="pane"):
+            with gr.Row():
+                theme = gr.Dropdown(THEME_NAMES, value="Night Sky", label="Theme")
+                lang = gr.Radio([("العربية", "ar"), ("English", "en")], value="ar", label="Language of auto texts")
+                fps = gr.Radio([30, 60], value=30, label="FPS")
+            with gr.Row():
+                handle = gr.Textbox(value="@Ma3loomaFast", label="Channel handle (ending)")
+                font_file = gr.File(type="filepath", file_types=[".ttf", ".otf"], label="Custom font (optional)")
+            with gr.Row():
+                music = gr.Dropdown(MOODS, value="Tension", label="Built-in music mood")
+                music_gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Music volume")
+            with gr.Row():
                 voice_offset = gr.Number(value=0.5, label="Voice starts at (seconds)")
                 voice_gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
-        with gr.Row():
-            handle = gr.Textbox(value="@Ma3loomaFast", label="Channel handle (ending)")
-            font_file = gr.File(type="filepath", file_types=[".ttf", ".otf"], label="Custom font (optional)")
-        gr.Markdown("**Ending card** — teases the next episode")
-        with gr.Row():
+            with gr.Row():
+                music_file = gr.Audio(type="filepath", label="Or your own music (optional)")
+                voice_file = gr.Audio(type="filepath", label="Voiceover (optional)")
+    return dict(theme=theme, lang=lang, fps=fps, handle=handle, font_file=font_file, music=music,
+                music_gain=music_gain, music_file=music_file, voice_offset=voice_offset, voice_gain=voice_gain,
+                voice_file=voice_file)
+
+
+def ending_tab():
+    with gr.Tab("🔚 Ending"):
+        with gr.Column(elem_classes="pane"):
+            gr.Markdown("**Ending card** — teases the next episode")
             e_intro = gr.Textbox(label="Small intro line", rtl=True)
-            e_q = gr.Textbox(lines=2, label="Question (1–3 lines, tags allowed)", rtl=True)
+            e_q = gr.Textbox(lines=3, max_lines=4, label="Question (1–3 lines, tags allowed)", rtl=True)
             e_cta = gr.Textbox(label="Call to action", rtl=True)
-    return [theme, lang, music, music_gain, music_file, voice_file, voice_offset, voice_gain,
-            handle, font_file, fps, e_intro, e_q, e_cta]
+    return e_intro, e_q, e_cta
 
 
-def action_bar(tpl, fields):
+def shared_fields(st, ending):
+    """Shared controls in SHARED_KEYS order."""
+    return [st["theme"], st["lang"], st["music"], st["music_gain"], st["music_file"], st["voice_file"],
+            st["voice_offset"], st["voice_gain"], st["handle"], st["font_file"], st["fps"], *ending]
+
+
+def preview_panel(tpl):
+    """Right column: live picture / video, time slider and all render buttons — always visible."""
     preview, render, save, load, example, clip = make_actions(tpl)
-    with gr.Row():
-        ex_btn = gr.Button("✨ Load example")
-        open_btn = gr.UploadButton("📂 Open project", file_types=[".json"])
-        save_btn = gr.Button("💾 Save project")
-    saved = gr.File(label="Saved project", visible=True)
-    with gr.Row():
+    with gr.Column(scale=2, min_width=340, elem_classes="preview-col"):
+        with gr.Tabs(selected="pic") as out_tabs:
+            with gr.Tab("🖼️ Live preview", id="pic"):
+                img = gr.Image(label="Preview", type="pil", format="png", height=PREVIEW_H, show_label=False,
+                               interactive=False)
+            with gr.Tab("🎞️ Video", id="vid"):
+                vid = gr.Video(label="Video", height=PREVIEW_H, show_label=False)
+        with gr.Row(equal_height=True, elem_classes="opt-row"):
+            safe = gr.Checkbox(value=False, label="Safe zone", container=False, min_width=110)
+            auto = gr.Checkbox(value=True, label="Live update", container=False, min_width=110)
+            pv_btn = gr.Button("🔄 Refresh", size="sm", min_width=90)
         t = gr.Slider(0, 60, value=3.0, step=0.1, label="Preview time (s)")
-        safe = gr.Checkbox(value=False, label="Show safe zone")
-    with gr.Row():
-        pv_btn = gr.Button("🖼️ Preview frame")
-        clip_btn = gr.Button("▶️ Quick motion preview (6 s)")
-        rd_btn = gr.Button("🎬 Render video", variant="primary")
-    auto = gr.Checkbox(value=True, label="Auto-refresh the preview picture when I change something")
-    info = gr.Markdown()
-    return dict(ex=ex_btn, open=open_btn, save=save_btn, saved=saved, t=t, safe=safe, pv=pv_btn, rd=rd_btn,
-                clip=clip_btn, auto=auto, info=info, fns=(preview, render, save, load, example, clip))
+        with gr.Row(equal_height=True):
+            clip_btn = gr.Button("▶️ Quick motion (6 s)", min_width=130)
+            rd_btn = gr.Button("🎬 Render video", variant="primary", min_width=130)
+        info = gr.Markdown(elem_classes="info-line")
+    return dict(img=img, vid=vid, tabs=out_tabs, t=t, safe=safe, auto=auto, pv=pv_btn, clip=clip_btn, rd=rd_btn,
+                info=info, fns=(preview, render, save, load, example, clip))
 
 
-def wire(bar, fields, img_out, vid_out):
-    preview, render, save, load, example, clip = bar["fns"]
-    pv_in = [bar["t"], bar["safe"]] + fields
-    pv_out = [img_out, bar["info"]]
+def wire(proj, pv, fields):
+    preview, render, save, load, example, clip = pv["fns"]
+    pv_in = [pv["t"], pv["safe"]] + fields
+    pv_out = [pv["img"], pv["info"], pv["t"], pv["tabs"]]
+
+    def show_picture(*args):
+        return (*preview(*args), gr.update(selected="pic"))
 
     def auto_preview(on, *args):
         if not on:
-            return gr.update(), gr.update()
+            return gr.update(), gr.update(), gr.update(), gr.update()
         try:
-            return preview(*args)
+            return show_picture(*args)
         except Exception as e:  # half-typed input: keep the last good picture
-            return gr.update(), f"⚠️ {e}"
+            return gr.update(), f"⚠️ {e}", gr.update(), gr.update()
 
-    gr.on(triggers=[c.change for c in [bar["t"], bar["safe"]] + fields], fn=auto_preview,
-          inputs=[bar["auto"]] + pv_in, outputs=pv_out, trigger_mode="always_last", show_progress="hidden")
-    bar["ex"].click(example, None, fields)
-    bar["open"].upload(load, bar["open"], fields)
-    bar["save"].click(save, fields, bar["saved"])
-    bar["pv"].click(preview, pv_in, pv_out)
-    bar["clip"].click(clip, [bar["t"]] + fields, [vid_out, bar["info"]])
-    bar["rd"].click(render, fields, [vid_out, bar["info"]])
+    def show_video():
+        return gr.update(selected="vid")
+
+    gr.on(triggers=[c.change for c in [pv["t"], pv["safe"], pv["auto"]] + fields], fn=auto_preview,
+          inputs=[pv["auto"]] + pv_in, outputs=pv_out, trigger_mode="always_last", show_progress="hidden")
+    proj["ex"].click(example, None, fields)
+    proj["open"].upload(load, proj["open"], fields)
+    proj["save"].click(save, fields, pv["info"])
+    pv["pv"].click(show_picture, pv_in, pv_out)
+    pv["clip"].click(show_video, None, pv["tabs"], queue=False).then(clip, [pv["t"]] + fields, [pv["vid"], pv["info"]])
+    pv["rd"].click(show_video, None, pv["tabs"], queue=False).then(render, fields, [pv["vid"], pv["info"]])
 
 
 def build_ui():
-    tl_ex = TEMPLATES["timeline"][2]
-    with gr.Blocks(title="Video Studio") as demo:
-        gr.Markdown("# 🎬 Video Studio\nAnimated Shorts from your own facts — timeline collisions, clue quizzes and multiple-choice quizzes.")
+    kw = {"css": CSS} if "css" in inspect.signature(gr.Blocks.__init__).parameters else {}
+    with gr.Blocks(title="Video Studio", **kw) as demo:
+        gr.Markdown("## 🎬 Video Studio <small>— the preview on the right updates live as you edit</small>",
+                    elem_id="app-title")
         with gr.Tab("⏳ Timeline Collision"):
-            with gr.Row():
-                with gr.Column(scale=3):
-                    shared_tl = shared_panel()
-                    mode = gr.Radio([("Calendar years (BC = negative)", "calendar"), ("Years ago (deep time)", "ago")],
-                                    value="calendar", label="Time mode")
-                    ev_fields = []
-                    for i in range(N_EVENTS):
-                        with gr.Accordion(f"Event {i + 1}", open=i < 3):
-                            with gr.Row():
-                                en = gr.Checkbox(value=i < 3, label="Use", scale=1)
-                                nm = gr.Textbox(label="Name", rtl=True, scale=3)
-                                yr = gr.Number(label="Year", scale=2)
-                            with gr.Row():
-                                lb = gr.Textbox(label="Card subtitle (optional)", rtl=True)
-                                cl = gr.Dropdown(COLOR_NAMES, value=["sand", "gold", "blue", "green", "pink"][i],
-                                                 allow_custom_value=True, label="Color (name or #hex)")
-                                ic = gr.Dropdown(ICON_NAMES, value="none", label="Icon")
-                            im = gr.Image(type="filepath", label="Or a picture (optional, replaces the icon)", height=140)
-                        ev_fields += [en, nm, yr, lb, cl, ic, im]
-                    hook = gr.Textbox(lines=3, label="Hook (first 2.5 s) — the surprising claim", rtl=True)
-                    hide_first = gr.Checkbox(value=True, label="Hide the oldest event in the hook, reveal it on zoom-out")
-                    with gr.Row():
-                        doubt = gr.Textbox(label="Doubt word", rtl=True)
-                        doubt_sub = gr.Textbox(label="Doubt subtitle", rtl=True)
-                    compare_title = gr.Textbox(label="Comparison title", rtl=True)
-                    reveal = gr.Textbox(lines=2, label="Reveal (after the bass hit)", rtl=True)
-                    tl_fields = shared_tl + [mode, hook, hide_first, doubt, doubt_sub, compare_title, reveal] + ev_fields
-                    tl_bar = action_bar("timeline", tl_fields)
-                with gr.Column(scale=2):
-                    tl_img = gr.Image(label="Preview", type="pil", height=640)
-                    tl_vid = gr.Video(label="Rendered video", height=640)
-            wire(tl_bar, tl_fields, tl_img, tl_vid)
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=3, min_width=420):
+                    tl_proj = project_bar()
+                    with gr.Tabs():
+                        with gr.Tab("📝 Story"):
+                            with gr.Column(elem_classes="pane"):
+                                mode = gr.Radio([("Calendar years (BC = negative)", "calendar"),
+                                                 ("Years ago (deep time)", "ago")], value="calendar", label="Time mode")
+                                hook = gr.Textbox(lines=3, max_lines=5, rtl=True,
+                                                  label="Hook (first 2.5 s) — the surprising claim")
+                                hide_first = gr.Checkbox(value=True,
+                                                         label="Hide the oldest event in the hook, reveal it on zoom-out")
+                                with gr.Row():
+                                    doubt = gr.Textbox(label="Doubt word", rtl=True)
+                                    doubt_sub = gr.Textbox(label="Doubt subtitle", rtl=True)
+                                compare_title = gr.Textbox(label="Comparison title", rtl=True)
+                                reveal = gr.Textbox(lines=2, max_lines=4, label="Reveal (after the bass hit)", rtl=True)
+                        with gr.Tab("🗓️ Events"):
+                            ev_fields = []
+                            with gr.Tabs():
+                                for i in range(N_EVENTS):
+                                    with gr.Tab(f"Event {i + 1}"):
+                                        with gr.Column(elem_classes="pane"):
+                                            with gr.Row():
+                                                en = gr.Checkbox(value=i < 3, label="Use", scale=1, min_width=70)
+                                                nm = gr.Textbox(label="Name", rtl=True, scale=3)
+                                                yr = gr.Number(label="Year", scale=2)
+                                            with gr.Row():
+                                                lb = gr.Textbox(label="Card subtitle (optional)", rtl=True)
+                                                cl = gr.Dropdown(COLOR_NAMES, value=["sand", "gold", "blue", "green", "pink"][i],
+                                                                 allow_custom_value=True, label="Color (name or #hex)")
+                                                ic = gr.Dropdown(ICON_NAMES, value="none", label="Icon")
+                                            im = gr.Image(type="filepath", height=170,
+                                                          label="Or a picture (optional, replaces the icon)")
+                                    ev_fields += [en, nm, yr, lb, cl, ic, im]
+                        tl_st = style_tab()
+                        tl_end = ending_tab()
+                    tl_fields = (shared_fields(tl_st, tl_end)
+                                 + [mode, hook, hide_first, doubt, doubt_sub, compare_title, reveal] + ev_fields)
+                tl_pv = preview_panel("timeline")
+            wire(tl_proj, tl_pv, tl_fields)
 
         with gr.Tab("❓ Clue Quiz"):
-            with gr.Row():
-                with gr.Column(scale=3):
-                    shared_qz = shared_panel()
-                    q_title = gr.Textbox(label="Title / question", rtl=True)
-                    q_sub = gr.Textbox(label="Subtitle", rtl=True)
-                    q_clues = gr.Textbox(lines=6, label="Clues — one per line, hardest first (max 8)", rtl=True)
-                    q_secs = gr.Slider(2, 8, value=4, step=0.5, label="Seconds per clue")
-                    with gr.Row():
-                        q_ai = gr.Textbox(label="Answer intro", rtl=True)
-                        q_ans = gr.Textbox(label="Answer", rtl=True)
-                        q_asub = gr.Textbox(label="Answer subtitle", rtl=True)
-                    with gr.Row():
-                        q_img = gr.Image(type="filepath", label="Answer picture (optional)", height=160)
-                        q_acc = gr.Dropdown(COLOR_NAMES, value="gold", allow_custom_value=True, label="Accent color")
-                    qz_fields = shared_qz + [q_title, q_sub, q_clues, q_secs, q_ai, q_ans, q_asub, q_img, q_acc]
-                    qz_bar = action_bar("quiz", qz_fields)
-                with gr.Column(scale=2):
-                    qz_img = gr.Image(label="Preview", type="pil", height=640)
-                    qz_vid = gr.Video(label="Rendered video", height=640)
-            wire(qz_bar, qz_fields, qz_img, qz_vid)
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=3, min_width=420):
+                    qz_proj = project_bar()
+                    with gr.Tabs():
+                        with gr.Tab("📝 Quiz"):
+                            with gr.Column(elem_classes="pane"):
+                                with gr.Row():
+                                    q_title = gr.Textbox(label="Title / question", rtl=True)
+                                    q_sub = gr.Textbox(label="Subtitle", rtl=True)
+                                q_clues = gr.Textbox(lines=6, max_lines=8, rtl=True,
+                                                     label="Clues — one per line, hardest first (max 8)")
+                                with gr.Row():
+                                    q_secs = gr.Slider(2, 8, value=4, step=0.5, label="Seconds per clue")
+                                    q_acc = gr.Dropdown(COLOR_NAMES, value="gold", allow_custom_value=True,
+                                                        label="Accent color")
+                        with gr.Tab("🏆 Answer"):
+                            with gr.Column(elem_classes="pane"):
+                                with gr.Row():
+                                    q_ai = gr.Textbox(label="Answer intro", rtl=True)
+                                    q_ans = gr.Textbox(label="Answer", rtl=True)
+                                q_asub = gr.Textbox(label="Answer subtitle", rtl=True)
+                                q_img = gr.Image(type="filepath", label="Answer picture (optional)", height=220)
+                        qz_st = style_tab()
+                        qz_end = ending_tab()
+                    qz_fields = shared_fields(qz_st, qz_end) + [q_title, q_sub, q_clues, q_secs, q_ai, q_ans, q_asub,
+                                                                 q_img, q_acc]
+                qz_pv = preview_panel("quiz")
+            wire(qz_proj, qz_pv, qz_fields)
 
         with gr.Tab("✅ Multiple Choice"):
-            with gr.Row():
-                with gr.Column(scale=3):
-                    shared_mq = shared_panel()
-                    m_title = gr.Textbox(label="Title", rtl=True)
-                    m_sub = gr.Textbox(label="Subtitle", rtl=True)
-                    m_qs = gr.Textbox(lines=14, rtl=True, label="Questions — see format below",
-                                      info="Question line, then 3 or 4 option lines. Put * after the correct option. "
-                                           "Optional explanation line starting with >. Leave an EMPTY line between questions (max 10).")
-                    with gr.Row():
-                        m_think = gr.Slider(2, 10, value=5, step=0.5, label="Seconds to think (countdown)")
-                        m_rev = gr.Slider(1.5, 5, value=2.8, step=0.1, label="Seconds to show the answer")
-                        m_acc = gr.Dropdown(COLOR_NAMES, value="gold", allow_custom_value=True, label="Accent color")
-                    with gr.Row():
-                        m_style = gr.Dropdown(STYLE_NAMES, value="Game Show", label="Design style",
-                                              info="Classic uses the Theme from 'Style, sound & ending'")
-                        m_timer = gr.Dropdown(TIMER_NAMES, value="Ring", label="Timer type")
-                    mq_fields = shared_mq + [m_title, m_sub, m_qs, m_think, m_rev, m_acc, m_style, m_timer]
-                    mq_bar = action_bar("mcq", mq_fields)
-                with gr.Column(scale=2):
-                    mq_img = gr.Image(label="Preview", type="pil", height=640)
-                    mq_vid = gr.Video(label="Rendered video", height=640)
-            wire(mq_bar, mq_fields, mq_img, mq_vid)
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=3, min_width=420):
+                    mq_proj = project_bar()
+                    with gr.Tabs():
+                        with gr.Tab("📝 Questions"):
+                            with gr.Column(elem_classes="pane"):
+                                with gr.Row():
+                                    m_title = gr.Textbox(label="Title", rtl=True)
+                                    m_sub = gr.Textbox(label="Subtitle", rtl=True)
+                                m_qs = gr.Textbox(lines=12, max_lines=40, rtl=True, label="Questions — see format below",
+                                                  info="Question line, then 3 or 4 option lines. Put * after the correct "
+                                                       "option. Optional explanation line starting with >. Leave an EMPTY "
+                                                       "line between questions (max 10).")
+                        with gr.Tab("⏱️ Design & timing"):
+                            with gr.Column(elem_classes="pane"):
+                                with gr.Row():
+                                    m_style = gr.Dropdown(STYLE_NAMES, value="Game Show", label="Design style",
+                                                          info="Classic uses the Theme from 'Style & sound'")
+                                    m_timer = gr.Dropdown(TIMER_NAMES, value="Ring", label="Timer type")
+                                    m_acc = gr.Dropdown(COLOR_NAMES, value="gold", allow_custom_value=True,
+                                                        label="Accent color")
+                                with gr.Row():
+                                    m_think = gr.Slider(2, 10, value=5, step=0.5, label="Seconds to think (countdown)")
+                                    m_rev = gr.Slider(1.5, 5, value=2.8, step=0.1, label="Seconds to show the answer")
+                        mq_st = style_tab()
+                        mq_end = ending_tab()
+                    mq_fields = shared_fields(mq_st, mq_end) + [m_title, m_sub, m_qs, m_think, m_rev, m_acc, m_style,
+                                                                 m_timer]
+                mq_pv = preview_panel("mcq")
+            wire(mq_proj, mq_pv, mq_fields)
 
         with gr.Tab("📘 Help"):
             gr.Markdown(HELP)
 
-        demo.load(lambda: project_to_values(copy.deepcopy(tl_ex), "timeline"), None, tl_fields)
+        demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["timeline"][2]), "timeline"), None, tl_fields)
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["quiz"][2]), "quiz"), None, qz_fields)
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["mcq"][2]), "mcq"), None, mq_fields)
     return demo
 
 
+def launch_kwargs():
+    """Gradio 6 takes css in launch(); Gradio 5 takes it in Blocks()."""
+    return {"css": CSS} if "css" in inspect.signature(gr.Blocks.launch).parameters else {}
+
+
 if __name__ == "__main__":
-    build_ui().queue().launch(inbrowser=True)
+    build_ui().queue().launch(inbrowser=True, **launch_kwargs())

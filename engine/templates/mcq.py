@@ -99,15 +99,6 @@ class MCQVideo:
         self.silences = []
         if self.st["card"] is None:
             self.st = dict(self.st, card=get_theme(s.get("theme"))["card"])
-        card_bg = self.st["card"]
-
-        for i, q in enumerate(self.qs):
-            q["card"] = self._question_card(q["q"], card_bg)
-            top = 560 + q["card"].height / 2 - 40
-            q["opt_y0"] = max(860, int(top + 110))
-            q["imgs"] = [self._option(k, o, to_rgb(self.st["palette"][k]), card_bg, False) for k, o in enumerate(q["opts"])]
-            q["ok_img"] = self._option(q["correct"], q["opts"][q["correct"]], GREEN, card_bg, True)
-            q["expl_lines"] = wrap(q["expl"], 40, "SemiBold", 900)[:2] if q["expl"] else []
         self.glow = self._glow()
 
         title = parse_lines(m.get("title", ""), [self.ink])
@@ -120,6 +111,19 @@ class MCQVideo:
                        e.get("cta", ""), s.get("handle", ""))
 
     # ------------------------------------------------------------ assets
+    def _assets(self, i):
+        """Card and option images for question i, built the first time it is shown (keeps previews fast)."""
+        q = self.qs[i]
+        if "card" not in q:
+            card_bg = self.st["card"]
+            q["card"] = self._question_card(q["q"], card_bg)
+            top = 560 + q["card"].height / 2 - 40
+            q["opt_y0"] = max(860, int(top + 110))
+            q["imgs"] = [self._option(k, o, to_rgb(self.st["palette"][k]), card_bg, False) for k, o in enumerate(q["opts"])]
+            q["ok_img"] = self._option(q["correct"], q["opts"][q["correct"]], GREEN, card_bg, True)
+            q["expl_lines"] = wrap(q["expl"], 40, "SemiBold", 900)[:2] if q["expl"] else []
+        return q
+
     def _question_card(self, txt, card_bg):
         size = 62
         lines = wrap(txt, size, "Bold", 840)
@@ -168,7 +172,7 @@ class MCQVideo:
         return frame.convert("RGB")
 
     def _question(self, frame, d, i, u):
-        q, n = self.qs[i], len(self.qs)
+        q, n = self._assets(i), len(self.qs)
         D, T = self.qdur, self.T
         r = 0.9 + T
         out = prog(u, D - 0.3, D)
