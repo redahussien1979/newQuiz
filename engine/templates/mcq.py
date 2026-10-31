@@ -195,7 +195,8 @@ class MCQVideo:
         sub = m.get("subtitle", "")
         lines = stack_lines(title, 720, 120, 96)
         if sub:
-            lines.append((sub, 54, self.accent, (lines[-1][3] if lines else 720) + 150))
+            sub_col = shade(self.accent, 0.62) if self.st.get("light") else self.accent  # readable on light pages
+            lines.append((sub, 54, sub_col, (lines[-1][3] if lines else 720) + 150))
         self.scenes = [dict(t_in=0.1, t_out=2.4, lines=lines)]
         self.ending = (e.get("intro", ""), parse_lines(e.get("question", ""), ["white", "gold"]),
                        e.get("cta", ""), s.get("handle", ""))

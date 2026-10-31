@@ -72,7 +72,8 @@ Neptune
 ```
 One question per block, 3 or 4 options, a `*` after the correct one, optional `>` explanation, and an empty line between questions.
 
-**Design styles:** Classic (uses your Theme), Neon, Glass, Game Show, Paper (light), Sunset.
+**Design styles:** Classic (uses your Theme), Neon, Glass, Game Show, Paper (light), Sunset, Minimal, Luxury (black & gold), Clean Light (light), Tech HUD, Aurora, Blueprint.
+**Themes:** Night Sky, Desert Night, Emerald, Deep Purple, Charcoal, Royal Blue, Ocean, Midnight Gold, Crimson, Slate, Aurora, Rose Wine, Cyber Night.
 **Colours:** pick *Theme colours* (Design & timing) so any style follows your Theme; Classic always does.
 **Narration:** in the 🎙️ Narration tab upload clips named `q1` (question 1), `q1a`…`q1d` (its options) and `q1e` (its explanation). Each question waits for its clips.
 **Timers:** Ring, Pie, Bar, Hourglass, Digital (00:05), Segments (battery blocks), Fuse (burning fuse and bomb, with a sizzle sound).

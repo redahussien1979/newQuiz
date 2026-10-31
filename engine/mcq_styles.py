@@ -6,7 +6,8 @@ from PIL import Image, ImageDraw, ImageFilter
 
 from .core import H, W, Stars, get_theme, make_bg, shade, to_rgb
 
-STYLE_NAMES = ["Classic", "Neon", "Glass", "Game Show", "Paper", "Sunset"]
+STYLE_NAMES = ["Classic", "Neon", "Glass", "Game Show", "Paper", "Sunset",
+               "Minimal", "Luxury", "Clean Light", "Tech HUD", "Aurora", "Blueprint"]
 
 STYLES = {
     # bg: None = use the selected colour theme
@@ -28,6 +29,27 @@ STYLES = {
     "Sunset": dict(bg="sunset", ink=(255, 255, 255), card_text=(40, 24, 60), card=(255, 255, 255), card_alpha=238,
                    border=(255, 255, 255), bw=0, shape="pill", glow=False, shadow="soft",
                    letters="solid", palette=["orange", "pink", "purple", "blue"], dim=0.45, light_cards=True),
+    # --- professional looks
+    "Minimal": dict(bg="minimal", ink=(240, 241, 245), card_text=(240, 241, 245), card=(30, 32, 38), card_alpha=255,
+                    border=(64, 68, 78), bw=2, shape="card", glow=False, shadow="soft",
+                    letters="outline", palette=[(210, 214, 222)] * 4, dim=0.35),
+    "Luxury": dict(bg="luxury", ink=(246, 236, 214), card_text=(246, 236, 214), card=(16, 13, 10), card_alpha=245,
+                   border=(212, 175, 96), bw=2, shape="cut", glow=False, shadow="soft",
+                   letters="custom", badge=dict(fill=(16, 13, 10), line=(212, 175, 96), text=(232, 196, 110)),
+                   palette=[(212, 175, 96)] * 4, dim=0.35),
+    "Clean Light": dict(bg="clean", ink=(26, 32, 46), card_text=(26, 32, 46), card=(255, 255, 255), card_alpha=255,
+                        border=(222, 227, 236), bw=2, shape="card", glow=False, shadow="soft",
+                        letters="solid", palette=[(66, 133, 244), (16, 185, 129), (245, 158, 11), (139, 92, 246)],
+                        dim=0.4, light=True),
+    "Tech HUD": dict(bg="hud", ink=(220, 244, 255), card_text=(220, 244, 255), card=(6, 18, 32), card_alpha=225,
+                     border=(0, 210, 255), bw=2, shape="cut", glow=True, shadow="none",
+                     letters="outline", palette=[(0, 210, 255)] * 4, dim=0.3),
+    "Aurora": dict(bg="aurora", ink=(255, 255, 255), card_text=(255, 255, 255), card=(8, 14, 28), card_alpha=190,
+                   border=(255, 255, 255), border_alpha=70, bw=2, shape="card", glow=False, shadow="soft",
+                   letters="glass", palette=["white"] * 4, dim=0.3),
+    "Blueprint": dict(bg="blueprint", ink=(255, 255, 255), card_text=(255, 255, 255), card=(18, 54, 112),
+                      card_alpha=240, border=(235, 244, 255), border_alpha=220, bw=2, shape="sharp", glow=False,
+                      shadow="none", letters="outline", palette=[(235, 244, 255)] * 4, dim=0.3),
 }
 
 GREEN = (70, 215, 120)
@@ -57,8 +79,12 @@ def shape_box(d, box, shape, S2, **kw):
     if shape == "hex":
         c = min(h / 2, 46 * S2)
         d.polygon([(x0 + c, y0), (x1 - c, y0), (x1, y0 + h / 2), (x1 - c, y1), (x0 + c, y1), (x0, y0 + h / 2)], **kw)
+    elif shape == "cut":  # chamfered corners
+        c = min(h / 3, 22 * S2)
+        d.polygon([(x0 + c, y0), (x1 - c, y0), (x1, y0 + c), (x1, y1 - c), (x1 - c, y1), (x0 + c, y1),
+                   (x0, y1 - c), (x0, y0 + c)], **kw)
     else:
-        r = {"pill": h / 2, "sharp": 10 * S2}.get(shape, 34 * S2)
+        r = {"pill": h / 2, "sharp": 10 * S2, "card": 20 * S2}.get(shape, 34 * S2)
         d.rounded_rectangle(box, r, **kw)
 
 
@@ -129,6 +155,10 @@ def letter_badge(im, cx, cy, letter_img_fn, letter, col, st, correct):
     elif mode == "glass":
         d.ellipse(box, fill=(255, 255, 255, 60), outline=(255, 255, 255, 160), width=3 * S2)
         tcol = (255, 255, 255)
+    elif mode == "custom":
+        bd = st["badge"]
+        d.ellipse(box, fill=tuple(bd["fill"]) + (255,), outline=tuple(bd["line"]) + (255,), width=3 * S2)
+        tcol = tuple(bd["text"])
     else:  # gold
         d.ellipse(box, fill=(12, 22, 78, 255), outline=(240, 196, 80, 255), width=4 * S2)
         tcol = (240, 196, 80)
@@ -148,6 +178,27 @@ def _grad(stops, diagonal=False):
     return arr
 
 
+def _img(arr):
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
+
+
+def _tint(arr, color, gx, gy, rx, ry, k):
+    """Blend a soft elliptical glow of `color` into an RGB float array (no hard edges)."""
+    yy, xx = np.mgrid[0:H, 0:W]
+    g = (np.exp(-(((xx - gx) / rx) ** 2 + ((yy - gy) / ry) ** 2) * 2.0) * k)[..., None]
+    return arr * (1 - g) + np.array(color, np.float32) * g
+
+
+def _ribbon(color, phase, alpha=130):
+    """A soft, wavy band of light (aurora)."""
+    w, h = W + 700, 900
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    pts = [(x, h / 2 + math.sin(x / 260.0 + phase) * 120 + math.sin(x / 97.0 + phase * 2) * 30) for x in range(0, w + 20, 20)]
+    d.line(pts, fill=color + (alpha,), width=110, joint="curve")
+    return im.filter(ImageFilter.GaussianBlur(55))
+
+
 def _vignette(arr, strength=0.5):
     yy, xx = np.mgrid[0:H, 0:W]
     r = np.sqrt(((xx - 540) / 700.0) ** 2 + ((yy - 960) / 1150.0) ** 2)
@@ -164,10 +215,21 @@ def _blob(radius, color, alpha=170):
 class Backdrop:
     """Static base image + per-frame animated layer for a style."""
 
+    _cache = {}
+
     def __init__(self, st, theme_name, accent):
-        self.kind = None if st.get("theme_bg") else st["bg"]
+        kind = None if st.get("theme_bg") else st["bg"]
+        key = (kind, theme_name if kind is None else None)
+        if key not in Backdrop._cache:  # backgrounds are fixed per style/theme: build each once
+            Backdrop._cache[key] = self._build(kind, theme_name)
+        self.__dict__.update(Backdrop._cache[key])
+
+    def _build(self, kind, theme_name):
+        self.kind = kind
         self.stars = None
         self.extra = []
+        self.dust = None
+        self.scan = None
         if self.kind is None:
             theme = get_theme(theme_name)
             self.base = make_bg(theme)
@@ -205,12 +267,95 @@ class Backdrop:
             arr = _vignette(_grad([(255, 140, 80), (226, 66, 128), (92, 40, 168)], diagonal=True), 0.25)
             self.base = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
             self.extra = [(_blob(90, (255, 255, 255), 50), k * 0.9) for k in range(8)]
+        elif self.kind == "minimal":
+            arr = _vignette(_grad([(22, 23, 28), (17, 18, 22), (11, 12, 15)]), 0.25)
+            arr += np.random.default_rng(4).normal(0, 2.2, (H, W, 1))  # fine film grain
+            self.base = _img(arr)
+        elif self.kind == "luxury":
+            yy, xx = np.mgrid[0:H, 0:W]
+            r = np.clip(np.sqrt(((xx - 540) / 820.0) ** 2 + ((yy - 720) / 1250.0) ** 2), 0, 1)[..., None]
+            a, b = np.array((48, 37, 20), np.float32), np.array((6, 5, 4), np.float32)
+            img = _img(a + (b - a) * r ** 0.8)
+            ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            d = ImageDraw.Draw(ov)
+            for k in range(-H, W, 28):  # faint diagonal pinstripes
+                d.line([(k, 0), (k + H, H)], fill=(212, 175, 96, 9), width=2)
+            for inset, al in ((34, 150), (46, 70)):  # double frame with corner marks
+                d.rectangle([inset, inset, W - inset, H - inset], outline=(212, 175, 96, al), width=2)
+            for cx, cy in ((34, 34), (W - 34, 34), (34, H - 34), (W - 34, H - 34)):
+                d.regular_polygon((cx, cy, 11), 4, rotation=45, fill=(212, 175, 96, 200))
+            self.base = Image.alpha_composite(img, ov)
+            rng = np.random.default_rng(12)
+            self.dust = [(rng.uniform(0, W), rng.uniform(0, H), rng.uniform(1.2, 3.4), rng.uniform(14, 40),
+                          rng.uniform(0, 6.28)) for _ in range(70)]
+        elif self.kind == "clean":
+            arr = _grad([(248, 249, 252), (240, 243, 248), (231, 236, 244)])
+            for col, gx, gy, rx, ry, k in (((90, 140, 255), 1000, 80, 620, 560, 0.20),
+                                           ((60, 200, 190), 60, 1820, 600, 560, 0.16)):
+                arr = _tint(arr, col, gx, gy, rx, ry, k)
+            self.base = _img(arr)
+        elif self.kind == "hud":
+            img = _img(_vignette(_grad([(5, 10, 20), (8, 20, 36), (4, 9, 18)]), 0.35))
+            ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            d = ImageDraw.Draw(ov)
+            for y in range(20, H, 40):
+                for x in range(20, W, 40):
+                    d.point((x, y), fill=(0, 210, 255, 60))
+            for rr, al in ((300, 26), (430, 18), (560, 12)):
+                d.ellipse([540 - rr, 700 - rr, 540 + rr, 700 + rr], outline=(0, 210, 255, al), width=2)
+            L, m = 70, 40
+            for cx, cy, sx, sy in ((m, m, 1, 1), (W - m, m, -1, 1), (m, H - m, 1, -1), (W - m, H - m, -1, -1)):
+                d.line([(cx, cy), (cx + sx * L, cy)], fill=(0, 210, 255, 170), width=4)
+                d.line([(cx, cy), (cx, cy + sy * L)], fill=(0, 210, 255, 170), width=4)
+            for k in range(24):  # ruler ticks on the left edge
+                y = 300 + k * 55
+                d.line([(m, y), (m + (22 if k % 4 == 0 else 10), y)], fill=(0, 210, 255, 90), width=2)
+            self.base = Image.alpha_composite(img, ov)
+            band = np.zeros((160, W, 4), np.uint8)
+            band[..., :3] = (0, 210, 255)
+            band[..., 3] = (np.sin(np.linspace(0, np.pi, 160)) ** 2 * 26).astype(np.uint8)[:, None]
+            self.scan = Image.fromarray(band, "RGBA")
+        elif self.kind == "aurora":
+            self.base = _img(_vignette(_grad([(3, 8, 18), (5, 10, 26), (6, 6, 22)]), 0.3))
+            self.stars = Stars(n=110, seed=5)
+            self.extra = [(_ribbon((60, 230, 170), 0.0), 0.0), (_ribbon((90, 140, 255), 1.3), 2.1),
+                          (_ribbon((190, 90, 255), 2.4), 4.0)]
+        elif self.kind == "blueprint":
+            img = _img(_vignette(_grad([(24, 68, 134), (18, 56, 116), (11, 38, 88)]), 0.3))
+            ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            d = ImageDraw.Draw(ov)
+            for k in range(0, max(W, H) + 1, 30):
+                al = 40 if k % 150 == 0 else 14
+                if k <= W:
+                    d.line([(k, 0), (k, H)], fill=(255, 255, 255, al), width=1)
+                d.line([(0, k), (W, k)], fill=(255, 255, 255, al), width=1)
+            for rr in (150, 210):  # drafting circle + crosshair, bottom corner
+                d.ellipse([W - 230 - rr, H - 330 - rr, W - 230 + rr, H - 330 + rr], outline=(255, 255, 255, 40), width=2)
+            d.line([(W - 470, H - 330), (W + 10, H - 330)], fill=(255, 255, 255, 40), width=2)
+            d.line([(W - 230, H - 570), (W - 230, H - 90)], fill=(255, 255, 255, 40), width=2)
+            self.base = Image.alpha_composite(img, ov)
+        return dict(self.__dict__)
 
     def draw(self, t):
         frame = self.base.copy()
         if self.stars:
             self.stars.draw(ImageDraw.Draw(frame), t, t * 20)
-        if self.kind in ("glass", "neon"):
+        if self.kind == "aurora":
+            for k, (b, ph) in enumerate(self.extra):
+                x = 540 + math.sin(t * 0.18 + ph) * 220
+                y = 520 + k * 260 + math.sin(t * 0.3 + ph * 1.7) * 60
+                self._paste_clip(frame, b, x, y)
+        elif self.kind == "luxury":
+            d = ImageDraw.Draw(frame)
+            for x0, y0, r, sp, ph in self.dust:  # slow rising gold dust
+                y = (y0 - t * sp) % H
+                x = x0 + math.sin(t * 0.6 + ph) * 12
+                b = 0.35 + 0.65 * (0.5 + 0.5 * math.sin(t * 2.2 + ph))
+                c = (int(90 + 150 * b), int(70 + 120 * b), int(30 + 60 * b), 255)
+                d.ellipse([x - r / 2, y - r / 2, x + r / 2, y + r / 2], fill=c)
+        elif self.kind == "hud":
+            self._paste_clip(frame, self.scan, 540, (t * 260) % (H + 400) - 200)
+        elif self.kind in ("glass", "neon"):
             for k, (b, ph) in enumerate(self.extra):
                 x = 540 + math.sin(t * 0.35 + ph) * 380 + math.cos(t * 0.21 + ph * 2) * 120
                 y = 960 + math.cos(t * 0.28 + ph * 1.3) * 700

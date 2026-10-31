@@ -67,6 +67,14 @@ Write each question as a block, with an empty line between questions:
 | Game Show | Deep blue spotlight rays, gold hexagon answer bars |
 | Paper | Light cream page, bold black borders with hard shadows |
 | Sunset | Orange-pink-purple gradient, white pill cards, floating bokeh |
+| Minimal | Calm charcoal with fine grain, flat cards, thin grey lines — clean and modern |
+| Luxury | Black and gold: framed page, pinstripes, cut-corner cards, slowly rising gold dust |
+| Clean Light | Bright white/grey page with soft blue and teal light, white cards, coloured badges |
+| Tech HUD | Dark navy dot grid, corner brackets and a moving scan line, glowing cyan cut-corner bars |
+| Aurora | Starry night with slowly moving green, blue and violet aurora ribbons, see-through cards |
+| Blueprint | Engineering blueprint: blue grid paper, drafting circle, white outline cards |
+
+**Themes** (🎨 Style & sound tab, used by all three templates): Night Sky, Desert Night, Emerald, Deep Purple, Charcoal, Royal Blue, Ocean, Midnight Gold, Crimson, Slate, Aurora, Rose Wine and Cyber Night. They are all dark so white text stays easy to read; several add a soft coloured glow behind the content.
 
 **Colours:** each style has its own colours. Choose **Theme colours** (⏱️ Design & timing tab) to keep the style's shapes, borders and glow but take the background and cards from your Theme.
 
