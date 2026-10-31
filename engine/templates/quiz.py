@@ -223,7 +223,7 @@ class QuizVideo:
     # ------------------------------------------------------------ sound
     def sound(self, mx):
         n, cs = len(self.clues), self.cs
-        mx.add(0.05, mx.hit(1.6), 0.55)
+        mx.intro(0.05)
         for i in range(n):
             ts = self.c0 + i * cs
             s, pn = mx.whoosh(0.8)

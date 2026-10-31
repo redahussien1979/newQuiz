@@ -105,7 +105,10 @@ Rows with problems (no question, fewer than 2 options, unclear correct answer) a
 **Timer effects** (⏱️ Design & timing, any mix, with every timer type): **Pulse** on every tick, **Glow** halo, **Ripple** wave from each tick, **Shake** in the last 3 seconds and a **Red flash** of the screen edges in the last 3 seconds.
 
 ### Sound
-- **Built-in moods** (Tension, Mystery, Calm, Pulse) are generated from scratch, so there are no copyright claims.
+- **Built-in music** is generated from scratch, so there are no copyright claims. **Quiz Show**, **Bright Pop**, **Lo-fi Chill**, **Epic** and **Ambient** are real music loops (chords, bass and drums); Tension, Mystery, Calm and Pulse are the original atmospheric drones.
+- **Opening sound**: Bass hit, Cinematic boom, Swoosh + impact, Game show jingle, Sparkle, Deep drums or None.
+- **Ticking sound** for every countdown: Classic, Clock, Wood block, Soft click, Digital beep, Heartbeat or None, with its own **Ticking volume** (0 = silent, 2 = double).
+- Press **🔊 Listen** in 🎨 Style & sound to hear the opening, music and ticking together before rendering.
 - **Your own music**: upload any mp3/wav. It loops automatically and still goes silent before the reveal.
 - **Voiceover**: upload your recording. The music lowers automatically while you speak, and the video gets longer if your voice is longer than the animation.
 

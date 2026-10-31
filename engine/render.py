@@ -75,7 +75,7 @@ def render_video(project, out_path, progress=None):
     video = build(project)
     s = project.get("settings", {})
     silences = getattr(video, "silences", [])
-    mx = Mixer(video.dur)
+    mx = Mixer(video.dur).configure(s)
     video.sound(mx)
     music_file = s.get("music_file")
     if music_file and os.path.isfile(music_file):
@@ -106,7 +106,7 @@ def render_clip(project, out_path, t0=0.0, secs=6.0, fps=15, scale=3):
     s = project.get("settings", {})
     t0 = max(0.0, min(float(t0), max(0.0, video.dur - 1.0)))
     secs = min(float(secs), video.dur - t0)
-    mx = Mixer(video.dur)
+    mx = Mixer(video.dur).configure(s)
     video.sound(mx)
     silences = getattr(video, "silences", [])
     music_file = s.get("music_file")

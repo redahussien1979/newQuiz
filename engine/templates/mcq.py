@@ -34,9 +34,10 @@ RED = (255, 90, 90)
 
 EXAMPLE = {
     "template": "mcq",
-    "settings": {"theme": "Night Sky", "language": "ar", "fps": 30, "music": "Pulse", "music_gain": 1.0,
+    "settings": {"theme": "Night Sky", "language": "ar", "fps": 30, "music": "Quiz Show", "music_gain": 1.0,
                  "music_file": "", "voice_file": "", "voice_offset": 0.5, "voice_gain": 1.0,
-                 "handle": "@Ma3loomaFast", "font_file": ""},
+                 "handle": "@Ma3loomaFast", "font_file": "",
+                 "intro_sound": "Swoosh + impact", "tick_sound": "Classic", "tick_gain": 1.0},
     "ending": {"intro": "النتيجة؟", "question": "كم إجابة صحيحة\n[gold]حصلت عليها من {count}؟",
                "cta": "اكتب نتيجتك في التعليقات"},
     "mcq": {
@@ -360,7 +361,7 @@ class MCQVideo:
 
     # ------------------------------------------------------------ sound
     def sound(self, mx):
-        mx.add(0.05, mx.hit(1.6), 0.55)
+        mx.intro(0.05)
         for i, q in enumerate(self.qs):
             t0, ts = q["t0"], q["t0"] + q["ts"]
             s, pn = mx.whoosh(0.8)

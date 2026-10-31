@@ -4,14 +4,17 @@
     "theme": "Night Sky",
     "language": "ar",
     "fps": 30,
-    "music": "Pulse",
+    "music": "Quiz Show",
     "music_gain": 1.0,
     "music_file": "",
     "voice_file": "",
     "voice_offset": 0.5,
     "voice_gain": 1.0,
     "handle": "@Ma3loomaFast",
-    "font_file": ""
+    "font_file": "",
+    "intro_sound": "Swoosh + impact",
+    "tick_sound": "Classic",
+    "tick_gain": 1.0
   },
   "ending": {
     "intro": "النتيجة؟",
@@ -27,6 +30,11 @@
     "accent": "gold",
     "style": "Game Show",
     "timer": "Ring",
-    "timer_fx": ["pulse", "glow", "ripple", "shake"]
+    "timer_fx": [
+      "pulse",
+      "glow",
+      "ripple",
+      "shake"
+    ]
   }
 }
