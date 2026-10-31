@@ -8,6 +8,8 @@ import inspect
 import json
 import os
 import shutil
+import threading
+import time
 
 import gradio as gr
 
@@ -183,8 +185,38 @@ def _keep_media_list(paths, folder):
     return out
 
 
+def _msg(e):
+    """Plain text of an exception (gr.Error keeps its text in .message)."""
+    return str(getattr(e, "message", None) or e)
+
+
 def _stamp():
     return dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+# ------------------------------------------------------------------ one video job at a time per browser tab
+_jobs = {}
+_jobs_lock = threading.Lock()
+JOB_TIMEOUT = 3 * 3600  # a job that never reported back stops blocking after this many seconds
+
+
+def _job_key(request):
+    return getattr(request, "session_hash", None) or "local"
+
+
+def _claim(request):
+    now = time.time()
+    with _jobs_lock:
+        key = _job_key(request)
+        if key in _jobs and now - _jobs[key] < JOB_TIMEOUT:
+            return False
+        _jobs[key] = now
+        return True
+
+
+def _release(request):
+    with _jobs_lock:
+        _jobs.pop(_job_key(request), None)
 
 
 # ------------------------------------------------------------------ actions
@@ -268,6 +300,7 @@ footer {display: none !important;}
 .opt-row {align-items: center;}
 .opt-row label {padding: 4px 6px !important; white-space: nowrap;}
 .compact-btn button, button.compact-btn {min-width: 0 !important;}
+button {user-select: none; -webkit-user-select: none;}
 .info-line {height: 24px; overflow: hidden;}
 .info-line p {margin: 0 !important; font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
 @media (max-width: 900px) { .pane {max-height: none;} .preview-col {position: static;} }
@@ -332,7 +365,7 @@ def preview_panel(tpl):
                 img = gr.Image(label="Preview", type="pil", format="png", height=PREVIEW_H, show_label=False,
                                interactive=False)
             with gr.Tab("🎞️ Video", id="vid"):
-                vid = gr.Video(label="Video", height=PREVIEW_H, show_label=False)
+                vid = gr.Video(label="Video", height=PREVIEW_H, show_label=False, autoplay=True)
         with gr.Row(equal_height=True, elem_classes="opt-row"):
             safe = gr.Checkbox(value=False, label="Safe zone", container=False, min_width=110)
             auto = gr.Checkbox(value=True, label="Live update", container=False, min_width=110)
@@ -342,7 +375,8 @@ def preview_panel(tpl):
             clip_btn = gr.Button("▶️ Quick motion (6 s)", min_width=130)
             rd_btn = gr.Button("🎬 Render video", variant="primary", min_width=130)
         info = gr.Markdown(elem_classes="info-line")
-    return dict(img=img, vid=vid, tabs=out_tabs, t=t, safe=safe, auto=auto, pv=pv_btn, clip=clip_btn, rd=rd_btn,
+        busy = gr.State(False)  # True while a clip / video is being made
+    return dict(busy=busy, img=img, vid=vid, tabs=out_tabs, t=t, safe=safe, auto=auto, pv=pv_btn, clip=clip_btn, rd=rd_btn,
                 info=info, fns=(preview, render, save, load, example, clip))
 
 
@@ -354,25 +388,58 @@ def wire(proj, pv, fields):
     def show_picture(*args):
         return (*preview(*args), gr.update(selected="pic"))
 
-    def auto_preview(on, *args):
+    def auto_preview(on, busy, *args):
         if not on:
             return gr.update(), gr.update(), gr.update(), gr.update()
         try:
-            return show_picture(*args)
+            img, msg, slider, tab = show_picture(*args)
         except Exception as e:  # half-typed input: keep the last good picture
-            return gr.update(), f"⚠️ {e}", gr.update(), gr.update()
+            return gr.update(), (gr.update() if busy else f"⚠️ {_msg(e)}"), gr.update(), gr.update()
+        if busy:  # keep the video tab and the progress message while rendering
+            return img, gr.update(), slider, gr.update()
+        return img, msg, slider, tab
 
-    def show_video():
-        return gr.update(selected="vid")
+    btns = [pv["clip"], pv["rd"]]
+    start_out = [pv["busy"], pv["tabs"], *btns, pv["info"]]
+    work_out = [pv["vid"], pv["info"], pv["busy"], pv["tabs"], *btns]
+
+    def start(label):
+        def fn(request: gr.Request):
+            if not _claim(request):  # double-click / second press while a video is being made
+                raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+            return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
+                    f"⏳ {label}… You can keep editing; it uses the settings from when you pressed the button.")
+        return fn
+
+    def run(fn, request, *args, **kw):
+        """Run clip/render; whatever happens, unlock the buttons and say how it went."""
+        try:
+            out, msg = fn(*args, **kw)
+            return out, msg, False, gr.update(selected="vid"), gr.update(interactive=True), gr.update(interactive=True)
+        except Exception as e:
+            gr.Warning(_msg(e))
+            return (gr.update(), f"⚠️ {_msg(e)}", False, gr.update(selected="pic"), gr.update(interactive=True),
+                    gr.update(interactive=True))
+        finally:
+            _release(request)
+
+    def do_clip(request: gr.Request, *args):
+        return run(clip, request, *args)
+
+    def do_render(request: gr.Request, *args, progress=gr.Progress()):
+        return run(render, request, *args, progress=progress)
 
     gr.on(triggers=[c.change for c in [pv["t"], pv["safe"], pv["auto"]] + fields], fn=auto_preview,
-          inputs=[pv["auto"]] + pv_in, outputs=pv_out, trigger_mode="always_last", show_progress="hidden")
+          inputs=[pv["auto"], pv["busy"]] + pv_in, outputs=pv_out, trigger_mode="always_last", show_progress="hidden")
     proj["ex"].click(example, None, fields)
     proj["open"].upload(load, proj["open"], fields)
     proj["save"].click(save, fields, pv["info"])
     pv["pv"].click(show_picture, pv_in, pv_out)
-    pv["clip"].click(show_video, None, pv["tabs"], queue=False).then(clip, [pv["t"]] + fields, [pv["vid"], pv["info"]])
-    pv["rd"].click(show_video, None, pv["tabs"], queue=False).then(render, fields, [pv["vid"], pv["info"]])
+    # start() answers instantly (no queue) and refuses a second press; the work step always unlocks the buttons.
+    pv["clip"].click(start("Making the 6-second motion preview"), None, start_out, queue=False) \
+        .success(do_clip, [pv["t"]] + fields, work_out)
+    pv["rd"].click(start("Rendering the full video"), None, start_out, queue=False) \
+        .success(do_render, fields, work_out)
 
 
 def build_ui():
