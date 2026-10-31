@@ -9,11 +9,16 @@ u         seconds since the countdown started (for small animations)
 """
 import math
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from .core import paste, shade, text_img
+from .core import H, W, paste, shade, text_img
 
-TIMER_NAMES = ["Ring", "Pie", "Bar", "Hourglass", "Digital", "Segments", "Fuse"]
+TIMER_NAMES = ["Ring", "Pie", "Bar", "Hourglass", "Digital", "Segments", "Fuse",
+               "Neon Ring", "Dots", "Flip Clock", "Stopwatch", "Liquid", "Big Number"]
+# effects that can be layered on any timer while it ticks: (label, key)
+TIMER_FX = [("Pulse on every tick", "pulse"), ("Glow", "glow"), ("Ripple wave", "ripple"),
+            ("Shake in the last 3 s", "shake"), ("Red flash in the last 3 s", "flash")]
 
 
 def _num(left, size, color, stroke=True):
@@ -175,9 +180,235 @@ def fuse(frame, cx, cy, rem, left, total, col, ink, u, a, rtl):
     paste(frame, im, cx, cy - 10, 1.0, a)
 
 
+# ------------------------------------------------------------------ newer designs
+def neon_ring(frame, cx, cy, rem, left, total, col, ink, u, a, rtl):
+    S2, r = 2, 62
+    size = (r * 2 + 60) * S2
+    c = size // 2
+    arc = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(arc)
+    box = [c - r * S2, c - r * S2, c + r * S2, c + r * S2]
+    d.ellipse(box, outline=col + (45,), width=5 * S2)
+    end = -90 + 360 * rem
+    if rem > 0.002:
+        d.arc(box, -90, end, fill=col + (255,), width=9 * S2)
+        tx, ty = c + r * S2 * math.cos(math.radians(end)), c + r * S2 * math.sin(math.radians(end))
+        d.ellipse([tx - 9 * S2, ty - 9 * S2, tx + 9 * S2, ty + 9 * S2], fill=(255, 255, 255, 255))
+    im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(im).ellipse([c - (r - 8) * S2, c - (r - 8) * S2, c + (r - 8) * S2, c + (r - 8) * S2],
+                               fill=(6, 8, 18, 210))
+    im.alpha_composite(arc.filter(ImageFilter.GaussianBlur(9 * S2)))
+    im.alpha_composite(arc)
+    im = im.resize((size // S2, size // S2), Image.LANCZOS)
+    num = text_img(str(left), 56, (255, 255, 255), "Black", shadow=False)
+    halo = text_img(str(left), 56, col, "Black", shadow=False).filter(ImageFilter.GaussianBlur(7))
+    for t_ in (halo, num):
+        im.alpha_composite(t_, (im.width // 2 - t_.width // 2, im.height // 2 - t_.height // 2))
+    paste(frame, im, cx, cy, 1.0, a)
+
+
+def dots(frame, cx, cy, rem, left, total, col, ink, u, a, rtl):
+    S2, R, n = 2, 64, 12
+    size = (R * 2 + 40) * S2
+    im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    c = size / 2
+    d.ellipse([c - (R - 18) * S2, c - (R - 18) * S2, c + (R - 18) * S2, c + (R - 18) * S2], fill=(10, 14, 28, 200))
+    lit = rem * n
+    for k in range(n):
+        ang = math.radians(-90 + (k if not rtl else -k) * 360 / n)
+        x, y = c + R * S2 * math.cos(ang), c + R * S2 * math.sin(ang)
+        v = max(0.0, min(1.0, lit - k))
+        rr = (6 + 3 * v) * S2
+        fill = tuple(int(o + (cc - o) * v) for o, cc in zip((60, 68, 92), col)) + (255,)
+        d.ellipse([x - rr, y - rr, x + rr, y + rr], fill=fill)
+    im = im.resize((int(size // S2), int(size // S2)), Image.LANCZOS)
+    num = _num(left, 54, (255, 255, 255), False)
+    im.alpha_composite(num, (im.width // 2 - num.width // 2, im.height // 2 - num.height // 2))
+    paste(frame, im, cx, cy, 1.0, a)
+
+
+def _flip_card(ch, red):
+    w, h = 96, 132
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle([0, 0, w - 1, h - 1], 14, fill=(28, 30, 40, 255))
+    d.rounded_rectangle([0, 0, w - 1, h // 2], 14, fill=(36, 38, 50, 255))
+    d.rectangle([0, h // 2 - 14, w - 1, h // 2], fill=(36, 38, 50, 255))
+    t = text_img(ch, 92, (255, 96, 96) if red else (245, 245, 250), "Black", shadow=False)
+    im.alpha_composite(t, (w // 2 - t.width // 2, h // 2 - t.height // 2))
+    d.line([(0, h // 2), (w, h // 2)], fill=(8, 8, 12, 255), width=3)
+    return im
+
+
+def flip_clock(frame, cx, cy, rem, left, total, col, ink, u, a, rtl):
+    red = col[0] > 200 and col[1] < 120  # the template switches to red near the end
+    cur = f"{max(0, left):02d}"
+    prev = f"{min(99, left + 1):02d}"
+    f = u - math.floor(u)
+    flipping = rem > 0 and u >= 1 and f < 0.3
+    gap, w, h = 12, 96, 132
+    im = Image.new("RGBA", (2 * w + gap + 24, h + 24), (0, 0, 0, 0))
+    for i in range(2):
+        x = 12 + i * (w + gap)
+        new = _flip_card(cur[i], red)
+        if not flipping or cur[i] == prev[i]:
+            im.alpha_composite(new, (x, 12))
+            continue
+        old = _flip_card(prev[i], red)
+        im.alpha_composite(new.crop((0, 0, w, h // 2)), (x, 12))  # new top already revealed behind
+        im.alpha_composite(old.crop((0, h // 2, w, h)), (x, 12 + h // 2))  # old bottom still showing
+        if f < 0.15:  # old top falls towards the hinge
+            k = max(0.02, 1 - f / 0.15)
+            flap = old.crop((0, 0, w, h // 2)).resize((w, max(1, int(h // 2 * k))))
+            im.alpha_composite(flap, (x, 12 + h // 2 - flap.height))
+        else:  # new bottom unfolds from the hinge
+            k = max(0.02, (f - 0.15) / 0.15)
+            flap = new.crop((0, h // 2, w, h)).resize((w, max(1, int(h // 2 * k))))
+            im.alpha_composite(flap, (x, 12 + h // 2))
+    paste(frame, im, cx, cy, 1.0, a)
+
+
+def stopwatch(frame, cx, cy, rem, left, total, col, ink, u, a, rtl):
+    S2, R = 2, 64
+    size = (R * 2 + 50) * S2
+    im = Image.new("RGBA", (size, size + 30 * S2), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    c, cyy = size / 2, size / 2 + 22 * S2
+    d.rounded_rectangle([c - 14 * S2, cyy - (R + 28) * S2, c + 14 * S2, cyy - (R - 2) * S2], 5 * S2, fill=(200, 205, 215, 255))
+    d.rounded_rectangle([c - 22 * S2, cyy - (R + 36) * S2, c + 22 * S2, cyy - (R + 24) * S2], 5 * S2, fill=(230, 232, 240, 255))
+    bx, by = c + R * 0.78 * S2, cyy - R * 0.78 * S2
+    d.line([(bx, by), (bx + 14 * S2, by - 14 * S2)], fill=(200, 205, 215, 255), width=9 * S2)
+    d.ellipse([c - R * S2, cyy - R * S2, c + R * S2, cyy + R * S2], fill=(244, 245, 250, 255), outline=col + (255,), width=8 * S2)
+    if rem > 0.002:  # time still left, shaded
+        d.pieslice([c - (R - 12) * S2, cyy - (R - 12) * S2, c + (R - 12) * S2, cyy + (R - 12) * S2],
+                   -90 + 360 * (1 - rem), 270, fill=col + (60,))
+    for k in range(12):
+        ang = math.radians(k * 30)
+        r0, r1 = (R - 14) * S2, (R - (24 if k % 3 == 0 else 19)) * S2
+        d.line([(c + r0 * math.sin(ang), cyy - r0 * math.cos(ang)), (c + r1 * math.sin(ang), cyy - r1 * math.cos(ang))],
+               fill=(60, 64, 80, 255), width=3 * S2)
+    ang = math.radians(360 * (1 - rem))
+    hl = (R - 18) * S2
+    d.line([(c, cyy), (c + hl * math.sin(ang), cyy - hl * math.cos(ang))], fill=(220, 40, 50, 255), width=4 * S2)
+    d.ellipse([c - 6 * S2, cyy - 6 * S2, c + 6 * S2, cyy + 6 * S2], fill=(40, 42, 54, 255))
+    im = im.resize((im.width // S2, im.height // S2), Image.LANCZOS)
+    paste(frame, im, cx - 70, cy - 8, 0.95, a)
+    paste(frame, _num(left, 70, ink, True), cx + 70, cy, 1.0, a)
+
+
+def liquid(frame, cx, cy, rem, left, total, col, ink, u, a, rtl):
+    S2, R = 2, 66
+    size = (R * 2 + 16) * S2
+    c = size / 2
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).ellipse([c - R * S2, c - R * S2, c + R * S2, c + R * S2], fill=255)
+    fluid = Image.new("RGBA", (size, size), (10, 14, 28, 210))
+    d = ImageDraw.Draw(fluid)
+    level = c + R * S2 - 2 * R * S2 * rem
+    amp = 5 * S2 * (1 if 0.02 < rem < 0.98 else 0.4)
+    for layer, (shift, colr) in enumerate(((1.3, shade(col, 0.65)), (0.0, col))):
+        pts = [(x, level + math.sin(x / (18.0 * S2) + u * 4 + shift) * amp) for x in range(0, size + 8, 8)]
+        d.polygon(pts + [(size, size), (0, size)], fill=colr + (255,))
+    for k in range(5):  # rising bubbles
+        bx = c + math.sin(k * 2.1) * R * 0.55 * S2
+        by = c + R * S2 - ((u * 40 + k * 37) % (2 * R)) * S2
+        if by > level + 8 * S2:
+            d.ellipse([bx - 4 * S2, by - 4 * S2, bx + 4 * S2, by + 4 * S2], fill=(255, 255, 255, 110))
+    im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    im.paste(fluid, (0, 0), mask)
+    ImageDraw.Draw(im).ellipse([c - R * S2, c - R * S2, c + R * S2, c + R * S2], outline=(255, 255, 255, 220), width=5 * S2)
+    ImageDraw.Draw(im).arc([c - (R - 14) * S2, c - (R - 14) * S2, c + (R - 14) * S2, c + (R - 14) * S2], 200, 250,
+                           fill=(255, 255, 255, 120), width=5 * S2)
+    im = im.resize((size // S2, size // S2), Image.LANCZOS)
+    num = _num(left, 58, (255, 255, 255), True)
+    im.alpha_composite(num, (im.width // 2 - num.width // 2, im.height // 2 - num.height // 2))
+    paste(frame, im, cx, cy, 1.0, a)
+
+
+def big_number(frame, cx, cy, rem, left, total, col, ink, u, a, rtl):
+    f = u - math.floor(u)
+    pop = max(0.0, 1 - f / 0.3) if rem > 0 else 0.0  # each new number lands from slightly bigger
+    num = text_img(str(left), 150, col if left <= 2 and rem > 0 else ink, "Black", shadow=True)
+    paste(frame, num, cx, cy - 18, 1 + 0.35 * pop ** 2, a * (1 - 0.6 * pop ** 2))
+    w = 300
+    im = Image.new("RGBA", (w + 8, 14), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle([4, 3, w + 4, 11], 4, fill=(255, 255, 255, 50))
+    if rem > 0.004:
+        fw = w * rem
+        x0 = 4 + (w - fw) / 2
+        d.rounded_rectangle([x0, 3, x0 + fw, 11], 4, fill=col + (255,))
+    paste(frame, im, cx, cy + 72, 1.0, a)
+
+
 DRAW = {"Ring": ring, "Pie": pie, "Bar": bar, "Hourglass": hourglass, "Digital": digital,
-        "Segments": segments, "Fuse": fuse}
+        "Segments": segments, "Fuse": fuse, "Neon Ring": neon_ring, "Dots": dots, "Flip Clock": flip_clock,
+        "Stopwatch": stopwatch, "Liquid": liquid, "Big Number": big_number}
+
+# rough footprint of each design (w, h), so glow and ripples match its shape
+FOOTPRINT = {"Bar": (840, 64), "Segments": (840, 64), "Fuse": (940, 120), "Digital": (300, 130),
+             "Flip Clock": (216, 140), "Hourglass": (250, 150), "Stopwatch": (260, 150), "Big Number": (220, 170)}
 
 
-def draw_timer(kind, *args):
-    DRAW.get(kind, ring)(*args)
+# ------------------------------------------------------------------ ticking effects
+_fx_cache = {}
+
+
+def _halo(kind, col):
+    key = ("halo", kind, col)
+    if key not in _fx_cache:
+        w, h = FOOTPRINT.get(kind, (140, 140))
+        m = 90
+        im = Image.new("RGBA", (w + 2 * m, h + 2 * m), (0, 0, 0, 0))
+        ImageDraw.Draw(im).rounded_rectangle([m, m, m + w, m + h], min(w, h) // 2, fill=col + (200,))
+        _fx_cache[key] = im.filter(ImageFilter.GaussianBlur(34))
+    return _fx_cache[key]
+
+
+def _red_edges():
+    if "edges" not in _fx_cache:
+        yy, xx = np.mgrid[0:H, 0:W]
+        r = np.sqrt(((xx - W / 2) / (W / 2)) ** 2 + ((yy - H / 2) / (H / 2)) ** 2) / math.sqrt(2)
+        al = (np.clip((r - 0.45) / 0.55, 0, 1) ** 1.6 * 210).astype(np.uint8)
+        arr = np.zeros((H, W, 4), np.uint8)
+        arr[..., 0], arr[..., 1], arr[..., 2], arr[..., 3] = 255, 30, 40, al
+        _fx_cache["edges"] = Image.fromarray(arr, "RGBA")
+    return _fx_cache["edges"]
+
+
+def draw_timer(kind, frame, cx, cy, rem, left, total, col, ink, u, a, rtl, fx=()):
+    """Draw a timer; `fx` is a list of effect keys from TIMER_FX applied while it ticks."""
+    fn = DRAW.get(kind, ring)
+    fx = set(fx or ())
+    if not fx:
+        fn(frame, cx, cy, rem, left, total, col, ink, u, a, rtl)
+        return
+    running = rem > 0.0005 and a > 0.01
+    f = u - math.floor(u)
+    beat = max(0.0, 1 - f / 0.25) if running and u > 0 else 0.0  # flares on every tick, fades in 0.25 s
+    final = running and u > 0 and left <= 3
+    if "flash" in fx and final and beat > 0:
+        paste(frame, _red_edges(), W / 2, H / 2, 1.0, 0.75 * beat * a)
+    if "glow" in fx and running:
+        w, h = FOOTPRINT.get(kind, (140, 140))
+        soft = min(1.0, math.sqrt(140 * 140 / (w * h)) * 1.4)  # wide timers: a gentler glow
+        paste(frame, _halo(kind, col), cx, cy, 1 + 0.12 * beat, a * (0.35 + 0.45 * beat) * soft)
+    if "ripple" in fx and running and u > 0:
+        w, h = FOOTPRINT.get(kind, (140, 140))
+        grow = (6 + 54 * (1 - (1 - f) ** 2)) * (0.5 if w > 400 else 1.0)  # wide timers: a tighter wave
+        al = int(200 * a * (1 - f) ** 1.5)
+        if al > 4:
+            rw, rh = int(w + 2 * grow), int(h + 2 * grow)
+            ov = Image.new("RGBA", (rw + 12, rh + 12), (0, 0, 0, 0))
+            ImageDraw.Draw(ov).rounded_rectangle([6, 6, rw + 6, rh + 6], min(rw, rh) // 2, outline=col + (al,), width=5)
+            paste(frame, ov, cx, cy, 1.0, 1.0)
+    scale = 1 + ((0.07 + (0.07 if final else 0)) * beat if "pulse" in fx else 0)
+    dx = math.sin(u * 80) * 8 * (0.5 + 0.5 * beat) if "shake" in fx and final else 0
+    if abs(scale - 1) < 0.004 and abs(dx) < 0.5:
+        fn(frame, cx, cy, rem, left, total, col, ink, u, a, rtl)
+        return
+    lw, lh = W, 440  # draw on a transparent layer, then place it scaled / shaken
+    layer = Image.new("RGBA", (lw, lh), (0, 0, 0, 0))
+    fn(layer, lw / 2, lh / 2, rem, left, total, col, ink, u, a, rtl)
+    paste(frame, layer, cx + dx, cy, scale, 1.0)

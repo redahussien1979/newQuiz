@@ -13,11 +13,11 @@ import time
 
 import gradio as gr
 
-from engine.audio import MOODS
+from engine.audio import INTRO_SOUNDS, MOODS, TICK_SOUNDS, sound_demo
 from engine.core import COLOR_NAMES, THEME_NAMES
 from engine.icons import ICON_NAMES
 from engine.mcq_styles import STYLE_NAMES
-from engine.timers import TIMER_NAMES
+from engine.timers import TIMER_FX, TIMER_NAMES
 from engine.render import render_clip, render_still, render_video
 from engine.templates import TEMPLATES
 from engine.templates.mcq import narration_report, parse_questions
@@ -34,16 +34,18 @@ N_EVENTS = 5
 SHARED_KEYS = [("settings", "theme"), ("settings", "language"), ("settings", "music"), ("settings", "music_gain"),
                ("settings", "music_file"), ("settings", "voice_file"), ("settings", "voice_offset"),
                ("settings", "voice_gain"), ("settings", "handle"), ("settings", "font_file"), ("settings", "fps"),
-               ("ending", "intro"), ("ending", "question"), ("ending", "cta")]
+               ("ending", "intro"), ("ending", "question"), ("ending", "cta"),
+               ("settings", "intro_sound"), ("settings", "tick_sound"), ("settings", "tick_gain")]
 TL_KEYS = ["mode", "hook", "hide_first_in_hook", "doubt", "doubt_sub", "compare_title", "reveal"]
 EV_KEYS = ["enabled", "name", "year", "label", "color", "icon", "image"]
 QZ_KEYS = ["title", "subtitle", "clues", "clue_seconds", "answer_intro", "answer", "answer_sub", "answer_image", "accent"]
 MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", "accent", "style", "timer",
-           "colors", "narration", "narration_gain"]
+           "colors", "narration", "narration_gain", "timer_fx"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image"}
 MEDIA_LISTS = {"narration"}  # fields holding several files
-DEFAULTS = {"colors": "style", "narration_gain": 1.0}  # for projects saved before these options existed
+DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [],
+            "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -78,7 +80,8 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 **Colours:** pick *Theme colours* (Design & timing) so any style follows your Theme; Classic always does.
 **Excel batch:** in the 📊 Excel batch tab upload a sheet (get the template there), choose how many questions per video, and render all the videos at once (30 questions at 5 per video = 6 videos).
 **Narration:** in the 🎙️ Narration tab upload clips named `q1` (question 1), `q1a`…`q1d` (its options) and `q1e` (its explanation). Each question waits for its clips.
-**Timers:** Ring, Pie, Bar, Hourglass, Digital (00:05), Segments (battery blocks), Fuse (burning fuse and bomb, with a sizzle sound).
+**Timers:** Ring, Pie, Bar, Hourglass, Digital (00:05), Segments (battery blocks), Fuse (burning fuse and bomb, with a sizzle sound), Neon Ring, Dots, Flip Clock, Stopwatch, Liquid, Big Number.
+**Timer effects** (Design & timing): Pulse on every tick, Glow, Ripple wave, Shake and Red flash in the last 3 seconds — any mix, with every timer.
 
 ### Timeline tips
 - **Calendar years**: type BC years as negative numbers (2560 BC → `-2560`).
@@ -106,7 +109,7 @@ Tick **Safe zone** under the preview: red areas are covered by YouTube/TikTok bu
 def project_to_values(p, tpl):
     vals = []
     for sec, k in SHARED_KEYS:
-        vals.append(p.get(sec, {}).get(k))
+        vals.append(p.get(sec, {}).get(k, DEFAULTS.get(k)))
     if tpl == "timeline":
         d = p.get("timeline", {})
         vals += [d.get(k) for k in TL_KEYS]
@@ -330,17 +333,36 @@ def style_tab():
                 handle = gr.Textbox(value="@Ma3loomaFast", label="Channel handle (ending)")
                 font_file = gr.File(type="filepath", file_types=[".ttf", ".otf"], label="Custom font (optional)")
             with gr.Row():
-                music = gr.Dropdown(MOODS, value="Tension", label="Built-in music mood")
+                music = gr.Dropdown(MOODS, value="Tension", label="Built-in music",
+                                    info="Quiz Show, Bright Pop, Lo-fi Chill, Epic, Ambient = real chords and drums")
                 music_gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Music volume")
+            with gr.Row():
+                intro_sound = gr.Dropdown(INTRO_SOUNDS, value="Bass hit", label="Opening sound")
+                tick_sound = gr.Dropdown(TICK_SOUNDS, value="Classic", label="Ticking sound")
+                tick_gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Ticking volume")
+            with gr.Row(equal_height=True):
+                listen = gr.Button("🔊 Listen: opening + music + ticking", scale=1, min_width=200)
+                demo = gr.Audio(label="Sound preview", autoplay=True, interactive=False, scale=2)
             with gr.Row():
                 voice_offset = gr.Number(value=0.5, label="Voice starts at (seconds)")
                 voice_gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
             with gr.Row():
                 music_file = gr.Audio(type="filepath", label="Or your own music (optional)")
                 voice_file = gr.Audio(type="filepath", label="Voiceover (optional)")
+    def play(music_, gain_, file_, intro_, tick_, tgain_):
+        settings = dict(music=music_, music_gain=gain_, music_file=file_, intro_sound=intro_, tick_sound=tick_,
+                        tick_gain=tgain_)
+        for old in os.listdir(OUT_DIR):  # keep only the newest sample
+            if old.startswith("_sound_preview_"):
+                try:
+                    os.remove(os.path.join(OUT_DIR, old))
+                except OSError:
+                    pass
+        return sound_demo(settings, os.path.join(OUT_DIR, f"_sound_preview_{_stamp()}.wav"))
+    listen.click(play, [music, music_gain, music_file, intro_sound, tick_sound, tick_gain], demo)
     return dict(theme=theme, lang=lang, fps=fps, handle=handle, font_file=font_file, music=music,
                 music_gain=music_gain, music_file=music_file, voice_offset=voice_offset, voice_gain=voice_gain,
-                voice_file=voice_file)
+                voice_file=voice_file, intro_sound=intro_sound, tick_sound=tick_sound, tick_gain=tick_gain)
 
 
 def ending_tab(note=""):
@@ -356,7 +378,8 @@ def ending_tab(note=""):
 def shared_fields(st, ending):
     """Shared controls in SHARED_KEYS order."""
     return [st["theme"], st["lang"], st["music"], st["music_gain"], st["music_file"], st["voice_file"],
-            st["voice_offset"], st["voice_gain"], st["handle"], st["font_file"], st["fps"], *ending]
+            st["voice_offset"], st["voice_gain"], st["handle"], st["font_file"], st["fps"], *ending,
+            st["intro_sound"], st["tick_sound"], st["tick_gain"]]
 
 
 def preview_panel(tpl):
@@ -693,6 +716,9 @@ def build_ui():
                                 with gr.Row():
                                     m_think = gr.Slider(2, 10, value=5, step=0.5, label="Seconds to think (countdown)")
                                     m_rev = gr.Slider(1.5, 5, value=2.8, step=0.1, label="Seconds to show the answer")
+                                m_fx = gr.CheckboxGroup(TIMER_FX, value=["pulse", "glow", "ripple", "shake"],
+                                                        label="Timer effects while ticking",
+                                                        info="Pick any mix — they work with every timer type.")
                                 m_colors = gr.Radio([("Style's own colours", "style"), ("Theme colours", "theme")],
                                                     value="style", label="Colours",
                                                     info="Theme colours = background and cards follow the Theme in "
@@ -711,7 +737,7 @@ def build_ui():
                         mq_st = style_tab()
                         mq_end = ending_tab(COUNT_NOTE)
                     mq_fields = shared_fields(mq_st, mq_end) + [m_title, m_sub, m_qs, m_think, m_rev, m_acc, m_style,
-                                                                 m_timer, m_colors, m_narr, m_narr_gain]
+                                                                 m_timer, m_colors, m_narr, m_narr_gain, m_fx]
                 mq_pv = preview_panel("mcq")
             wire(mq_proj, mq_pv, mq_fields)
             gr.on(triggers=[m_narr.change, m_qs.change], fn=narration_report, inputs=[m_narr, m_qs],

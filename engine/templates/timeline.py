@@ -317,7 +317,7 @@ class TimelineVideo:
 
     # ------------------------------------------------------------ sound
     def sound(self, mx):
-        mx.add(0.05, mx.hit(1.6), 0.55)
+        mx.intro(0.05)
         for ev in self.evs:
             mx.add(ev["t_app"], mx.pop(), 0.35)
         s, pn = mx.whoosh(1.4); mx.add(2.6, s, 0.55, pn)
