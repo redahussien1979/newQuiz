@@ -5,3 +5,4 @@ imageio-ffmpeg>=0.5
 arabic-reshaper>=3.0
 python-bidi>=0.4
 fonttools>=4.40
+openpyxl>=3.1

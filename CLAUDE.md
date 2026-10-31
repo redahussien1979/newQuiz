@@ -8,6 +8,7 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
 - `engine/audio.py` — synthesized SFX, music beds, voiceover ducking, mixing
 - `engine/mcq_styles.py` — MCQ design styles; `engine/timers.py` — countdown timer designs
 - `engine/icons.py` — icons + event card; `engine/strings.py` — Arabic/English wording
+- `engine/batch.py` — MCQ from an Excel/CSV sheet: parse rows + audio, split into N-question videos
 - `engine/render.py` — build / render_still / render_clip / render_video
 - `projects/example_*.json` — example projects (same format the app saves)
 

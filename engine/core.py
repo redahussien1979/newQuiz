@@ -65,6 +65,22 @@ THEMES = {
     "Emerald": dict(top=(4, 22, 18), mid=(10, 52, 42), bot=(3, 12, 10), card=(10, 38, 32), stars=True),
     "Deep Purple": dict(top=(14, 8, 30), mid=(42, 22, 72), bot=(8, 5, 18), card=(30, 20, 52), stars=True),
     "Charcoal": dict(top=(14, 14, 16), mid=(32, 32, 36), bot=(8, 8, 9), card=(30, 30, 34), stars=False),
+    # glow = (colour, centre x, centre y, radius x, radius y, strength): a soft light behind the content
+    "Royal Blue": dict(top=(5, 9, 34), mid=(18, 34, 104), bot=(4, 6, 22), card=(16, 28, 78), stars=True,
+                       glow=((70, 120, 255), 540, 700, 620, 760, 0.30)),
+    "Ocean": dict(top=(3, 18, 32), mid=(6, 50, 76), bot=(2, 10, 20), card=(8, 36, 58), stars=False,
+                  glow=((40, 200, 220), 540, 1350, 760, 700, 0.22)),
+    "Midnight Gold": dict(top=(10, 9, 8), mid=(30, 25, 16), bot=(5, 5, 6), card=(30, 26, 19), stars=True,
+                          glow=((255, 190, 90), 540, 560, 640, 700, 0.20)),
+    "Crimson": dict(top=(24, 5, 9), mid=(68, 14, 24), bot=(11, 3, 5), card=(48, 14, 22), stars=False,
+                    glow=((255, 70, 90), 540, 760, 640, 820, 0.18)),
+    "Slate": dict(top=(14, 19, 27), mid=(36, 46, 60), bot=(7, 10, 14), card=(30, 38, 50), stars=False),
+    "Aurora": dict(top=(3, 12, 22), mid=(10, 42, 56), bot=(5, 6, 20), card=(12, 32, 44), stars=True,
+                   glow=((60, 230, 170), 300, 420, 700, 520, 0.24)),
+    "Rose Wine": dict(top=(22, 5, 16), mid=(64, 18, 46), bot=(10, 3, 8), card=(44, 15, 34), stars=False,
+                      glow=((255, 110, 170), 760, 600, 620, 720, 0.18)),
+    "Cyber Night": dict(top=(7, 4, 20), mid=(28, 10, 58), bot=(3, 2, 10), card=(24, 12, 46), stars=True,
+                        glow=((240, 60, 220), 540, 1450, 820, 620, 0.22)),
 }
 THEME_NAMES = list(THEMES)
 
@@ -77,7 +93,7 @@ _bg_cache = {}
 
 
 def make_bg(theme):
-    key = (theme["top"], theme["mid"], theme["bot"])
+    key = (theme["top"], theme["mid"], theme["bot"], theme.get("glow"))
     if key in _bg_cache:
         return _bg_cache[key].copy()
     y = np.linspace(0, 1, H)[:, None]
@@ -87,6 +103,10 @@ def make_bg(theme):
     yy, xx = np.mgrid[0:H, 0:W]
     r = np.sqrt(((xx - 540) / 700.0) ** 2 + ((yy - 1000) / 1150.0) ** 2)
     arr = arr * np.clip(1.15 - 0.55 * r ** 2, 0.35, 1.1)[..., None]
+    if theme.get("glow"):
+        gc, gx, gy, rx, ry, k = theme["glow"]
+        g = np.exp(-(((xx - gx) / rx) ** 2 + ((yy - gy) / ry) ** 2) * 2.2)
+        arr = arr + g[..., None] * np.array(gc, float) * k
     img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
     _bg_cache[key] = img
     return img.copy()
