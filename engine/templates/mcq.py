@@ -37,11 +37,11 @@ EXAMPLE = {
     "settings": {"theme": "Night Sky", "language": "ar", "fps": 30, "music": "Pulse", "music_gain": 1.0,
                  "music_file": "", "voice_file": "", "voice_offset": 0.5, "voice_gain": 1.0,
                  "handle": "@Ma3loomaFast", "font_file": ""},
-    "ending": {"intro": "النتيجة؟", "question": "كم إجابة صحيحة\n[gold]حصلت عليها من 5؟",
+    "ending": {"intro": "النتيجة؟", "question": "كم إجابة صحيحة\n[gold]حصلت عليها من {count}؟",
                "cta": "اكتب نتيجتك في التعليقات"},
     "mcq": {
         "title": "اختبر معلوماتك!",
-        "subtitle": "5 أسئلة — هل تجيب عنها كلها؟",
+        "subtitle": "{count} أسئلة — هل تجيب عنها كلها؟",
         "questions": (
             "كم عدد عظام جسم الإنسان البالغ؟\n186\n206 *\n226\n306\n> يولد الطفل بنحو 300 عظمة يلتحم بعضها مع النمو\n\n"
             "ما أكبر كوكب في المجموعة الشمسية؟\nزحل\nنبتون\nالمشتري *\n> يتسع حجمه لأكثر من 1300 كوكب بحجم الأرض\n\n"
@@ -191,15 +191,17 @@ class MCQVideo:
             self.st = dict(self.st, card=get_theme(s.get("theme"))["card"])
         self.glow = self._glow()
 
-        title = parse_lines(m.get("title", ""), [self.ink])
-        sub = m.get("subtitle", "")
+        def fill(txt):  # {count} = number of questions in this video
+            return str(txt or "").replace("{count}", str(len(self.qs)))
+        title = parse_lines(fill(m.get("title", "")), [self.ink])
+        sub = fill(m.get("subtitle", ""))
         lines = stack_lines(title, 720, 120, 96)
         if sub:
             sub_col = shade(self.accent, 0.62) if self.st.get("light") else self.accent  # readable on light pages
             lines.append((sub, 54, sub_col, (lines[-1][3] if lines else 720) + 150))
         self.scenes = [dict(t_in=0.1, t_out=2.4, lines=lines)]
-        self.ending = (e.get("intro", ""), parse_lines(e.get("question", ""), ["white", "gold"]),
-                       e.get("cta", ""), s.get("handle", ""))
+        self.ending = (fill(e.get("intro", "")), parse_lines(fill(e.get("question", "")), ["white", "gold"]),
+                       fill(e.get("cta", "")), s.get("handle", ""))
 
     # ------------------------------------------------------------ timing
     def _plan(self, i, q, narr):

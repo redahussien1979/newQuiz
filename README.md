@@ -96,6 +96,7 @@ Each question waits for its clips (the countdown starts after the last option is
    - **Audio cells**: the clip's file name. Upload the clips in the tab, or type the folder that holds them (or put full paths in the cells).
 2. Upload the sheet, choose **Questions per video** (1–10). 30 questions at 5 per video → 6 videos; a smaller remainder becomes the last video.
 3. Optional **Title of each video** with `{n}` and `{total}`, e.g. `اختبر معلوماتك — الجزء {n} من {total}`.
+   In the Title, Subtitle and Ending texts, `{count}` becomes the number of questions in that video (e.g. `حصلت عليها من {count}؟`).
 4. Pick a video and press **📥 Load into editor** to preview it, then **🎬 Render all videos**. They are saved in `outputs/batch_<date>/` together with a project file for each video, which you can open later to change one video.
 Rows with problems (no question, fewer than 2 options, unclear correct answer) are skipped and listed; a missing audio file is reported and the question is kept without it.
 

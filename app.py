@@ -343,10 +343,10 @@ def style_tab():
                 voice_file=voice_file)
 
 
-def ending_tab():
+def ending_tab(note=""):
     with gr.Tab("🔚 Ending"):
         with gr.Column(elem_classes="pane"):
-            gr.Markdown("**Ending card** — teases the next episode")
+            gr.Markdown("**Ending card** — teases the next episode" + (f"\n\n{note}" if note else ""))
             e_intro = gr.Textbox(label="Small intro line", rtl=True)
             e_q = gr.Textbox(lines=3, max_lines=4, label="Question (1–3 lines, tags allowed)", rtl=True)
             e_cta = gr.Textbox(label="Call to action", rtl=True)
@@ -446,6 +446,10 @@ def wire(proj, pv, fields):
 
 
 # ------------------------------------------------------------------ Excel batch (Multiple Choice)
+COUNT_NOTE = ("Write `{count}` where the number of questions should appear — e.g. "
+              "`حصلت عليها من {count}؟` — it becomes 5 in a 5-question video and 3 in a 3-question one. "
+              "It also works in the Title and Subtitle.")
+
 BATCH_HELP = """**Make many videos from one spreadsheet.** One question per row with the columns
 `Question · Option A–D · Correct · Explanation` and, optionally, `Question audio · A–D audio · Explanation audio`
 (English or Arabic headers — get the **template** on the right). Every video uses the design, timer, music and ending
@@ -705,7 +709,7 @@ def build_ui():
                             with gr.Column(elem_classes="pane"):
                                 xl = batch_tab()
                         mq_st = style_tab()
-                        mq_end = ending_tab()
+                        mq_end = ending_tab(COUNT_NOTE)
                     mq_fields = shared_fields(mq_st, mq_end) + [m_title, m_sub, m_qs, m_think, m_rev, m_acc, m_style,
                                                                  m_timer, m_colors, m_narr, m_narr_gain]
                 mq_pv = preview_panel("mcq")
