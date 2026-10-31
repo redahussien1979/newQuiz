@@ -28,14 +28,14 @@ The first run takes a few minutes while it downloads the packages. After that, i
 ## 3. Make a video
 
 1. Choose a tab, then press **✨ Load example** to see a finished project.
-2. Change the texts, years, colors, icons and pictures.
-3. Press **🖼️ Preview frame** and move the time slider to check any moment instantly. Tick **Show safe zone** to see where YouTube's buttons will cover the screen.
+2. Change the texts, years, colors, icons and pictures. The controls are grouped in small tabs on the left, so the whole studio fits on one screen without scrolling.
+3. Watch the preview on the right: it **updates by itself** as you type. Move the time slider to check any moment. Tick **Safe zone** to see where YouTube's buttons will cover the screen.
 4. Press **🎬 Render video**. A 30-second video takes about 1–2 minutes. It plays in the app and is saved in the `outputs` folder.
 5. Press **💾 Save project** to keep everything, including your pictures and audio, as a `.json` file in `projects`. Use **📂 Open project** to continue later.
 
 ### Previewing before you render
-- The preview picture **updates automatically** whenever you change anything. Move the **Preview time** slider to look at any moment. You can untick *Auto-refresh* if your computer is slow.
-- **▶️ Quick motion preview** makes a small 6-second clip, with sound, starting at the slider time. It's ready in a few seconds, so you can check the animation and timer before the full render.
+- The preview picture **updates automatically** whenever you change anything, and the **Preview time** slider always spans the whole video. Moving the slider is instant. You can untick *Live update* if your computer is slow and use **🔄 Refresh** instead.
+- **▶️ Quick motion** makes a small 6-second clip, with sound, starting at the slider time. It's ready in a few seconds, so you can check the animation and timer before the full render.
 - **🎬 Render video** makes the final full-quality MP4.
 
 ### Text tricks
@@ -60,7 +60,7 @@ Write each question as a block, with an empty line between questions:
 
 | Style | Look |
 |---|---|
-| Classic | Uses the colour Theme you chose under "Style, sound & ending" |
+| Classic | Uses the colour Theme you chose in the "🎨 Style & sound" tab |
 | Neon | Black grid, glowing neon outlines, outlined letters |
 | Glass | Frosted see-through cards over moving colour blobs |
 | Game Show | Deep blue spotlight rays, gold hexagon answer bars |
