@@ -283,6 +283,29 @@ def summary(items, problems, per_video):
 
 
 # ------------------------------------------------------------------ template
+def add_dropdowns(wb, ws, lists, rows=500):
+    """Dropdown lists on columns of `ws`. lists = [(header names, values, strict, prompt)].
+    The values go to a hidden 'Lists' sheet (Excel limits inline lists to 255 characters).
+    strict=False still suggests the values but lets the user type anything else."""
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.datavalidation import DataValidation
+    headers = [c.value for c in ws[1]]
+    ls = wb.create_sheet("Lists")
+    for k, (names, values, strict, prompt) in enumerate(lists, 1):
+        col = get_column_letter(k)
+        for i, v in enumerate(values, 1):
+            ls.cell(row=i, column=k, value=v)
+        dv = DataValidation(type="list", formula1=f"=Lists!${col}$1:${col}${len(values)}", allow_blank=True,
+                            showErrorMessage=strict, errorTitle="Not in the list",
+                            error="Pick one of the choices from the dropdown list.",
+                            showInputMessage=bool(prompt), prompt=prompt or None)
+        ws.add_data_validation(dv)
+        for name in names:
+            c = get_column_letter(headers.index(name) + 1)
+            dv.add(f"{c}2:{c}{rows}")
+    ls.sheet_state = "hidden"
+
+
 def write_template(path, example_items=None):
     """An .xlsx with the headers and a few example rows."""
     import openpyxl
@@ -309,6 +332,7 @@ def write_template(path, example_items=None):
     notes = wb.create_sheet("How to fill")
     for line in [
         "One question per row. Keep the header row (English or Arabic headers both work, in any order).",
+        "Correct has a dropdown list: click the cell and pick A, B, C or D (or أ ب ج د).",
         "Options: 2 to 4. Leave Option C / D empty for fewer options.",
         "Correct: A, B, C or D (or أ ب ج د, or 1-4, or the exact text of the right option).",
         "Explanation: optional, shown after the answer is revealed.",
@@ -318,6 +342,8 @@ def write_template(path, example_items=None):
     ]:
         notes.append([line])
     notes.column_dimensions["A"].width = 110
+    add_dropdowns(wb, ws, [(["Correct"], ["A", "B", "C", "D", "أ", "ب", "ج", "د"], True,
+                            "Pick the right option: A, B, C or D")])
     wb.save(path)
     return path
 
