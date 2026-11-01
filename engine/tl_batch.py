@@ -16,7 +16,8 @@ import os
 import re
 
 from . import countries as CT
-from .batch import _norm
+from .audio import MOODS
+from .batch import _norm, add_dropdowns
 from .core import COLORS, THEME_NAMES
 from .strings import ratio_str
 
@@ -331,7 +332,9 @@ def to_project(base, spec):
         if match:
             s["theme"] = match
     if spec["music"]:
-        s["music"] = spec["music"]
+        match = next((m for m in MOODS if _norm(m) == _norm(spec["music"])), None)
+        if match:
+            s["music"] = match
     return p
 
 
@@ -385,8 +388,21 @@ EXAMPLES = [
      "yes", "اكتب دولتين\n[gold]لنقارنهما!"),
 ]
 
+# short, common names shown in the Country dropdown instead of the long official ones
+SHORT_NAMES = {"ARE": "الإمارات", "OMN": "عمان", "GRL": "غرينلاند", "GBR": "بريطانيا", "USA": "أمريكا"}
+UNITS = ["كم²", "متر", "كم", "م²", "كغ", "°C", "km²", "m", "km", "kg", "$"]
+
+
+def country_choices():
+    """Arabic country names for the dropdown (each one is found again by find_country)."""
+    names = {code: SHORT_NAMES.get(code, c["ar"]) for code, c in CT._load().items()}
+    return sorted(set(names.values()))
+
+
 NOTES = [
     "One row = one video. Keep the header row (English or Arabic headers both work, in any order).",
+    "Click a cell to get its dropdown list: Country (or type any name, also in English), Intro, Map style, Guess,",
+    "   Unit, Mode, Theme and Music.",
     "Country 1-5: Arabic or English name (مصر / Egypt) or the 3-letter code (EGY). 2 to 5 countries per row.",
     "Value 1-5: the official area in km² (or any number: heights, prices…). 2,149,690 or ٢١٤٩٦٩٠ are fine.",
     "Hook / Reveal: new lines with Alt+Enter (or ' | '). Start a line with [gold], [green], [red]… to colour it.",
@@ -431,5 +447,16 @@ def write_template(path):
     for line in NOTES:
         notes.append([line])
     notes.column_dimensions["A"].width = 120
+    add_dropdowns(wb, ws, [
+        ([f"Country {i}" for i in range(1, MAX_EVENTS + 1)], country_choices(), False,
+         "Pick a country, or type one (Arabic or English)"),
+        (["Intro"], ["hook", "vs"], True, "hook = text intro, vs = flags battle"),
+        (["Map style"], ["auto", "overlay", "tiles", "side"], True, "auto picks the best style from the numbers"),
+        (["Guess"], ["yes", "no"], True, "Show the guess moment (3 choices + timer)?"),
+        (["Unit"], UNITS, False, "Pick a unit or type your own"),
+        (["Mode"], ["number line", "calendar", "years ago"], True, "Empty = number line"),
+        (["Theme"], list(THEME_NAMES), True, "Empty = the theme set in the app"),
+        (["Music"], [m for m in MOODS], True, "Empty = the music set in the app"),
+    ])
     wb.save(path)
     return path
