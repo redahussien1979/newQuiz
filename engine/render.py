@@ -71,6 +71,51 @@ def render_still(project, t, safe_zone=False, cached=False):
     return img.convert("RGB"), video.dur
 
 
+# ------------------------------------------------------------------ parallel frame rendering
+_worker_video = None
+
+
+def _init_worker(project):
+    global _worker_video
+    _worker_video = build(project)
+
+
+def _render_chunk(job):
+    start, stop, fps = job
+    return [_worker_video.render(i / fps).tobytes() for i in range(start, stop)]
+
+
+def frame_stream(project, video, n_frames, fps, workers=None, chunk=6):
+    """Raw frames in order. Uses several processes (one per spare CPU core, at most 6) — every frame depends only
+    on its time, so they can be drawn in parallel; falls back to one-by-one when that is not possible."""
+    if workers is None:
+        env = os.environ.get("VS_WORKERS")
+        workers = int(env) if env and env.isdigit() else min(6, (os.cpu_count() or 1) - 1)
+    if workers < 2 or n_frames < 4 * chunk:
+        for i in range(n_frames):
+            yield video.render(i / fps).tobytes()
+        return
+    import multiprocessing as mp
+    jobs = [(a, min(n_frames, a + chunk), fps) for a in range(0, n_frames, chunk)]
+    try:
+        pool = mp.get_context("spawn").Pool(workers, initializer=_init_worker, initargs=(project,))
+    except Exception:  # no multiprocessing available here: render one by one
+        for i in range(n_frames):
+            yield video.render(i / fps).tobytes()
+        return
+    try:
+        pending = []
+        nxt = 0
+        while nxt < len(jobs) or pending:
+            while nxt < len(jobs) and len(pending) < workers * 2:  # keep memory bounded
+                pending.append(pool.apply_async(_render_chunk, (jobs[nxt],)))
+                nxt += 1
+            yield from pending.pop(0).get()
+    finally:
+        pool.terminate()
+        pool.join()
+
+
 def render_video(project, out_path, progress=None):
     video = build(project)
     s = project.get("settings", {})
@@ -88,7 +133,9 @@ def render_video(project, out_path, progress=None):
     wav = os.path.splitext(out_path)[0] + "_audio.wav"
     mx.write(wav)
     try:
-        encode(video.render, int(round(video.dur * video.fps)), video.fps, wav, out_path, progress)
+        n = int(round(video.dur * video.fps))
+        encode(video.render, n, video.fps, wav, out_path, progress,
+               frames=frame_stream(project, video, n, video.fps))
     finally:
         if os.path.exists(wav):
             os.remove(wav)

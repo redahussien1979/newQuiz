@@ -53,6 +53,8 @@
     "guess": false,
     "guess_q": "",
     "intro": "hook",
-    "map_style": "auto"
+    "map_style": "auto",
+    "polish": true,
+    "finish": true
   }
 }

@@ -40,6 +40,8 @@ _ALIASES = {
     "map_style": ["mapstyle", "mapscene", "style", "شكلالخريطه", "نمطالخريطه", "شكلالخرائط"],
     "maps": ["maps", "map", "truesize", "الخرائط", "خرائط", "الخريطه"],
     "guess": ["guess", "التخمين", "خمن"],
+    "polish": ["polish", "motionpolish", "motion", "الحركه", "تحسينالحركه"],
+    "finish": ["finish", "cinematic", "cinematicfinish", "اللمسهالسينمائيه", "سينمائي"],
     "guess_q": ["guessquestion", "سؤالالتخمين"],
     "end_intro": ["endingintro", "endintro", "مقدمهالنهايه"],
     "end_q": ["endingquestion", "nextquestion", "ending", "سؤالالنهايه", "سؤالالحلقهالقادمه"],
@@ -161,7 +163,8 @@ def _choice(text, options, default):
 _MODES = {"scale": ["numberline", "number", "value", "values", "area", "رقم", "ارقام", "مساحه", "قيم"],
           "calendar": ["calendar", "years", "year", "date", "سنوات", "تقويم", "تاريخ"],
           "ago": ["yearsago", "deeptime", "منذ", "قبل"]}
-_INTROS = {"hook": ["text", "hooktext", "normal", "نص", "عادي"], "vs": ["versus", "battle", "vsbattle", "مواجهه", "ضد"]}
+_INTROS = {"hook": ["text", "hooktext", "normal", "نص", "عادي"], "vs": ["versus", "battle", "vsbattle", "مواجهه", "ضد"],
+           "globe": ["earth", "planet", "world", "الكرهالارضيه", "الارض", "كرهارضيه"]}
 _STYLES = {"auto": ["automatic", "تلقائي"], "overlay": ["over", "فوق", "تراكب"],
            "tiles": ["tile", "tilefill", "fill", "تعبئه", "تبليط", "ملء"],
            "side": ["sidebyside", "side by side", "جنبالجنب", "جنبا", "بجانب"]}
@@ -220,6 +223,7 @@ def parse(rows):
             continue
         specs.append(dict(row=rn, events=evs, mode=mode, intro=intro, map_style=style,
                           unit=get("unit"), maps=get("maps"), guess=get("guess"), title=get("title"),
+                          polish=get("polish"), finish=get("finish"),
                           text={k: get(k) for k in ("hook", "doubt", "doubt_sub", "compare_title", "reveal",
                                                     "guess_q", "end_intro", "end_q", "cta")},
                           theme=get("theme"), music=get("music")))
@@ -309,6 +313,8 @@ def to_project(base, spec):
     tl["maps"] = _bool(spec["maps"], n_countries >= 2 and spec["mode"] == "scale")
     tl["guess"] = _bool(spec["guess"], True)
     tl["intro"], tl["map_style"] = spec["intro"], spec["map_style"]
+    for key in ("polish", "finish"):  # empty = the editor's setting
+        tl[key] = _bool(spec.get(key, ""), bool(tl.get(key)))
     tl["hide_first_in_hook"] = False
     auto = auto_texts(spec, lang) if spec["mode"] == "scale" else {}
     if spec["mode"] == "scale" and base.get("timeline", {}).get("mode") != "scale":
@@ -359,9 +365,9 @@ def summary(specs, problems):
 # ------------------------------------------------------------------ template
 HEADERS = ["Title", "Country 1", "Value 1", "Country 2", "Value 2", "Country 3", "Value 3", "Country 4", "Value 4",
            "Country 5", "Value 5", "Hook", "Doubt", "Doubt subtitle", "Compare title", "Reveal", "Intro", "Map style",
-           "Guess", "Ending question", "Unit", "Mode", "Theme", "Music"]
+           "Guess", "Polish", "Finish", "Ending question", "Unit", "Mode", "Theme", "Music"]
 WIDTHS = {"Title": 22, "Hook": 34, "Doubt": 14, "Doubt subtitle": 18, "Compare title": 18, "Reveal": 30, "Intro": 8,
-          "Map style": 11, "Guess": 8, "Ending question": 30, "Unit": 8, "Mode": 12, "Theme": 13, "Music": 12}
+          "Map style": 11, "Guess": 8, "Polish": 8, "Finish": 8, "Ending question": 30, "Unit": 8, "Mode": 12, "Theme": 13, "Music": 12}
 TEXT_COLS = {"Title", "Hook", "Doubt", "Doubt subtitle", "Compare title", "Reveal", "Ending question"}
 # example doubt words (any short word works: the big word after the hook)
 DOUBTS = ["مستحيل؟", "هل تصدق؟", "مستحيل؟", "حقًا؟", "مستحيل؟", "هل تصدق؟", "مستحيل؟", "حقًا؟", "مستحيل؟", "هل تصدق؟"]
@@ -375,7 +381,7 @@ EXAMPLES = [
      "[gold]الفرق بينهما\nأقل من 1%!", "hook", "auto", "no", "مصر أقرب في المساحة\n[gold]إلى من؟"),
     ("مصر وموريتانيا والسعودية", [("مصر", 1001450), ("موريتانيا", 1030700), ("السعودية", 2149690)],
      "مصر أقرب في المساحة إلى\n[gold]موريتانيا\n[green]منها إلى السعودية!", "[green]السعودية أكبر من\nضعف مساحة مصر!",
-     "hook", "auto", "yes", "كم بحرين تدخل\n[gold]في الكويت؟"),
+     "globe", "auto", "yes", "كم بحرين تدخل\n[gold]في الكويت؟"),
     ("البحرين داخل الكويت", [("البحرين", 787), ("الكويت", 17818)], "", "", "vs", "auto", "yes",
      "الأردن أم البرتغال:\n[gold]أيهما أكبر؟"),
     ("الأردن أم البرتغال", [("الأردن", 89342), ("البرتغال", 92212)], "", "", "hook", "auto", "no",
@@ -383,13 +389,13 @@ EXAMPLES = [
     ("غانا أم بريطانيا", [("غانا", 238535), ("بريطانيا", 242495)], "", "", "vs", "auto", "no",
      "أكبر 3 دول عربية:\n[gold]من الأولى؟"),
     ("أكبر الدول العربية", [("السودان", 1886068), ("السعودية", 2149690), ("الجزائر", 2381741)],
-     "أكبر 3 دول عربية\n[gold]متقاربة جدًا في المساحة!", "[gold]الجزائر الأولى\nبفارق صغير!", "hook", "auto", "no",
+     "أكبر 3 دول عربية\n[gold]متقاربة جدًا في المساحة!", "[gold]الجزائر الأولى\nبفارق صغير!", "globe", "auto", "no",
      "كم كويت تدخل\n[gold]في العراق؟"),
     ("الكويت داخل العراق", [("الكويت", 17818), ("العراق", 438317)], "", "", "hook", "auto", "yes",
      "كم تونس تدخل\n[gold]في ليبيا؟"),
     ("تونس وليبيا", [("تونس", 163610), ("ليبيا", 1759540)], "", "", "vs", "auto", "yes",
      "الإمارات وعُمان واليمن:\n[gold]رتّبها حسب المساحة!"),
-    ("الإمارات وعمان واليمن", [("الإمارات", 83600), ("عمان", 309500), ("اليمن", 527968)], "", "", "hook", "auto",
+    ("الإمارات وعمان واليمن", [("الإمارات", 83600), ("عمان", 309500), ("اليمن", 527968)], "", "", "globe", "auto",
      "yes", "اكتب دولتين\n[gold]لنقارنهما!"),
 ]
 
@@ -414,7 +420,8 @@ NOTES = [
     "Doubt: the big word after the hook (مستحيل؟ / هل تصدق؟ / حقًا؟), Doubt subtitle: the small line under it.",
     "Compare title: the title over the maps / bars (بالحجم الحقيقي…). Empty = the app's text.",
     "   Leave Hook / Reveal empty and they are written automatically from the numbers.",
-    "Intro: hook (text) or vs (flags battle).  Map style: auto, overlay, tiles, side.  Guess: yes / no.",
+    "Intro: hook (text), vs (flags battle) or globe (real Earth zoom-in).  Map style: auto, overlay, tiles, side.",
+    "Guess / Polish / Finish: yes or no (empty = the app's setting). Polish + Finish look best but render ~2× slower.",
     "   auto = tile fill when one country is 20× bigger or more, side by side within 1.5×, overlay otherwise.",
     "Ending question: the question for the next video (tease the next row!).",
     "Optional: Unit (default كم²), Mode (number line / calendar years), Theme (e.g. Ocean), Music.",
@@ -433,7 +440,7 @@ def write_template(path):
     for n, (title, items, hook, reveal, intro, style, guess, end_q) in enumerate(EXAMPLES):
         row = {"Title": title, "Hook": hook, "Doubt": DOUBTS[n % len(DOUBTS)], "Doubt subtitle": "تابع المساحة…",
                "Compare title": "بالحجم الحقيقي…", "Reveal": reveal, "Intro": intro, "Map style": style,
-               "Guess": guess, "Ending question": end_q}
+               "Guess": guess, "Polish": "yes", "Finish": "yes", "Ending question": end_q}
         for i, (country, value) in enumerate(items, 1):
             row[f"Country {i}"], row[f"Value {i}"] = country, value
         ws.append([row.get(h, "") for h in HEADERS])
@@ -461,9 +468,10 @@ def write_template(path):
     add_dropdowns(wb, ws, [
         ([f"Country {i}" for i in range(1, MAX_EVENTS + 1)], country_choices(), False,
          "Pick a country, or type one (Arabic or English)"),
-        (["Intro"], ["hook", "vs"], True, "hook = text intro, vs = flags battle"),
+        (["Intro"], ["hook", "vs", "globe"], True, "hook = text intro, vs = flags battle, globe = real Earth zoom-in"),
         (["Map style"], ["auto", "overlay", "tiles", "side"], True, "auto picks the best style from the numbers"),
         (["Guess"], ["yes", "no"], True, "Show the guess moment (3 choices + timer)?"),
+        (["Polish", "Finish"], ["yes", "no"], True, "Polish = camera, motion blur, transitions; Finish = glow, grain"),
         (["Unit"], UNITS, False, "Pick a unit or type your own"),
         (["Mode"], ["number line", "calendar", "years ago"], True, "Empty = number line"),
         (["Theme"], list(THEME_NAMES), True, "Empty = the theme set in the app"),

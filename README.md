@@ -163,6 +163,8 @@ engine/audio.py      sound effects, music beds, voice, mixing
 engine/icons.py      icons + event card
 engine/countries.py  country names, flags, outlines, true-size map drawing
 engine/tl_batch.py   Timeline videos from an Excel sheet (one row = one video)
+engine/globe.py      real-Earth globe intro (data/earth.jpg)
+engine/finish.py     motion polish (camera, transitions) + cinematic finish (glow, grain, vignette, light leaks)
 engine/strings.py    Arabic/English wording, year & number formatting
 engine/templates/    timeline.py, quiz.py, mcq.py (add yours here)
 fonts/               Cairo.ttf + licence
@@ -174,9 +176,12 @@ outputs/             rendered videos
 ## Troubleshooting
 - **"Python is required"**: install Python 3.10+ and tick "Add to PATH", then run the launcher again.
 - **Port already in use**: close the other Video Studio window, or run `python app.py` after stopping it.
-- **Rendering is slow**: 60 FPS takes twice as long as 30 FPS. 30 FPS is standard for Shorts.
+- **Rendering is slow**: 60 FPS takes twice as long as 30 FPS. 30 FPS is standard for Shorts. ✨ Motion polish and
+  🎬 Cinematic finish roughly double the render time — switch them off for quick test renders. Videos are drawn on
+  several CPU cores at once; set the environment variable `VS_WORKERS=1` to use a single core.
 
 ## Credits
 - Country outlines: [Natural Earth](https://www.naturalearthdata.com) (public domain). Borders follow Natural Earth's
   choices; upload your own GeoJSON outline on an event to draw a country differently.
 - Flags: [flagcdn.com](https://flagcdn.com) (public-domain flag images).
+- Earth image for the globe intro: NASA Earth Observatory, *Blue Marble: Next Generation* (public domain).
