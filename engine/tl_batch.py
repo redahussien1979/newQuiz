@@ -358,8 +358,13 @@ def summary(specs, problems):
 
 # ------------------------------------------------------------------ template
 HEADERS = ["Title", "Country 1", "Value 1", "Country 2", "Value 2", "Country 3", "Value 3", "Country 4", "Value 4",
-           "Country 5", "Value 5", "Hook", "Reveal", "Intro", "Map style", "Guess", "Ending question", "Unit", "Mode",
-           "Theme", "Music"]
+           "Country 5", "Value 5", "Hook", "Doubt", "Doubt subtitle", "Compare title", "Reveal", "Intro", "Map style",
+           "Guess", "Ending question", "Unit", "Mode", "Theme", "Music"]
+WIDTHS = {"Title": 22, "Hook": 34, "Doubt": 14, "Doubt subtitle": 18, "Compare title": 18, "Reveal": 30, "Intro": 8,
+          "Map style": 11, "Guess": 8, "Ending question": 30, "Unit": 8, "Mode": 12, "Theme": 13, "Music": 12}
+TEXT_COLS = {"Title", "Hook", "Doubt", "Doubt subtitle", "Compare title", "Reveal", "Ending question"}
+# example doubt words (any short word works: the big word after the hook)
+DOUBTS = ["مستحيل؟", "هل تصدق؟", "مستحيل؟", "حقًا؟", "مستحيل؟", "هل تصدق؟", "مستحيل؟", "حقًا؟", "مستحيل؟", "هل تصدق؟"]
 
 EXAMPLES = [
     ("لبنان داخل السعودية", [("لبنان", 10452), ("قطر", 11586), ("السعودية", 2149690)],
@@ -406,6 +411,8 @@ NOTES = [
     "Country 1-5: Arabic or English name (مصر / Egypt) or the 3-letter code (EGY). 2 to 5 countries per row.",
     "Value 1-5: the official area in km² (or any number: heights, prices…). 2,149,690 or ٢١٤٩٦٩٠ are fine.",
     "Hook / Reveal: new lines with Alt+Enter (or ' | '). Start a line with [gold], [green], [red]… to colour it.",
+    "Doubt: the big word after the hook (مستحيل؟ / هل تصدق؟ / حقًا؟), Doubt subtitle: the small line under it.",
+    "Compare title: the title over the maps / bars (بالحجم الحقيقي…). Empty = the app's text.",
     "   Leave Hook / Reveal empty and they are written automatically from the numbers.",
     "Intro: hook (text) or vs (flags battle).  Map style: auto, overlay, tiles, side.  Guess: yes / no.",
     "   auto = tile fill when one country is 20× bigger or more, side by side within 1.5×, overlay otherwise.",
@@ -423,26 +430,30 @@ def write_template(path):
     ws = wb.active
     ws.title = "Videos"
     ws.append(HEADERS)
-    for title, items, hook, reveal, intro, style, guess, end_q in EXAMPLES:
-        cells = []
-        for i in range(MAX_EVENTS):
-            cells += list(items[i]) if i < len(items) else ["", ""]
-        ws.append([title, *cells, hook, reveal, intro, style, guess, end_q, "", "", "", ""])
+    for n, (title, items, hook, reveal, intro, style, guess, end_q) in enumerate(EXAMPLES):
+        row = {"Title": title, "Hook": hook, "Doubt": DOUBTS[n % len(DOUBTS)], "Doubt subtitle": "تابع المساحة…",
+               "Compare title": "بالحجم الحقيقي…", "Reveal": reveal, "Intro": intro, "Map style": style,
+               "Guess": guess, "Ending question": end_q}
+        for i, (country, value) in enumerate(items, 1):
+            row[f"Country {i}"], row[f"Value {i}"] = country, value
+        ws.append([row.get(h, "") for h in HEADERS])
     head = PatternFill("solid", fgColor="1F3A68")
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = head
-        c.alignment = Alignment(horizontal="center", vertical="center")
-    widths = [22] + [14, 12] * MAX_EVENTS + [34, 30, 8, 11, 8, 30, 8, 10, 10, 10]
-    for i, w in enumerate(widths, 1):
-        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for i, h in enumerate(HEADERS, 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = WIDTHS.get(h, 14 if h.startswith("C") else 12)
     for row in ws.iter_rows(min_row=2):
-        for c in row:
-            c.alignment = Alignment(wrap_text=True, vertical="top")
-        for i in range(MAX_EVENTS):
-            row[2 + 2 * i].number_format = "#,##0.###"
+        for h, c in zip(HEADERS, row):
+            if h in TEXT_COLS or h.startswith("Country"):  # Arabic text reads right-to-left inside its cell
+                c.alignment = Alignment(wrap_text=True, vertical="top", horizontal="right", readingOrder=2)
+            else:
+                c.alignment = Alignment(wrap_text=True, vertical="top", horizontal="center")
+            if h.startswith("Value"):
+                c.number_format = "#,##0.###"
     ws.freeze_panes = "B2"
-    ws.sheet_view.rightToLeft = True
+    ws.sheet_view.rightToLeft = False  # columns run left to right (A, B, C…)
     notes = wb.create_sheet("How to fill")
     for line in NOTES:
         notes.append([line])
