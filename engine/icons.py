@@ -1,7 +1,7 @@
 """Built-in flat icons and the event card used by the timeline template."""
 import os
 
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 from .core import WHITE, shade, text_img, to_rgb
 
@@ -122,11 +122,25 @@ ICONS = {"none": None, "pyramid": _pyramid, "ankh": _ankh, "moon": _moon, "book"
 ICON_NAMES = list(ICONS)
 
 
+def _transparent_edges(im):
+    """True when the picture is a cut-out (transparent corners), e.g. a map or logo PNG."""
+    a = im.getchannel("A")
+    w, h = im.size
+    return all(a.getpixel(p) < 16 for p in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)))
+
+
 def circle_image(path, diameter):
-    im = ImageOps.fit(Image.open(path).convert("RGBA"), (diameter, diameter), Image.LANCZOS)
+    """Round picture for a card. `path` may be a file or a PIL image; cut-outs are fitted whole, photos are cropped."""
+    src = (path if isinstance(path, Image.Image) else Image.open(path)).convert("RGBA")
+    if _transparent_edges(src):
+        inner = ImageOps.contain(src, (int(diameter * 0.84), int(diameter * 0.84)), Image.LANCZOS)
+        im = Image.new("RGBA", (diameter, diameter), (0, 0, 0, 0))
+        im.alpha_composite(inner, ((diameter - inner.width) // 2, (diameter - inner.height) // 2))
+    else:
+        im = ImageOps.fit(src, (diameter, diameter), Image.LANCZOS)
     mask = Image.new("L", (diameter, diameter), 0)
     ImageDraw.Draw(mask).ellipse([0, 0, diameter - 1, diameter - 1], fill=255)
-    im.putalpha(mask)
+    im.putalpha(ImageChops.multiply(im.getchannel("A"), mask))
     return im
 
 
@@ -144,7 +158,7 @@ def make_card(title, subtitle, color, icon="none", image=None, card_bg=(18, 26, 
                         outline=color + (255,), width=4 * S)
     cx, cy = (m + cw / 2) * S, (m + 130) * S
     d.ellipse([cx - 95 * S, cy - 95 * S, cx + 95 * S, cy + 95 * S], fill=shade(color, 0.22) + (255,))
-    if image and os.path.isfile(str(image)):
+    if isinstance(image, Image.Image) or (image and os.path.isfile(str(image))):
         ph = circle_image(image, 184 * S)
         im.alpha_composite(ph, (int(cx - ph.width / 2), int(cy - ph.height / 2)))
         d.ellipse([cx - 95 * S, cy - 95 * S, cx + 95 * S, cy + 95 * S], outline=color + (255,), width=4 * S)

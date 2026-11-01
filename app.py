@@ -22,6 +22,7 @@ from engine.render import render_clip, render_still, render_video
 from engine.templates import TEMPLATES
 from engine.templates.mcq import narration_report, parse_questions
 from engine import batch
+from engine import countries
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(ROOT, "outputs")
@@ -31,20 +32,23 @@ for _d in (OUT_DIR, PROJ_DIR, MEDIA_DIR):
     os.makedirs(_d, exist_ok=True)
 
 N_EVENTS = 5
+COUNTRY_CHOICES = countries.choices()
 SHARED_KEYS = [("settings", "theme"), ("settings", "language"), ("settings", "music"), ("settings", "music_gain"),
                ("settings", "music_file"), ("settings", "voice_file"), ("settings", "voice_offset"),
                ("settings", "voice_gain"), ("settings", "handle"), ("settings", "font_file"), ("settings", "fps"),
                ("ending", "intro"), ("ending", "question"), ("ending", "cta"),
                ("settings", "intro_sound"), ("settings", "tick_sound"), ("settings", "tick_gain")]
-TL_KEYS = ["mode", "hook", "hide_first_in_hook", "doubt", "doubt_sub", "compare_title", "reveal"]
-EV_KEYS = ["enabled", "name", "year", "label", "color", "icon", "image"]
+TL_KEYS = ["mode", "hook", "hide_first_in_hook", "doubt", "doubt_sub", "compare_title", "reveal", "unit",
+           "maps", "guess", "guess_q", "intro", "map_style"]
+EV_KEYS = ["enabled", "name", "year", "label", "color", "icon", "image", "country", "outline"]
 QZ_KEYS = ["title", "subtitle", "clues", "clue_seconds", "answer_intro", "answer", "answer_sub", "answer_image", "accent"]
 MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", "accent", "style", "timer",
            "colors", "narration", "narration_gain", "timer_fx"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS}
-MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image"}
+MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline"}
 MEDIA_LISTS = {"narration"}  # fields holding several files
-DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [],
+DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": "", "maps": False, "guess": False,
+            "guess_q": "", "intro": "hook", "map_style": "auto",
             "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
@@ -86,8 +90,20 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 ### Timeline tips
 - **Calendar years**: type BC years as negative numbers (2560 BC → `-2560`).
 - **Years ago** mode is for deep time (dinosaurs, sharks, Earth): type `150000000` for 150 million years ago, `0` for today.
-- 2 to 5 events; they are sorted by date automatically. The shortest gap gets the glowing highlight.
-- Leave *Card subtitle* empty to show the year automatically.
+- **Number line** mode uses the same flying line for anything measurable: heights, distances, depths, temperatures, prices, speeds.
+  Type plain numbers (negatives allowed, e.g. `-89.2`) and set the **Unit** (`km`, `متر`, `°C`). Put `{n}` where the number goes for units written before it: `${n}` → `$5`.
+- **Countries:** pick a *Country* on an event: its name, flag (card icon) and map fill in automatically. Icon `map` shows the
+  country's shape instead of the flag. Type the official area as the value (unit `كم²`).
+- **🗺️ True-size map scene** (number line, values = areas): the countries are drawn at their real relative size and slide
+  on top of each other, with a "× 2.1" badge. It replaces the comparison bars. Far overseas parts (e.g. French Guiana)
+  are left out. Borders come from Natural Earth; upload your own *outline* (GeoJSON) to draw a country differently.
+- **Map scene style:** *Overlay* (the smaller slides on top), *Tile fill* (copies of the smallest fill the largest
+  while the badge counts up, for 2× to 400×), *Side by side* (on platforms, best for near-equal sizes).
+  **Auto** picks: tile fill from 20× apart, side by side within 1.5×, overlay otherwise.
+- **⚔️ VS battle intro:** the two flags crash together with "VS" before the hook (first and last event).
+- **🤔 Guess moment:** before the answer, 3 choices (× ratio) and a 3-second timer, so viewers comment their guess.
+- 2 to 5 events; they are sorted by value automatically. The shortest gap gets the glowing highlight.
+- Leave *Card subtitle* empty to show the year (or value with its unit) automatically.
 
 ### Sound
 - Built-in music moods are generated, so there are no copyright issues. You can also upload your own music file.
@@ -112,7 +128,7 @@ def project_to_values(p, tpl):
         vals.append(p.get(sec, {}).get(k, DEFAULTS.get(k)))
     if tpl == "timeline":
         d = p.get("timeline", {})
-        vals += [d.get(k) for k in TL_KEYS]
+        vals += [d.get(k, DEFAULTS.get(k)) for k in TL_KEYS]
         evs = d.get("events", [])
         for i in range(N_EVENTS):
             ev = evs[i] if i < len(evs) else {}
@@ -122,7 +138,7 @@ def project_to_values(p, tpl):
                     v = bool(ev) and ev.get("enabled", True)
                 if k in MEDIA_FIELDS:
                     v = v if v and os.path.isfile(v) else None
-                vals.append(v if v is not None else ("" if k in ("name", "label") else None))
+                vals.append(v if v is not None else ("" if k in ("name", "label", "country") else None))
     else:
         d = p.get(tpl, {})
         for k in KEYS[tpl]:
@@ -150,7 +166,7 @@ def values_to_project(tpl, vals):
         d["events"] = []
         for i in range(N_EVENTS):
             ev = dict(zip(EV_KEYS, ev_vals[i * len(EV_KEYS):(i + 1) * len(EV_KEYS)]))
-            if ev.get("enabled") and str(ev.get("name") or "").strip():
+            if ev.get("enabled") and (str(ev.get("name") or "").strip() or ev.get("country")):
                 d["events"].append(ev)
         p["timeline"] = d
     else:
@@ -265,6 +281,7 @@ def make_actions(tpl):
         if tpl == "timeline":
             for ev in p["timeline"]["events"]:
                 ev["image"] = _keep_media(ev.get("image"))
+                ev["outline"] = _keep_media(ev.get("outline"))
         elif tpl == "quiz":
             p["quiz"]["answer_image"] = _keep_media(p["quiz"].get("answer_image"))
         stamp = _stamp()
@@ -626,17 +643,33 @@ def build_ui():
                     with gr.Tabs():
                         with gr.Tab("📝 Story"):
                             with gr.Column(elem_classes="pane"):
-                                mode = gr.Radio([("Calendar years (BC = negative)", "calendar"),
-                                                 ("Years ago (deep time)", "ago")], value="calendar", label="Time mode")
+                                with gr.Row():
+                                    mode = gr.Radio([("Calendar years (BC = negative)", "calendar"),
+                                                     ("Years ago (deep time)", "ago"),
+                                                     ("Number line (any unit)", "scale")],
+                                                    value="calendar", label="Mode", scale=3)
+                                    unit = gr.Textbox(label="Unit (number line only)", rtl=True, scale=1,
+                                                      placeholder="كم²")
                                 hook = gr.Textbox(lines=3, max_lines=5, rtl=True,
                                                   label="Hook (first 2.5 s) — the surprising claim")
                                 hide_first = gr.Checkbox(value=True,
-                                                         label="Hide the oldest event in the hook, reveal it on zoom-out")
+                                                         label="Hide the first (oldest / smallest) event in the hook, reveal it on zoom-out")
                                 with gr.Row():
                                     doubt = gr.Textbox(label="Doubt word", rtl=True)
                                     doubt_sub = gr.Textbox(label="Doubt subtitle", rtl=True)
                                 compare_title = gr.Textbox(label="Comparison title", rtl=True)
                                 reveal = gr.Textbox(lines=2, max_lines=4, label="Reveal (after the bass hit)", rtl=True)
+                                with gr.Row():
+                                    maps = gr.Checkbox(value=False, label="🗺️ True-size map scene (values = areas of countries)")
+                                    guess = gr.Checkbox(value=False, label="🤔 Guess moment (3 choices + 3 s timer)")
+                                guess_q = gr.Textbox(lines=2, max_lines=3, rtl=True, label="Guess question (optional)",
+                                                     placeholder="Empty = automatic. {a} = smaller, {b} = bigger")
+                                with gr.Row():
+                                    intro = gr.Radio([("Hook text", "hook"), ("⚔️ VS battle", "vs")], value="hook",
+                                                     label="Intro")
+                                    map_style = gr.Radio([("Auto", "auto"), ("Overlay", "overlay"),
+                                                          ("Tile fill", "tiles"), ("Side by side", "side")],
+                                                         value="auto", label="Map scene style")
                         with gr.Tab("🗓️ Events"):
                             ev_fields = []
                             with gr.Tabs():
@@ -645,20 +678,28 @@ def build_ui():
                                         with gr.Column(elem_classes="pane"):
                                             with gr.Row():
                                                 en = gr.Checkbox(value=i < 3, label="Use", scale=1, min_width=70)
-                                                nm = gr.Textbox(label="Name", rtl=True, scale=3)
-                                                yr = gr.Number(label="Year", scale=2)
+                                                co = gr.Dropdown(COUNTRY_CHOICES, value="", filterable=True, scale=3,
+                                                                 label="Country (optional: flag, map, name)")
+                                            with gr.Row():
+                                                nm = gr.Textbox(label="Name (empty = country name)", rtl=True, scale=3)
+                                                yr = gr.Number(label="Year / value", scale=2)
                                             with gr.Row():
                                                 lb = gr.Textbox(label="Card subtitle (optional)", rtl=True)
                                                 cl = gr.Dropdown(COLOR_NAMES, value=["sand", "gold", "blue", "green", "pink"][i],
                                                                  allow_custom_value=True, label="Color (name or #hex)")
-                                                ic = gr.Dropdown(ICON_NAMES, value="none", label="Icon")
+                                                ic = gr.Dropdown(ICON_NAMES + ["flag", "map"], value="none",
+                                                                 label="Icon (flag / map for countries)")
                                             im = gr.Image(type="filepath", height=170,
                                                           label="Or a picture (optional, replaces the icon)")
-                                    ev_fields += [en, nm, yr, lb, cl, ic, im]
+                                            ol = gr.File(label="Own map outline (optional GeoJSON, replaces the border)",
+                                                         file_types=[".geojson", ".json"], type="filepath", height=90)
+                                    ev_fields += [en, nm, yr, lb, cl, ic, im, co, ol]
                         tl_st = style_tab()
                         tl_end = ending_tab()
                     tl_fields = (shared_fields(tl_st, tl_end)
-                                 + [mode, hook, hide_first, doubt, doubt_sub, compare_title, reveal] + ev_fields)
+                                 + [mode, hook, hide_first, doubt, doubt_sub, compare_title, reveal, unit, maps, guess, guess_q,
+                                    intro, map_style]
+                                 + ev_fields)
                 tl_pv = preview_panel("timeline")
             wire(tl_proj, tl_pv, tl_fields)
 

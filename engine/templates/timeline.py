@@ -1,13 +1,19 @@
-"""Timeline Collision: 2-5 events on a flying timeline, gap counters, comparison bars and a reveal."""
+"""Timeline Collision: 2-5 events on a flying timeline (or any number line), gap counters, comparison bars and a reveal."""
 import math
+import os
+import random
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from ..core import (GREY, W, WHITE, Stars, clamp, draw_ending, draw_scene, ease_io, ease_out_back, fade,
-                    get_theme, global_fade, make_bg, nice_step, parse_lines, paste, prog, stack_lines,
+from .. import countries as CT
+from ..core import (COLORS, GREY, W, WHITE, Stars, clamp, composite, draw_ending, draw_scene, ease_io, ease_out_back, fade,
+                    get_theme, global_fade, make_bg, nice_step, parse_lines, paste, prog, shade, stack_lines,
                     text_img, to_rgb)
 from ..icons import make_card
-from ..strings import S, fmt_num, gap_str, gap_years, year_str, years_word
+from ..timers import draw_timer
+from ..strings import (S, amount_str, fmt_num, fmt_val, gap_str, gap_years, ratio_str, with_unit, year_str,
+                       years_word)
 
 NAME = "Timeline Collision"
 DEFAULT_COLORS = ["sand", "gold", "blue", "green", "pink"]
@@ -60,6 +66,43 @@ def _spread(xs, D):
             return [pos[i] for i in range(len(xs))]
 
 
+# ---------------------------------------------------------------- visual effects (built once, reused per frame)
+AMB_TOP, AMB_H = RIBBON_Y - 900, 1500
+_amb_mask = None
+
+
+def _ambient_mask():
+    """Soft elliptical light centred just above the ribbon (L image, 0-255)."""
+    global _amb_mask
+    if _amb_mask is None:
+        yy, xx = np.mgrid[0:AMB_H, 0:W]
+        g = np.exp(-(((xx - 540) / 640.0) ** 2 + ((yy - 760) / 560.0) ** 2) * 2.0)
+        _amb_mask = Image.fromarray((g * 255).astype(np.uint8), "L")
+    return _amb_mask
+
+
+def _mix(a, b, k):
+    return tuple(int(a[j] + (b[j] - a[j]) * k) for j in range(3))
+
+
+def _halo(card, col):
+    """Coloured glow the size of an event card, shown behind the active card."""
+    m = 40
+    im = Image.new("RGBA", card.size, (0, 0, 0, 0))
+    ImageDraw.Draw(im).rounded_rectangle([m - 6, m - 6, card.width - m + 6, card.height - m + 6], 46,
+                                         fill=col + (255,))
+    return im.filter(ImageFilter.GaussianBlur(26))
+
+
+def _panel(col, card_bg, w=880, h=320):
+    """Glass panel behind the year counter."""
+    S = 2
+    im = Image.new("RGBA", ((w + 40) * S, (h + 40) * S), (0, 0, 0, 0))
+    ImageDraw.Draw(im).rounded_rectangle([20 * S, 20 * S, (w + 20) * S, (h + 20) * S], 36 * S,
+                                         fill=tuple(card_bg) + (190,), outline=col + (150,), width=3 * S)
+    return im.resize((w + 40, h + 40), Image.LANCZOS)
+
+
 class TimelineVideo:
     def __init__(self, project):
         s = project.get("settings", {})
@@ -67,7 +110,8 @@ class TimelineVideo:
         e = project.get("ending", {})
         self.lang = s.get("language", "ar")
         self.L = S(self.lang)
-        self.mode = d.get("mode", "calendar")
+        self.mode = d.get("mode") or "calendar"
+        self.unit = str(d.get("unit") or "").strip()  # number-line mode: km, m, °C, ${n}…
         self.theme = get_theme(s.get("theme"))
         self.bg = make_bg(self.theme)
         self.stars = Stars() if self.theme["stars"] else None
@@ -75,19 +119,28 @@ class TimelineVideo:
 
         evs = []
         for i, ev in enumerate(d.get("events", [])):
-            name = str(ev.get("name") or "").strip()
+            code = str(ev.get("country") or "").strip().upper()
+            code = code if CT.info(code) else ""
+            outline = str(ev.get("outline") or "")
+            outline = outline if outline and os.path.isfile(outline) else ""
+            name = str(ev.get("name") or "").strip() or (CT.name(code, self.lang) if code else "")
             if not name or ev.get("year") in (None, "") or ev.get("enabled") is False:
                 continue
             try:
                 year = float(ev["year"])
             except (TypeError, ValueError):
-                raise ValueError(f"Event '{name}': year must be a number.")
-            v = year if self.mode == "calendar" else -abs(year)
-            evs.append(dict(name=name, v=v, col=to_rgb(ev.get("color") or DEFAULT_COLORS[len(evs) % 5]),
-                            icon=ev.get("icon") or "none", image=ev.get("image") or "",
+                raise ValueError(f"Event '{name}': {'value' if self.mode == 'scale' else 'year'} must be a number.")
+            v = -abs(year) if self.mode == "ago" else year
+            col = to_rgb(ev.get("color") or DEFAULT_COLORS[len(evs) % 5])
+            icon, image = ev.get("icon") or "none", ev.get("image") or ""
+            if (code or outline) and not image and icon in ("none", "flag", "map"):
+                # a country shows its flag on the card (or its map when the icon is "map")
+                image = (CT.flag_path(code) if icon != "map" else "") or CT.map_icon(code, outline, col)
+            evs.append(dict(name=name, v=v, col=col, icon=icon, image=image, code=code, outline=outline,
                             label=str(ev.get("label") or "").strip()))
         if len(evs) < 2:
-            raise ValueError("The timeline needs at least 2 events, each with a name and a year.")
+            raise ValueError("The timeline needs at least 2 events, each with a name and a "
+                             + ("value." if self.mode == "scale" else "year."))
         evs = sorted(evs[:5], key=lambda x: x["v"])
         self.evs = evs
         N = self.N = len(evs)
@@ -95,7 +148,15 @@ class TimelineVideo:
         ys = self.ys = [x["v"] for x in evs]
         span = ys[-1] - ys[0]
         if span <= 0:
-            raise ValueError("Events must have different years.")
+            raise ValueError("Events must have different " + ("values." if self.mode == "scale" else "years."))
+
+        # ---------------- optional scenes: guess moment, true-size maps (values must be positive)
+        mev = [x for x in evs if x["code"] or x["outline"]]
+        self.use_maps = bool(d.get("maps")) and len(mev) >= 2 and mev[0]["v"] > 0 and self.mode == "scale"
+        pair = (mev[0], mev[-1]) if self.use_maps else (evs[0], evs[-1])
+        self.use_guess = bool(d.get("guess")) and pair[0]["v"] > 0
+        compact = self.use_maps or self.use_guess
+        self.intro = "vs" if str(d.get("intro") or "hook") == "vs" else "hook"
 
         # ---------------- camera plan
         self.z_full = z_full = 680.0 / span
@@ -112,7 +173,7 @@ class TimelineVideo:
         hook2 = (hook[0], hook[1] * 1.03)
         K = [(0.0, 2.6, hook, hook2), (2.6, 4.2, hook2, FULL), (4.2, 5.0, FULL, FULL), (5.0, 5.9, FULL, (ys[0], zg[0]))]
         t = 5.9
-        fd = clamp(13.0 / G, 3.5, 6.5)
+        fd = clamp(10.0 / G, 3.2, 5.0) if compact else clamp(13.0 / G, 3.5, 6.5)
         self.flights = []
         for i in range(G):
             a, b = (ys[i], zg[i]), (ys[i + 1], zg[i])
@@ -125,40 +186,81 @@ class TimelineVideo:
             unit = nice_step((ys[i + 1] - ys[i]) / 25.0)
             self.flights.append(dict(i=i, fs=fs, fe=fe, unit=unit, vis=fe + (0.4 if last else 0.55),
                                      out=fe + (0.4 if last else 0.5), col=evs[i + 1]["col"],
-                                     final=gap_str(gap_years(ys[i], ys[i + 1], self.mode), self.lang)))
+                                     final=self.fmt_gap(gap_years(ys[i], ys[i + 1], self.mode))))
             t = fe + hold
         K.append((t, t + 0.9, (ys[-1], zg[-1]), FULL))
         self.Tc = Tc = t + 0.9
         K.append((Tc, 1e9, FULL, FULL))
         self.K = K
 
-        # ---------------- comparison / reveal / ending timing
-        self.s0 = Tc + 0.1 + 0.25 * (G - 1) + 0.45 + 0.05
+        # ---------------- guess / maps or bars / reveal / ending timing
+        T = Tc
+        self.silences = []
+        self.t_hide = Tc + 0.05 if compact else None  # the timeline fades away for the guess and the maps
+        if self.use_guess:
+            self.g0 = T + 0.1
+            self.g_tick = self.g0 + 0.8  # 3-second countdown
+            self.g_ans = self.g_tick + 3.0
+            T = self.g_ans + 0.75
+            self.silences.append((self.g_tick, self.g_ans - 0.6))
+        if self.use_maps:
+            self.m0 = T
+            self.map_style = self._pick_style(str(d.get("map_style") or "auto"), mev)
+            if self.map_style == "side":
+                self.m_t = []
+                self.side_t = [T + 0.3 + 0.4 * k for k in range(len(mev))]
+                self.side_sym = self.side_t[-1] + 0.7
+                self.s0 = self.side_sym + 1.3
+            else:
+                n_ov = len(mev) - (1 if self.map_style == "overlay" else 2)  # tiles: the smallest fills instead
+                self.m_t = [T + 0.7 + 1.35 * k for k in range(n_ov)]
+                end = T + 0.7 + 1.35 * n_ov
+                if self.map_style == "tiles":
+                    self.tf = end
+                    end += 3.2
+                self.s0 = end + 0.25
+        else:
+            self.bars_t0 = T + 0.1
+            self.s0 = self.bars_t0 + 0.25 * (G - 1) + 0.5
         self.reveal_in = self.s0 + 0.5
-        self.E = self.reveal_in + 4.55
+        self.E = self.reveal_in + (3.4 if self.use_maps else 4.55)
         self.base_duration = self.dur = self.E + 4.0
-        self.silences = [(self.s0, self.s0 + 0.5)]
+        self.silences.append((self.s0, self.s0 + 0.5))
         self.gaps = [gap_years(ys[i], ys[i + 1], self.mode) for i in range(G)]
         self.hi = min(range(G), key=lambda i: self.gaps[i])
 
         # ---------------- cards
         card_bg = self.theme["card"]
         for k, ev in enumerate(evs):
-            sub = ev["label"] or year_str(ev["v"], self.mode, self.lang)
+            sub = ev["label"] or self.fmt_pos(ev["v"])
             ev["img"] = make_card(ev["name"], sub, ev["col"], ev["icon"], ev["image"], card_bg)
+        for ev in evs:
+            ev["halo"] = _halo(ev["img"], ev["col"])
+        self.panels = [_panel(evs[i + 1]["col"], card_bg) for i in range(G)]
+        rnd = random.Random(11)
+        # speed streaks: (x0, y, length, width, parallax, brightness)
+        self.streaks = [(rnd.uniform(0, W + 600), rnd.uniform(RIBBON_Y - 620, RIBBON_Y + 470), rnd.uniform(90, 300),
+                         rnd.choice((2, 3, 3, 4)), rnd.uniform(1.6, 4.2), rnd.uniform(0.35, 1.0)) for _ in range(30)]
+        # comet sparks: (phase, vertical spread, size)
+        self.sparks = [(rnd.random(), rnd.uniform(-1, 1), rnd.uniform(2.5, 6)) for _ in range(26)]
+        self.rtl = self.lang == "ar"
+        self._amb_cache = {}
         order = list(range(N))
         later = order[1:] if self.hidden_first else order
         for k, i in enumerate(later):
             evs[i]["t_app"] = 0.15 + 0.3 * k
         if self.hidden_first:
             evs[0]["t_app"] = 3.3
+        if self.intro == "vs":  # the timeline appears after the VS clash
+            for k, ev in enumerate(evs):
+                ev["t_app"] = 2.6 + 0.12 * k
 
         # ---------------- scenes
         L = self.L
         hook_lines = parse_lines(d.get("hook", ""), ["white", evs[-1]["col"], evs[0]["col"]])
         doubt = d.get("doubt", "")
         self.scenes = [
-            dict(t_in=0.1, t_out=2.55, lines=stack_lines(hook_lines, 330, 76, 64)),
+            dict(t_in=1.25 if self.intro == "vs" else 0.1, t_out=2.55, lines=stack_lines(hook_lines, 330, 76, 64)),
             dict(t_in=2.65, t_out=4.95, shake=True,
                  lines=[(doubt, 160, WHITE, 410), (d.get("doubt_sub", ""), 52, GREY, 565)]),
         ]
@@ -168,12 +270,33 @@ class TimelineVideo:
                 t_in=5.05 if i == 0 else f["fs"] - 0.15, t_out=f["out"],
                 lines=[(L["frm"].format(a=evs[i]["name"]), 72, evs[i]["col"], 370),
                        (L["to"].format(b=evs[i + 1]["name"]), 72, evs[i + 1]["col"], 470)]))
-        self.scenes.append(dict(t_in=Tc + 0.05, t_out=self.s0, lines=[(d.get("compare_title", ""), 84, WHITE, 430)]))
+        self.scenes.append(dict(t_in=(self.m0 + 0.05) if self.use_maps else self.bars_t0 - 0.05, t_out=self.s0,
+                                lines=[(d.get("compare_title", ""), 84, WHITE, 430)]))
+        if self.use_guess:
+            self._setup_guess(d, pair)
+        if self.use_maps:
+            self._setup_maps(mev)
+        if self.intro == "vs":
+            self._setup_vs(pair)
         rv = parse_lines(d.get("reveal", ""), ["white"])
         self.scenes.append(dict(t_in=self.reveal_in, t_out=self.E, lines=stack_lines(rv, 380, 88, 76)))
         self.ending = (e.get("intro", ""), parse_lines(e.get("question", ""), ["white", "gold"]),
                        e.get("cta", ""), s.get("handle", ""))
         self.accent = evs[1]["col"] if N > 2 else evs[-1]["col"]
+
+    # ------------------------------------------------------------ number formatting (years or any unit)
+    def fmt_pos(self, v, short=False):
+        if self.mode == "scale":  # ruler labels show the number only (the unit is on the cards and counter)
+            return fmt_val(v, self.lang) if short else with_unit(fmt_val(v, self.lang), self.unit)
+        return year_str(v, self.mode, self.lang, short=short)
+
+    def fmt_gap(self, g):
+        return amount_str(g, self.unit, self.lang) if self.mode == "scale" else gap_str(g, self.lang)
+
+    def fmt_running(self, g):
+        if self.mode == "scale":
+            return "+ " + with_unit(fmt_val(g, self.lang), self.unit)
+        return f"+ {fmt_num(g, self.lang)} {years_word(g, self.lang)}"
 
     # ------------------------------------------------------------ camera
     def camera(self, t):
@@ -189,16 +312,95 @@ class TimelineVideo:
         return clamp(self.s_full + (1 - self.s_full) * r, self.s_full, 1.0)
 
     # ------------------------------------------------------------ render
+    def speed(self, t, h=1 / 60):
+        """Camera speed in screen pixels per second."""
+        a, z = self.camera(t - h)
+        b, _ = self.camera(t + h)
+        return abs(b - a) * z / (2 * h)
+
+    def ambient_color(self, cam):
+        """Event colour blended by where the camera is on the timeline."""
+        ys, evs = self.ys, self.evs
+        if cam <= ys[0]:
+            return evs[0]["col"]
+        for i in range(self.G):
+            if cam <= ys[i + 1]:
+                return _mix(evs[i]["col"], evs[i + 1]["col"], ease_io((cam - ys[i]) / (ys[i + 1] - ys[i])))
+        return evs[-1]["col"]
+
+    def background(self, col, a):
+        """Theme background with the ambient light baked in (cached; colour/strength quantised invisibly)."""
+        col, a = tuple(min(255, int(round(c / 6.0)) * 6) for c in col), round(a / 0.01) * 0.01
+        key = (col, a)
+        bg = self._amb_cache.get(key)
+        if bg is None:
+            bg = self.bg.copy()
+            if a > 0.005:
+                lay = Image.new("RGBA", (W, AMB_H), col + (0,))
+                lay.putalpha(_ambient_mask().point([int(v * a) for v in range(256)]))
+                bg.alpha_composite(lay, (0, AMB_TOP))
+            if len(self._amb_cache) > 96:
+                self._amb_cache.clear()
+            self._amb_cache[key] = bg
+        return bg.copy()
+
+    # ------------------------------------------------------------ render
     def render(self, t):
-        frame = self.bg.copy()
         cam, z = self.camera(t)
-        sx = lambda v: 540 + (v - cam) * z
+        flying = next((f for f in self.flights if f["fs"] <= t < f["fe"]), None)
+        # ambient light: tinted by the era the camera is in, brighter while travelling
+        a_amb = (0.20 + 0.16 * (flying is not None) + 0.04 * math.sin(t * 2.2)) * (1 - prog(t, self.E, self.E + 0.4))
+        frame = self.background(self.ambient_color(cam), max(0.0, a_amb))
         d = ImageDraw.Draw(frame)
         if self.stars:
             self.stars.draw(d, t, (cam - self.cam_full) * z)
 
+        # speed streaks during the flights
+        if flying:
+            k = clamp(self.speed(t) / 420.0) * min(1, prog(t, flying["fs"], flying["fs"] + 0.4))
+            if k > 0.02:
+                c = _mix(flying["col"], WHITE, 0.45)
+                for x0, y, ln, wd, par, br in self.streaks:
+                    x = (x0 - cam * z * par) % (W + 600) - 300
+                    ln2 = int(ln * (0.4 + 0.6 * k))
+                    if x + ln2 > 0 and x < W and ln2 > 1:
+                        composite(frame, Image.new("RGBA", (ln2, wd), c + (int(150 * br * k),)), int(x), int(y - wd / 2))
+
+        # timeline (ribbon, cards, counters); fades out for the guess and the maps
+        tl_a = 1.0
+        if self.t_hide is not None:
+            tl_a = 1 - prog(t, self.t_hide, self.t_hide + 0.35)
+            if not self.use_maps:  # the ribbon comes back with the comparison bars
+                tl_a = max(tl_a, prog(t, self.bars_t0 - 0.35, self.bars_t0))
+        if self.intro == "vs":
+            tl_a *= prog(t, 2.45, 2.8)
+        if tl_a > 0.01:
+            cv = frame if tl_a >= 0.999 else Image.new("RGBA", frame.size, (0, 0, 0, 0))
+            self._timeline(cv, t, cam, z, flying)
+            if cv is not frame:
+                frame.alpha_composite(fade(cv, tl_a))
+
+        if not self.use_maps and t >= self.bars_t0 - 0.05:
+            self._bars(frame, t)
+        if self.use_guess and self.g0 <= t <= self.g_ans + 0.8:
+            self._guess(frame, t)
+        if self.use_maps and t >= self.m0:
+            self._maps(frame, t)
+        if self.intro == "vs" and t < 2.85:
+            self._vs(frame, t)
+        for sc_ in self.scenes:
+            draw_scene(frame, t, sc_)
+        draw_ending(frame, t, self.E, *self.ending, self.accent)
+        global_fade(frame, t, self.dur)
+        return frame.convert("RGB")
+
+    def _timeline(self, frame, t, cam, z, flying):
+        sx = lambda v: 540 + (v - cam) * z
+        d = ImageDraw.Draw(frame)
         # ribbon + ticks
-        strip_h, top, ry = 160, RIBBON_Y - 80, 80
+        wave = any(f["fe"] < t < f["fe"] + 0.6 for f in self.flights)
+        strip_h, ry = (300, 150) if wave else (160, 80)
+        top = RIBBON_Y - ry
         strip = Image.new("RGBA", (W, strip_h), (0, 0, 0, 0))
         sd = ImageDraw.Draw(strip)
         sd.line([(0, ry), (W, ry)], fill=(120, 135, 170, 200), width=5)
@@ -219,7 +421,6 @@ class TimelineVideo:
                     sd.line([(x, ry - 7), (x, ry + 7)], fill=(140, 155, 190, 110), width=2)
         glow = Image.new("RGBA", (W, strip_h), (0, 0, 0, 0))
         gd = ImageDraw.Draw(glow)
-        flying = None
         for f in self.flights:
             i = f["i"]
             if t < f["fs"]:
@@ -228,17 +429,38 @@ class TimelineVideo:
             xa, xb = sx(self.ys[i]), sx(end)
             gd.line([(xa, ry), (xb, ry)], fill=f["col"] + (255,), width=26)
             sd.line([(xa, ry), (xb, ry)], fill=f["col"] + (255,), width=14)
-            if t < f["fe"]:
-                flying = f
+            # arrival shockwave
+            pa = prog(t, f["fe"], f["fe"] + 0.6)
+            if 0 < pa < 1:
+                xr, r = sx(self.ys[i + 1]), 18 + 110 * (1 - (1 - pa) ** 3)
+                al = int(255 * (1 - pa))
+                gd.ellipse([xr - r, ry - r, xr + r, ry + r], outline=f["col"] + (al,), width=10)
+                sd.ellipse([xr - r, ry - r, xr + r, ry + r], outline=WHITE + (al,), width=3)
         if flying:
             tx = sx(cam)
-            gd.ellipse([tx - 34, ry - 34, tx + 34, ry + 34], fill=flying["col"] + (255,))
+            k = clamp(self.speed(t) / 420.0)
+            tail = min(tx - sx(self.ys[flying["i"]]), 60 + 240 * k)
+            for j in range(12):  # tapering comet tail
+                q = j / 12
+                r = 14 * (1 - q)
+                xj = tx - tail * q
+                gd.ellipse([xj - r * 2, ry - r * 2, xj + r * 2, ry + r * 2], fill=flying["col"] + (int(200 * (1 - q)),))
+            for ph, vy, sz in self.sparks:  # sparks shed behind the head
+                age = (t * 1.7 + ph) % 1.0
+                xs = tx - age * (40 + 200 * k)
+                if xs < sx(self.ys[flying["i"]]):
+                    continue
+                ys_ = ry + vy * age * 46
+                r = sz * (1 - age)
+                sd.ellipse([xs - r, ys_ - r, xs + r, ys_ + r], fill=_mix(flying["col"], WHITE, 0.5) + (int(255 * (1 - age)),))
+            pr = 34 + 5 * math.sin(t * 14)
+            gd.ellipse([tx - pr, ry - pr, tx + pr, ry + pr], fill=flying["col"] + (255,))
             sd.ellipse([tx - 14, ry - 14, tx + 14, ry + 14], fill=WHITE + (255,))
         strip = Image.alpha_composite(glow.filter(ImageFilter.GaussianBlur(14)), strip)
         frame.alpha_composite(strip, (0, top))
         for v, x in labels:
             if 50 < x < W - 50:
-                paste(frame, text_img(year_str(v, self.mode, self.lang, short=True), 28, GREY, "SemiBold",
+                paste(frame, text_img(self.fmt_pos(v, short=True), 28, GREY, "SemiBold",
                                       shadow=False, max_w=220), x, RIBBON_Y + 52, 1.0, 0.8)
 
         # cards
@@ -250,37 +472,321 @@ class TimelineVideo:
             lo, hi = 250 * sc + 12, W - 250 * sc - 12
             shift = (lo - min(cx)) if min(cx) < lo else ((hi - max(cx)) if max(cx) > hi else 0)
             cx = [c + shift for c in cx]
-        for ev, x, xc in zip(self.evs, anchors, cx):
+        for k_ev, (ev, x, xc) in enumerate(zip(self.evs, anchors, cx)):
             p = prog(t, ev["t_app"], ev["t_app"] + 0.45)
             if p <= 0 or xc < -400 or xc > W + 400:
                 continue
             img = ev["img"]
             ch = img.height * sc
-            cy = RIBBON_Y - 40 * sc - ch / 2
+            cy = RIBBON_Y - 40 * sc - ch / 2 + (1 - ease_out_back(p)) * 60
+            # highlight: the card the comet is flying to, and a pop when it lands
+            hl, bump = 0.0, 0.0
+            for f in self.flights:
+                if f["i"] + 1 == k_ev:
+                    if f["fs"] <= t < f["fe"]:
+                        hl = max(hl, 0.35 + 0.15 * math.sin(t * 6))
+                    pa = prog(t, f["fe"], f["fe"] + 0.9)
+                    if 0 < pa < 1:
+                        hl = max(hl, 1 - pa)
+                        bump = max(bump, math.sin(pa * math.pi) * (1 - pa) * 0.18)
+            s_card = sc * (0.7 + 0.3 * ease_out_back(p)) * (1 + bump)
             d.line([(x, RIBBON_Y - 10), (xc, RIBBON_Y - 80 * sc + 4)], fill=ev["col"] + (255,), width=4)
             d.ellipse([x - 11, RIBBON_Y - 11, x + 11, RIBBON_Y + 11], fill=ev["col"] + (255,), outline=WHITE + (255,), width=3)
-            paste(frame, img, xc, cy + (1 - ease_out_back(p)) * 60, sc * (0.7 + 0.3 * ease_out_back(p)), min(1, p * 1.6))
+            if hl > 0.01:
+                paste(frame, ev["halo"], xc, cy, s_card, hl * min(1, p * 1.6))
+            paste(frame, img, xc, cy, s_card, min(1, p * 1.6))
 
         # counters
         for f in self.flights:
             if f["fs"] <= t <= f["vis"]:
                 a = min(1, prog(t, f["fs"], f["fs"] + 0.3)) * (1 - prog(t, f["vis"] - 0.2, f["vis"]))
-                paste(frame, text_img(year_str(cam, self.mode, self.lang), 112, WHITE, max_w=980), 540, RIBBON_Y + 200, 1.0, a)
+                paste(frame, self.panels[f["i"]], 540, RIBBON_Y + 270, 1.0, a)
+                fr = clamp((cam - self.ys[f["i"]]) / (self.ys[f["i"] + 1] - self.ys[f["i"]]))
+                pb = Image.new("RGBA", (720, 14), (0, 0, 0, 0))
+                pd = ImageDraw.Draw(pb)
+                pd.rounded_rectangle([0, 0, 719, 13], 7, fill=shade(f["col"], 0.35) + (255,))
+                if fr > 0.01:  # fills in the comet's direction (the ribbon runs left to right in every language)
+                    pd.rounded_rectangle([0, 0, 719 * fr, 13], 7, fill=f["col"] + (255,))
+                paste(frame, pb, 540, RIBBON_Y + 395, 1.0, a)
+                paste(frame, text_img(self.fmt_pos(cam), 112, WHITE, max_w=980), 540, RIBBON_Y + 200, 1.0, a)
                 if t >= f["fe"]:
                     el, pop = f["final"], 1 + 0.15 * (1 - prog(t, f["fe"], f["fe"] + 0.3))
                 else:
                     g = max(0.0, cam - self.ys[f["i"]])
-                    el, pop = f"+ {fmt_num(g, self.lang)} {years_word(g, self.lang)}", 1
+                    el, pop = self.fmt_running(g), 1
                 paste(frame, text_img(el, 64, f["col"], max_w=980), 540, RIBBON_Y + 320, pop, a)
 
-        # comparison bars
-        if t >= self.Tc + 0.05:
-            self._bars(frame, t)
-        for sc_ in self.scenes:
-            draw_scene(frame, t, sc_)
-        draw_ending(frame, t, self.E, *self.ending, self.accent)
-        global_fade(frame, t, self.dur)
-        return frame.convert("RGB")
+    # ------------------------------------------------------------ guess moment
+    def _setup_guess(self, d, pair):
+        small, big = pair
+        r = big["v"] / small["v"]
+        right = ratio_str(r)
+        opts = [right]
+        for k in (0.5, 1.8, 0.7, 2.6, 1.35, 3.5):
+            cand = r * k
+            txt = ratio_str(cand)
+            if cand >= 1.2 and txt not in opts:
+                opts.append(txt)
+            if len(opts) == 3:
+                break
+        n = 2
+        while len(opts) < 3:  # ratios close to 1
+            opts.append(ratio_str(r + n))
+            n += 1
+        wrong = opts[1:]
+        pos = int(r * 997) % 3
+        opts = wrong[:pos] + [right] + wrong[pos:]
+        self.g_col = big["col"]
+        L, card_bg = self.L, self.theme["card"]
+        letters = L["letters"]
+        self.g_imgs = [(self._opt(letters[k], txt, card_bg, False), self._opt(letters[k], txt, card_bg, True), txt == right)
+                       for k, txt in enumerate(opts)]
+        q = str(d.get("guess_q") or "").strip() or L["guess_area" if self.use_maps else "guess_ratio"]
+        q = q.replace("{ca}", "#%02x%02x%02x" % tuple(small["col"]))  # {ca} = colour of the smaller item
+        q = q.replace("{a}", small["name"]).replace("{b}", big["name"])
+        lines = parse_lines(q, ["white", "white"])
+        self.scenes.append(dict(t_in=self.g0, t_out=self.g_ans + 0.55, lines=stack_lines(lines, 330, 76, 64)))
+
+    def _opt(self, letter, txt, card_bg, right):
+        """Answer option pill; the 'right' version is green with a glow."""
+        w, h, S = 760, 118, 2
+        col = COLORS["green"] if right else self.g_col
+        im = Image.new("RGBA", ((w + 60) * S, (h + 60) * S), (0, 0, 0, 0))
+        if right:
+            g = Image.new("RGBA", im.size, (0, 0, 0, 0))
+            ImageDraw.Draw(g).rounded_rectangle([30 * S, 30 * S, (w + 30) * S, (h + 30) * S], h * S // 2,
+                                                fill=col + (200,))
+            im = Image.alpha_composite(im, g.filter(ImageFilter.GaussianBlur(16 * S)))
+        dr = ImageDraw.Draw(im)
+        dr.rounded_rectangle([30 * S, 30 * S, (w + 30) * S, (h + 30) * S], h * S // 2,
+                             fill=(shade(col, 0.45) if right else tuple(card_bg)) + (235,), outline=col + (255,), width=4 * S)
+        cx = (w + 30 - h / 2) if self.rtl else (30 + h / 2)
+        r = h / 2 - 14
+        dr.ellipse([(cx - r) * S, (30 + h / 2 - r) * S, (cx + r) * S, (30 + h / 2 + r) * S], fill=col + (255,))
+        im = im.resize((w + 60, h + 60), Image.LANCZOS)
+        lt = text_img(letter, 48, (15, 18, 30), "Black", shadow=False)
+        im.alpha_composite(lt, (int(cx - lt.width / 2), int(30 + h / 2 - lt.height / 2)))
+        tt = text_img(txt, 66, WHITE, "Black", shadow=False)
+        im.alpha_composite(tt, (int(30 + w / 2 - tt.width / 2), int(30 + h / 2 - tt.height / 2)))
+        return im
+
+    def _guess(self, frame, t):
+        out = 1 - prog(t, self.g_ans + 0.55, self.g_ans + 0.8)
+        if out <= 0:
+            return
+        u = t - self.g_tick
+        a_tm = prog(t, self.g_tick - 0.3, self.g_tick) * (1 - prog(t, self.g_ans + 0.1, self.g_ans + 0.35))
+        if a_tm > 0.01:
+            left = 3 if u <= 0 else max(0, math.ceil(3.0 - u - 1e-9))
+            col = COLORS["red"] if 0 < left <= 1 else self.g_col
+            draw_timer("Neon Ring", frame, 540, 730, clamp(1 - u / 3.0), left, 3, col, WHITE, max(0.0, u),
+                       a_tm * out, self.rtl, ("pulse", "glow"))
+        rv = prog(t, self.g_ans, self.g_ans + 0.25)
+        for k, (plain, green, ok) in enumerate(self.g_imgs):
+            p = prog(t, self.g0 + 0.3 + 0.12 * k, self.g0 + 0.65 + 0.12 * k)
+            if p <= 0:
+                continue
+            y = 1010 + k * 150
+            sc = (0.8 + 0.2 * ease_out_back(p)) * (1 + (0.07 * math.sin(rv * math.pi) if ok else 0))
+            a = min(1, p * 1.5) * out
+            if ok:
+                paste(frame, plain, 540, y, sc, a * (1 - rv))
+                paste(frame, green, 540, y, sc, a * rv)
+            else:
+                paste(frame, plain, 540, y, sc, a * (1 - 0.65 * rv))
+
+    # ------------------------------------------------------------ true-size maps
+    def _setup_maps(self, mev):
+        prs = [CT.projected(x["code"], x["outline"]) for x in mev]
+        km_px = min(860.0 / max(p[1] for p in prs), 700.0 / max(p[2] for p in prs))
+        unit = self.unit
+        for x, pr in zip(mev, prs):
+            fill = 255 if x is mev[-1] else 235
+            x["tile"] = CT.map_tile(x["code"], x["outline"], km_px, x["col"], 14 if x is mev[-1] else 10, True, fill)
+            x["tiny"] = max(pr[1], pr[2]) * km_px < 120
+            x["tag"] = CT.name_tag(x["name"], with_unit(fmt_val(x["v"], self.lang), unit), x["col"], x["code"], self.rtl)
+        # overlays from the largest down to the smallest (tile fill: the smallest fills the largest instead)
+        self.m_base = mev[-1]
+        self.m_ovs = mev[-2::-1] if self.map_style == "overlay" else mev[-2:0:-1]
+        b = self.m_base
+        b["dim"] = CT.map_tile(b["code"], b["outline"], km_px, b["col"], 14, False, 90)
+        self.m_grid = CT.globe_grid(tuple(b["col"]))
+        if self.map_style == "tiles":
+            sm = self.m_small = mev[0]
+            self.m_flat = CT.flat_tile(sm["code"], sm["outline"], km_px, tuple(sm["col"]))
+            self.m_cells = CT.fill_cells(b["code"], b["outline"], sm["code"], sm["outline"], km_px, 74)
+        if self.map_style == "side":
+            self._setup_side(mev)
+
+    def _pick_style(self, style, mev):
+        """overlay / tiles / side; 'auto' picks by the size ratio of the largest to the smallest."""
+        r = mev[-1]["v"] / mev[0]["v"]
+        can_tile = 2.0 <= r <= 400.0  # beyond 400 the tiles get too small to read
+        if style == "tiles":
+            return "tiles" if can_tile else "overlay"
+        if style in ("overlay", "side"):
+            return style
+        if can_tile and r >= 20:
+            return "tiles"
+        return "side" if r <= 1.5 else "overlay"
+
+    def _setup_side(self, mev):
+        n = len(mev)
+        slot = 980.0 / n
+        prs = [CT.projected(x["code"], x["outline"]) for x in mev]
+        km_px = min((slot - 40) / max(p[1] for p in prs), 560.0 / max(p[2] for p in prs))
+        for k, x in enumerate(mev):  # smallest first: on the right in Arabic, on the left in English
+            x["sx"] = (1030 - slot * (k + 0.5)) if self.rtl else (50 + slot * (k + 0.5))
+            x["stile"] = CT.map_tile(x["code"], x["outline"], km_px, x["col"], 12, True, 255)
+            x["pod"] = CT.podium(tuple(x["col"]), int(min(420, slot - 30)))
+            x["stag"] = CT.name_tag(x["name"], with_unit(fmt_val(x["v"], self.lang), self.unit), x["col"], x["code"],
+                                    self.rtl, max_w=int(min(470, slot - 26)))
+        self.m_side = mev
+
+    def _maps(self, frame, t):
+        a_all = prog(t, self.m0, self.m0 + 0.4) * (1 - prog(t, self.E - 0.1, self.E + 0.3))
+        if a_all <= 0:
+            return
+        paste(frame, self.m_grid, 540, 960, 1.0, a_all)
+        if self.map_style == "side":
+            self._maps_side(frame, t, a_all)
+            return
+        tiles = self.map_style == "tiles"
+        cy, b = 1010, self.m_base
+        pb = prog(t, self.m0, self.m0 + 0.6)
+        sc = 0.6 + 0.4 * ease_out_back(pb)
+        cur = max([k for k, tk in enumerate(self.m_t) if t >= tk], default=-1)
+        dim = 0.0
+        if cur >= 0 and self.m_ovs[cur]["tiny"]:
+            dim = prog(t, self.m_t[cur], self.m_t[cur] + 0.4)
+        if cur >= 1 and self.m_ovs[cur - 1]["tiny"]:
+            dim = max(dim, 1 - prog(t, self.m_t[cur], self.m_t[cur] + 0.4))
+        if tiles and t >= self.tf:
+            dim = max(dim, 0.85 * prog(t, self.tf, self.tf + 0.4))
+        a_b = a_all * min(1, pb * 1.6)
+        paste(frame, b["tile"], 540, cy, sc, a_b * (1 - dim))
+        if dim > 0:
+            paste(frame, b["dim"], 540, cy, sc, a_b * dim)
+        tag_x = (780, 300) if self.rtl else (300, 780)
+        paste(frame, b["tag"], tag_x[0], 1580, 1.0, a_b)
+        for k, ov in enumerate(self.m_ovs):
+            tk = self.m_t[k]
+            if t < tk:
+                break
+            nxt = self.m_t[k + 1] if k + 1 < len(self.m_t) else (self.tf if tiles else None)
+            fo = 1 - prog(t, nxt, nxt + 0.3) if nxt else 1.0
+            if fo <= 0:
+                continue
+            p = prog(t, tk, tk + 0.5)
+            x = 540 + (1 - ease_out_back(p)) * (620 if self.rtl else -620)
+            bump = 1 + 0.06 * math.sin(prog(t, tk + 0.5, tk + 0.8) * math.pi)
+            a = a_all * fo * min(1, p * 2)
+            paste(frame, ov["tile"], x, cy, bump, a)
+            if ov["tiny"]:
+                paste(frame, CT.ring(tuple(ov["col"])), x, cy, 1 + 0.08 * math.sin(t * 6), a * prog(t, tk + 0.4, tk + 0.7))
+            paste(frame, ov["tag"], tag_x[1], 1580, 1.0, a)
+            pc = prog(t, tk + 0.45, tk + 1.0)
+            if pc > 0:
+                r = b["v"] / ov["v"]
+                val = 1 + (r - 1) * ease_io(pc)
+                paste(frame, CT.badge(ratio_str(val), ov["col"]), 820 if self.rtl else 260, 690,
+                      0.7 + 0.3 * ease_out_back(prog(t, tk + 0.45, tk + 0.75)), a_all * fo)
+        if tiles and t >= self.tf:
+            self._maps_tiles(frame, t, a_all, tag_x[1])
+
+    def _maps_tiles(self, frame, t, a_all, tag_x):
+        """Copies of the smallest country pop in until they fill the largest; the badge counts the real ratio."""
+        b, sm = self.m_base, self.m_small
+        ox, oy = 540 - b["tile"].width / 2, 1010 - b["tile"].height / 2
+        fill = ease_io(prog(t, self.tf + 0.3, self.tf + 2.9))
+        shown = fill * len(self.m_cells)
+        for k, (x, y) in enumerate(self.m_cells):
+            if k >= shown:
+                break
+            p = clamp(shown - k)
+            paste(frame, self.m_flat, ox + x, oy + y, 0.4 + 0.6 * ease_out_back(p), a_all * min(1, p * 2))
+        paste(frame, sm["tag"], tag_x, 1580, 1.0, a_all * prog(t, self.tf, self.tf + 0.4))
+        if t >= self.tf + 0.3:
+            r = b["v"] / sm["v"]
+            done = prog(t, self.tf + 2.9, self.tf + 3.2)
+            sc = 0.8 + 0.2 * ease_out_back(prog(t, self.tf + 0.3, self.tf + 0.6)) + 0.12 * math.sin(done * math.pi)
+            paste(frame, CT.badge(ratio_str(1 + (r - 1) * fill), sm["col"]), 820 if self.rtl else 260, 690, sc, a_all)
+
+    def _maps_side(self, frame, t, a_all):
+        """The countries rise side by side on platforms, at the same scale."""
+        mev = self.m_side
+        for k, x in enumerate(mev):
+            t0 = self.side_t[k]
+            p = prog(t, t0, t0 + 0.7)
+            if p <= 0:
+                continue
+            e = ease_out_back(p)
+            paste(frame, x["pod"], x["sx"], 1330, 0.6 + 0.4 * e, a_all * min(1, p * 2))
+            tl = x["stile"]
+            paste(frame, tl, x["sx"], 1330 - tl.height / 2 + 20 + (1 - e) * 260, 0.3 + 0.7 * e, a_all * min(1, p * 2))
+            paste(frame, x["stag"], x["sx"], 1520, 1.0, a_all * prog(t, t0 + 0.5, t0 + 0.9))
+        pe = prog(t, self.side_sym, self.side_sym + 0.4)
+        if pe <= 0:
+            return
+        r = mev[-1]["v"] / mev[0]["v"]
+        if len(mev) == 2 and r <= 1.15:  # near-twins: "≈" and how small the difference is
+            paste(frame, text_img("≈", 170, COLORS["gold"], "Black"), 540, 1000, 0.5 + 0.5 * ease_out_back(pe), a_all * pe)
+            pct = (r - 1) * 100
+            txt = f"{pct:.1f}".rstrip("0").rstrip(".") if pct < 10 else str(int(round(pct)))
+            paste(frame, text_img(self.L["diff"].format(p=txt), 60, WHITE, max_w=960), 540, 1690, 1.0,
+                  a_all * prog(t, self.side_sym + 0.4, self.side_sym + 0.8))
+        else:
+            paste(frame, CT.badge(ratio_str(r), mev[-1]["col"]), 540, 690, 0.6 + 0.4 * ease_out_back(pe), a_all * pe)
+
+    # ------------------------------------------------------------ VS intro
+    def _setup_vs(self, pair):
+        a, b = pair  # a = smaller / first, shown on the reading side (right in Arabic)
+        sides = ("right", "left") if self.rtl else ("left", "right")
+        self.vs = []
+        for ev, side in zip((a, b), sides):
+            if ev["code"] or ev["outline"]:
+                emb = CT.map_icon(ev["code"], ev["outline"], tuple(ev["col"]), 420)
+            else:
+                emb = ev["img"].resize((ev["img"].width * 3 // 4, ev["img"].height * 3 // 4), Image.LANCZOS)
+            pos = ((845, 790, 1030) if side == "right" else (240, 1310, 1550))  # map y, name y
+            self.vs.append(dict(panel=CT.vs_panel(ev["code"], tuple(ev["col"]), side), side=side, emb=emb, pos=pos,
+                                name=text_img(ev["name"], 96, WHITE, max_w=430)))
+        self.vs_bolt = CT.vs_bolt(COLORS["gold"])
+        self.vs_txt = text_img("VS", 300, WHITE, "Black")
+        self.vs_glow = text_img("VS", 300, COLORS["gold"], "Black", shadow=False).filter(ImageFilter.GaussianBlur(26))
+
+    def _vs(self, frame, t):
+        a = 1 - prog(t, 2.45, 2.8)
+        if a <= 0:
+            return
+        lay = Image.new("RGBA", frame.size, (0, 0, 0, 0))
+        slide = ease_io(prog(t, 0.0, 0.45))
+        shake = math.sin(t * 70) * 22 * (1 - prog(t, 0.5, 0.95)) if t >= 0.45 else 0
+        for k, v in enumerate(self.vs):
+            dx = (1 - slide) * (700 if v["side"] == "right" else -700)
+            paste(lay, v["panel"], 540 + dx + shake, 960, 1.0, 1.0)
+        clash = prog(t, 0.45, 0.6)
+        if clash > 0:
+            paste(lay, self.vs_bolt, 540 + shake, 960, 1.0, min(1, clash * 2) * (0.75 + 0.25 * math.sin(t * 30)))
+        for k, v in enumerate(self.vs):
+            x, ye, yn = v["pos"]
+            pi_ = prog(t, 0.55 + 0.1 * k, 1.0 + 0.1 * k)
+            paste(lay, v["emb"], x + shake, ye, 0.6 + 0.4 * ease_out_back(pi_), pi_)
+            paste(lay, v["name"], x + shake, yn, 1.0, prog(t, 0.75 + 0.1 * k, 1.05 + 0.1 * k))
+        pv = prog(t, 0.45, 0.75)
+        if pv > 0:
+            sc = 2.2 - 1.2 * ease_out_back(pv) + 0.04 * math.sin(t * 8)
+            paste(lay, self.vs_glow, 540 + shake, 960, sc, pv)
+            paste(lay, self.vs_txt, 540 + shake, 960, sc, pv)
+        if t >= 0.45:
+            fl = 1 - prog(t, 0.45, 0.7)
+            if fl > 0:
+                lay.alpha_composite(Image.new("RGBA", frame.size, (255, 255, 255, int(200 * fl))))
+        ph = prog(t, 1.1, 1.4) * (1 - prog(t, 2.45, 2.7))  # dark band behind the hook text
+        if ph > 0:
+            band = Image.new("RGBA", (W, 400), (5, 8, 20, int(210 * ph)))
+            lay.alpha_composite(band, (0, 190))
+        frame.alpha_composite(fade(lay, a))
 
     def _bars(self, frame, t):
         G = self.G
@@ -294,30 +800,49 @@ class TimelineVideo:
         scale = 660.0 / max(self.gaps)
         for i in range(G):
             f = self.flights[i]
-            t0 = self.Tc + 0.1 + 0.25 * i
+            t0 = self.bars_t0 + 0.25 * i
             by = y0 + i * pitch
             g = ease_io(prog(t, t0, t0 + 0.45))
             Lw = self.gaps[i] * scale * g
             lab = self.L["from_to"].format(a=self.evs[i]["name"], b=self.evs[i + 1]["name"])
-            paste(frame, text_img(lab, lab_sz, WHITE, "Bold", max_w=900), 70, by - lab_dy,
-                  1.0, min(1, g * 2) * a_all, anchor="l")
+            paste(frame, text_img(lab, lab_sz, WHITE, "Bold", max_w=900), W - 70 if self.rtl else 70, by - lab_dy,
+                  1.0, min(1, g * 2) * a_all, anchor="r" if self.rtl else "l")
+            rtl = self.rtl
+            bw = 660 + 60
+            bar = Image.new("RGBA", (bw, bar_h + 60), (0, 0, 0, 0))
+            ImageDraw.Draw(bar).rounded_rectangle([30, 30, 30 + 660, 30 + bar_h], bar_h // 2,
+                                                  fill=f["col"] + (int(45 * min(1, g * 2)),))
+            x0, x1 = (30 + 660 - Lw, 30 + 660) if rtl else (30, 30 + Lw)
             if Lw > 2:
-                bar = Image.new("RGBA", (int(Lw) + 60, bar_h + 60), (0, 0, 0, 0))
-                bd = ImageDraw.Draw(bar)
                 if i == self.hi and t >= self.s0 + 0.45:
                     pulse = 0.5 + 0.5 * math.sin((t - self.s0 - 0.45) * 6)
-                    bd.rounded_rectangle([30, 30, 30 + Lw, 30 + bar_h], bar_h // 2, fill=f["col"] + (int(160 * pulse),))
-                    bar = bar.filter(ImageFilter.GaussianBlur(12))
-                    bd = ImageDraw.Draw(bar)
-                bd.rounded_rectangle([30, 30, 30 + Lw, 30 + bar_h], bar_h // 2, fill=f["col"] + (255,))
+                    gl = Image.new("RGBA", bar.size, (0, 0, 0, 0))
+                    ImageDraw.Draw(gl).rounded_rectangle([x0, 30, x1, 30 + bar_h], bar_h // 2,
+                                                         fill=f["col"] + (int(200 * pulse),))
+                    bar = Image.alpha_composite(bar, gl.filter(ImageFilter.GaussianBlur(12)))
+                ImageDraw.Draw(bar).rounded_rectangle([x0, 30, x1, 30 + bar_h], bar_h // 2, fill=f["col"] + (255,))
+            if rtl:
+                paste(frame, fade(bar, a_all), W - 70, by + bar_h / 2, anchor="r")
+            else:
                 paste(frame, fade(bar, a_all), 70, by + bar_h / 2, anchor="l")
             if g >= 1:
-                paste(frame, text_img(f["final"], 40 if not compact else 30, WHITE), 100 + Lw + 10, by + bar_h / 2,
-                      1.0, prog(t, t0 + 0.45, t0 + 0.65) * a_all, anchor="l")
+                val = text_img(f["final"], 40 if not compact else 30, WHITE)
+                va = prog(t, t0 + 0.45, t0 + 0.65) * a_all
+                if rtl:
+                    paste(frame, val, W - 100 - Lw - 14, by + bar_h / 2, 1.0, va, anchor="r")
+                else:
+                    paste(frame, val, 100 + Lw + 14, by + bar_h / 2, 1.0, va, anchor="l")
 
     # ------------------------------------------------------------ sound
     def sound(self, mx):
-        mx.intro(0.05)
+        if self.intro == "vs":
+            s, pn = mx.whoosh(0.5); mx.add(0.0, s, 0.5, pn)
+            s, pn = mx.whoosh(0.5); mx.add(0.0, s, 0.5, pn[::-1])
+            mx.add(0.45, mx.hit(1.6), 0.85)
+            mx.add(0.6, mx.pop(), 0.35)
+            mx.add(0.7, mx.pop(), 0.35)
+        else:
+            mx.intro(0.05)
         for ev in self.evs:
             mx.add(ev["t_app"], mx.pop(), 0.35)
         s, pn = mx.whoosh(1.4); mx.add(2.6, s, 0.55, pn)
@@ -334,8 +859,34 @@ class TimelineVideo:
                 tt += 1 / 600
             mx.add(f["fe"], mx.pop(), 0.4)
         s, pn = mx.whoosh(1.0); mx.add(self.flights[-1]["fe"], s, 0.5, pn[::-1])
-        for i in range(self.G):
-            mx.add(self.Tc + 0.1 + 0.25 * i, mx.pop(), 0.3)
+        if self.use_guess:
+            for k in range(3):
+                mx.add(self.g0 + 0.3 + 0.12 * k, mx.pop(), 0.3)
+                mx.add(self.g_tick + k, mx.tick(2400 if k == 2 else 1500), 0.32)
+            mx.add(self.g_ans, mx.ding(), 0.5)
+        if self.use_maps:
+            if self.map_style == "side":
+                for k, t0 in enumerate(self.side_t):
+                    s, pn = mx.whoosh(0.5); mx.add(t0, s, 0.35, pn)
+                    mx.add(t0 + 0.45, mx.pop(), 0.45)
+                mx.add(self.side_sym, mx.ding(), 0.5)
+            else:
+                mx.add(self.m0 + 0.05, mx.pop(), 0.4)
+            for tk in self.m_t:
+                s, pn = mx.whoosh(0.7); mx.add(tk - 0.1, s, 0.45, pn[::-1])
+                mx.add(tk + 0.5, mx.pop(), 0.45)
+            if self.map_style == "tiles":  # ticks speed up and slow down with the filling, then a ding
+                n, a, b = 28, self.tf + 0.3, self.tf + 2.9
+                for j in range(1, n):
+                    lo, hi = 0.0, 1.0
+                    for _ in range(30):  # time at which ease_io reaches j/n
+                        mid = (lo + hi) / 2
+                        lo, hi = (mid, hi) if ease_io(mid) < j / n else (lo, mid)
+                    mx.add(a + (b - a) * lo, mx.tick(1700 + 900 * j / n), 0.22)
+                mx.add(b, mx.ding(), 0.55)
+        else:
+            for i in range(self.G):
+                mx.add(self.bars_t0 + 0.25 * i, mx.pop(), 0.3)
         mx.add(self.s0 - 1.1, mx.riser(1.1), 0.3)
         mx.add(self.s0 + 0.47, mx.hit(2.4), 0.95)
         mx.add(self.E + 0.2, mx.chime(), 0.35)

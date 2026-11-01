@@ -6,7 +6,7 @@ Three ready templates:
 
 | Template | What it makes |
 |---|---|
-| **⏳ Timeline Collision** | 2–5 events on a flying timeline, year counters, comparison bars, a bass-hit reveal and an ending teaser. Works with calendar years (BC/AD) or deep time ("150 million years ago"). |
+| **⏳ Timeline Collision** | 2–5 events on a flying timeline, year counters, comparison bars, a bass-hit reveal and an ending teaser. Works with calendar years (BC/AD), deep time ("150 million years ago") or a **number line in any unit** (km², metres, °C, $…). Pick a **country** per event for its flag and map, add a **true-size map scene** (countries drawn at their real relative size) and a **guess moment** (3 choices + timer). |
 | **✅ Multiple Choice** | Up to 10 questions with 2–4 options each, a countdown timer with ticking, then the correct answer turns green with a "ding" and an optional explanation. Optional narration clips, and many videos at once from an Excel sheet. |
 | **❓ Clue Quiz** | One mystery answer revealed after 1–8 clues, each with a countdown bar and ticking sound, then a big reveal with confetti and an optional photo. |
 
@@ -161,9 +161,11 @@ render_cli.py        command-line renderer
 engine/core.py       drawing, text, themes, encoding
 engine/audio.py      sound effects, music beds, voice, mixing
 engine/icons.py      icons + event card
+engine/countries.py  country names, flags, outlines, true-size map drawing
 engine/strings.py    Arabic/English wording, year & number formatting
 engine/templates/    timeline.py, quiz.py, mcq.py (add yours here)
 fonts/               Cairo.ttf + licence
+data/                countries.json (outlines) + flags/ — rebuilt with tools/build_countries.py
 projects/            saved projects (+ media/ for your pictures/audio)
 outputs/             rendered videos
 ```
@@ -172,3 +174,8 @@ outputs/             rendered videos
 - **"Python is required"**: install Python 3.10+ and tick "Add to PATH", then run the launcher again.
 - **Port already in use**: close the other Video Studio window, or run `python app.py` after stopping it.
 - **Rendering is slow**: 60 FPS takes twice as long as 30 FPS. 30 FPS is standard for Shorts.
+
+## Credits
+- Country outlines: [Natural Earth](https://www.naturalearthdata.com) (public domain). Borders follow Natural Earth's
+  choices; upload your own GeoJSON outline on an event to draw a country differently.
+- Flags: [flagcdn.com](https://flagcdn.com) (public-domain flag images).

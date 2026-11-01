@@ -1,0 +1,66 @@
+{
+  "template": "timeline",
+  "settings": {
+    "theme": "Night Sky",
+    "language": "ar",
+    "fps": 30,
+    "music": "Tension",
+    "music_gain": 1.0,
+    "music_file": "",
+    "voice_file": "",
+    "voice_offset": 0.5,
+    "voice_gain": 1.0,
+    "handle": "@Ma3loomaFast",
+    "font_file": ""
+  },
+  "ending": {
+    "intro": "سؤال الحلقة القادمة:",
+    "question": "كم مرة يدخل لبنان\n[gold]في مساحة السعودية؟",
+    "cta": "اكتب دولتك وسنقارنها!"
+  },
+  "timeline": {
+    "mode": "scale",
+    "unit": "كم²",
+    "events": [
+      {
+        "country": "EGY",
+        "name": "",
+        "year": 1001450,
+        "label": "",
+        "color": "red",
+        "icon": "flag",
+        "image": "",
+        "outline": ""
+      },
+      {
+        "country": "MRT",
+        "name": "",
+        "year": 1030700,
+        "label": "",
+        "color": "gold",
+        "icon": "flag",
+        "image": "",
+        "outline": ""
+      },
+      {
+        "country": "SAU",
+        "name": "",
+        "year": 2149690,
+        "label": "",
+        "color": "green",
+        "icon": "flag",
+        "image": "",
+        "outline": ""
+      }
+    ],
+    "hook": "مصر أقرب في المساحة إلى\n[gold]موريتانيا\n[green]منها إلى السعودية!",
+    "hide_first_in_hook": false,
+    "doubt": "مستحيل؟",
+    "doubt_sub": "تابع المساحة…",
+    "compare_title": "بالحجم الحقيقي…",
+    "reveal": "[green]السعودية أكبر من\nضعف مساحة مصر!",
+    "maps": true,
+    "guess": true,
+    "guess_q": ""
+  }
+}
