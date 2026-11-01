@@ -51,6 +51,8 @@
     "guess": true,
     "guess_q": "",
     "intro": "vs",
-    "map_style": "auto"
+    "map_style": "auto",
+    "polish": true,
+    "finish": true
   }
 }

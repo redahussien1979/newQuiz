@@ -7,6 +7,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 from .. import countries as CT
+from .. import finish as FX
+from .. import globe as GL
 from ..core import (COLORS, GREY, W, WHITE, Stars, clamp, composite, draw_ending, draw_scene, ease_io, ease_out_back, fade,
                     get_theme, global_fade, make_bg, nice_step, parse_lines, paste, prog, shade, stack_lines,
                     text_img, to_rgb)
@@ -38,6 +40,7 @@ EXAMPLE = {
         "doubt": "مستحيل؟", "doubt_sub": "تابع الخط الزمني…",
         "compare_title": "قارن بنفسك…",
         "reveal": "[gold]كليوباترا أقرب إلينا\nمن الأهرامات!",
+        "polish": True, "finish": True,
     },
 }
 
@@ -156,7 +159,12 @@ class TimelineVideo:
         pair = (mev[0], mev[-1]) if self.use_maps else (evs[0], evs[-1])
         self.use_guess = bool(d.get("guess")) and pair[0]["v"] > 0
         compact = self.use_maps or self.use_guess
-        self.intro = "vs" if str(d.get("intro") or "hook") == "vs" else "hook"
+        intro = str(d.get("intro") or "hook")
+        if intro == "globe" and not (mev and GL.available()):
+            intro = "hook"  # the globe needs at least one country (or own outline)
+        self.intro = intro if intro in ("vs", "globe") else "hook"
+        self.polish = bool(d.get("polish"))  # motion blur, camera drift / push-ins, transitions
+        self.finish = bool(d.get("finish"))  # bloom, vignette, grain, light leaks
 
         # ---------------- camera plan
         self.z_full = z_full = 680.0 / span
@@ -196,6 +204,7 @@ class TimelineVideo:
         # ---------------- guess / maps or bars / reveal / ending timing
         T = Tc
         self.silences = []
+        self.m_t = []  # map slide-in times (set below when the map scene is on)
         self.t_hide = Tc + 0.05 if compact else None  # the timeline fades away for the guess and the maps
         if self.use_guess:
             self.g0 = T + 0.1
@@ -251,7 +260,7 @@ class TimelineVideo:
             evs[i]["t_app"] = 0.15 + 0.3 * k
         if self.hidden_first:
             evs[0]["t_app"] = 3.3
-        if self.intro == "vs":  # the timeline appears after the VS clash
+        if self.intro in ("vs", "globe"):  # the timeline appears after the VS clash / the globe
             for k, ev in enumerate(evs):
                 ev["t_app"] = 2.6 + 0.12 * k
 
@@ -278,6 +287,9 @@ class TimelineVideo:
             self._setup_maps(mev)
         if self.intro == "vs":
             self._setup_vs(pair)
+        if self.intro == "globe":
+            self._setup_globe(mev)
+        self._setup_polish()
         rv = parse_lines(d.get("reveal", ""), ["white"])
         self.scenes.append(dict(t_in=self.reveal_in, t_out=self.E, lines=stack_lines(rv, 380, 88, 76)))
         self.ending = (e.get("intro", ""), parse_lines(e.get("question", ""), ["white", "gold"]),
@@ -346,6 +358,20 @@ class TimelineVideo:
 
     # ------------------------------------------------------------ render
     def render(self, t):
+        n = self._blur_n(t) if self.polish else 1
+        if n > 1:  # motion blur: average sub-frames of the moving picture, then draw the text once, sharp
+            acc = None
+            for i in range(n):
+                tt = t + (i / (n - 1) - 0.5) * 0.5 / self.fps
+                arr = np.asarray(self._compose(tt, text=False).convert("RGB"), np.float32)
+                acc = arr if acc is None else acc + arr
+            frame = Image.fromarray((acc / n).astype(np.uint8)).convert("RGBA")
+            self._text(frame, t)
+        else:
+            frame = self._compose(t)
+        return self._post(frame, t)
+
+    def _compose(self, t, text=True):
         cam, z = self.camera(t)
         flying = next((f for f in self.flights if f["fs"] <= t < f["fe"]), None)
         # ambient light: tinted by the era the camera is in, brighter while travelling
@@ -372,11 +398,11 @@ class TimelineVideo:
             tl_a = 1 - prog(t, self.t_hide, self.t_hide + 0.35)
             if not self.use_maps:  # the ribbon comes back with the comparison bars
                 tl_a = max(tl_a, prog(t, self.bars_t0 - 0.35, self.bars_t0))
-        if self.intro == "vs":
+        if self.intro in ("vs", "globe"):
             tl_a *= prog(t, 2.45, 2.8)
         if tl_a > 0.01:
             cv = frame if tl_a >= 0.999 else Image.new("RGBA", frame.size, (0, 0, 0, 0))
-            self._timeline(cv, t, cam, z, flying)
+            self._timeline(cv, t, cam, z, flying, text)
             if cv is not frame:
                 frame.alpha_composite(fade(cv, tl_a))
 
@@ -388,13 +414,90 @@ class TimelineVideo:
             self._maps(frame, t)
         if self.intro == "vs" and t < 2.85:
             self._vs(frame, t)
+        if self.intro == "globe" and t < 2.85:
+            self._globe(frame, t)
+        if text:
+            for sc_ in self.scenes:
+                draw_scene(frame, t, sc_)
+            draw_ending(frame, t, self.E, *self.ending, self.accent)
+        return frame
+
+    def _text(self, frame, t):
+        """Text drawn on top of a motion-blurred frame (counters, titles, ending)."""
+        if not (self.t_hide is not None and t >= self.t_hide):
+            self._counters(frame, t, self.camera(t)[0])
         for sc_ in self.scenes:
             draw_scene(frame, t, sc_)
         draw_ending(frame, t, self.E, *self.ending, self.accent)
+
+    def _post(self, frame, t):
+        if self.polish:
+            frame = self._transitions(frame, t)
+            frame = FX.camera(frame, 1.035 + self._bump(t, self.pushes, 0.035),
+                              9 * math.sin(t * 0.55), 7 * math.sin(t * 0.43 + 1.1))
+        if self.finish:
+            frame = FX.grade(frame, int(round(t * self.fps)), self._leak(t))
+        frame = frame.convert("RGBA")
         global_fade(frame, t, self.dur)
         return frame.convert("RGB")
 
-    def _timeline(self, frame, t, cam, z, flying):
+    # ------------------------------------------------------------ polish
+    def _setup_polish(self):
+        land = []
+        if self.use_maps:
+            land = [tk + 0.5 for tk in self.m_t]
+            if self.map_style == "tiles":
+                land.append(self.tf + 2.9)
+            if self.map_style == "side":
+                land.append(self.side_sym)
+        self.pushes = [f["fe"] for f in self.flights] + land + [self.s0 + 0.47] + \
+            ([self.g_ans] if self.use_guess else [])
+        self.leaks = land + [self.s0 + 0.47]
+        self.whips = ([self.g0] if self.use_guess else []) + ([self.m0] if self.use_maps else [])
+        self.blur_windows = [(tk, tk + 0.45) for tk in self.m_t]
+        if self.use_maps and self.map_style == "side":
+            self.blur_windows += [(t0, t0 + 0.55) for t0 in self.side_t]
+        if self.intro == "vs":
+            self.blur_windows.append((0.0, 0.6))
+
+    def _blur_n(self, t):
+        if any(a <= t <= b for a, b in self.blur_windows):
+            return 4
+        f = next((f for f in self.flights if f["fs"] <= t < f["fe"]), None)
+        return 4 if f is not None and self.speed(t) > 250 else 1
+
+    @staticmethod
+    def _bump(t, times, amount):
+        """Sum of quick rise / slow fall pulses at `times` (camera push-ins)."""
+        v = 0.0
+        for p in times:
+            x = t - p
+            if -0.15 <= x < 0:
+                v += amount * ease_io((x + 0.15) / 0.15)
+            elif 0 <= x < 0.9:
+                v += amount * (1 - x / 0.9) ** 2
+        return v
+
+    def _leak(self, t):
+        return max([0.0] + [0.55 * max(0.0, 1 - abs(t - p - 0.15) / 0.35) for p in self.leaks])
+
+    def _transitions(self, frame, t):
+        if self.intro in ("vs", "globe"):  # zoom-through from the intro into the timeline
+            if 2.3 <= t < 2.6:
+                k = ease_io(prog(t, 2.3, 2.6))
+                frame = FX.zoom_blur(FX.camera(frame, 1 + 0.6 * k), 0.25 * k).convert("RGBA")
+                frame.alpha_composite(Image.new("RGBA", frame.size, (255, 255, 255, int(110 * k))))
+            elif 2.6 <= t < 2.9:
+                k = 1 - ease_io(prog(t, 2.6, 2.9))
+                frame = FX.zoom_blur(FX.camera(frame, 1 + 0.3 * k), 0.2 * k).convert("RGBA")
+                frame.alpha_composite(Image.new("RGBA", frame.size, (255, 255, 255, int(80 * k))))
+        for w in self.whips:  # whip pan into the guess / the maps
+            k = max(0.0, 1 - abs(t - w) / 0.25)
+            if k > 0:
+                frame = FX.whip(frame, 260 * k)
+        return frame
+
+    def _timeline(self, frame, t, cam, z, flying, text=True):
         sx = lambda v: 540 + (v - cam) * z
         d = ImageDraw.Draw(frame)
         # ribbon + ticks
@@ -496,7 +599,10 @@ class TimelineVideo:
                 paste(frame, ev["halo"], xc, cy, s_card, hl * min(1, p * 1.6))
             paste(frame, img, xc, cy, s_card, min(1, p * 1.6))
 
-        # counters
+        if text:
+            self._counters(frame, t, cam)
+
+    def _counters(self, frame, t, cam):
         for f in self.flights:
             if f["fs"] <= t <= f["vis"]:
                 a = min(1, prog(t, f["fs"], f["fs"] + 0.3)) * (1 - prog(t, f["vis"] - 0.2, f["vis"]))
@@ -738,6 +844,49 @@ class TimelineVideo:
         else:
             paste(frame, CT.badge(ratio_str(r), mev[-1]["col"]), 540, 690, 0.6 + 0.4 * ease_out_back(pe), a_all * pe)
 
+    # ------------------------------------------------------------ globe intro
+    def _setup_globe(self, mev):
+        items = [(x["code"], x["outline"]) for x in mev]
+        self.gl_plan = GL.plan(items)
+        self.gl_items = [(x["code"], x["outline"], tuple(x["col"])) for x in mev]
+        self.gl_labels = list(zip([x["name"] for x in mev], GL.label_points(items)))
+
+    def _globe(self, frame, t):
+        a = 1 - prog(t, 2.55, 2.8)
+        if a <= 0 or not self.gl_plan:
+            return
+        lon_c, lat_c, rt = self.gl_plan
+        k1 = ease_io(prog(t, 0.0, 1.6))
+        k2 = ease_io(prog(t, 0.5, 2.2))
+        lon0, lat0 = lon_c - 70 * (1 - k1), lat_c * (0.3 + 0.7 * k1)
+        R = math.exp(math.log(430) + (math.log(max(rt, 430)) - math.log(430)) * k2)
+        g = GL.render(lon0, lat0, R)
+        a1 = ease_io(prog(t, 1.3, 1.8))
+        if a1 > 0:
+            g.alpha_composite(GL.outlines(self.gl_items, lon0, lat0, R, a1))
+        a2 = prog(t, 1.8, 2.15)
+        if a2 > 0:
+            placed = []  # (x, y, half width, half height) of labels already drawn: move a new one if they overlap
+            for name, pt in self.gl_labels:
+                if pt is None:
+                    continue
+                x, y, vis = GL.to_screen(np.array([pt[0]]), np.array([pt[1]]), lon0, lat0, R)
+                if not vis[0]:
+                    continue
+                lab = GL.label(name)
+                x, y, hw, hh = float(x[0]), float(y[0]), lab.width / 2, lab.height / 2
+                for _ in range(6):
+                    hit = next((p for p in placed if abs(p[0] - x) < p[2] + hw and abs(p[1] - y) < p[3] + hh), None)
+                    if hit is None:
+                        break
+                    y = hit[1] + (hit[3] + hh + 6) * (1 if y >= hit[1] else -1)
+                placed.append((x, y, hw, hh))
+                paste(g, lab, x, y, 0.8 + 0.2 * ease_out_back(a2), a2)
+        ph = prog(t, 0.05, 0.35) * (1 - prog(t, 2.45, 2.7))  # dark band behind the hook text
+        if ph > 0:
+            g.alpha_composite(Image.new("RGBA", (W, 400), (5, 8, 20, int(170 * ph))), (0, 190))
+        frame.alpha_composite(fade(g, a))
+
     # ------------------------------------------------------------ VS intro
     def _setup_vs(self, pair):
         a, b = pair  # a = smaller / first, shown on the reading side (right in Arabic)
@@ -835,7 +984,13 @@ class TimelineVideo:
 
     # ------------------------------------------------------------ sound
     def sound(self, mx):
-        if self.intro == "vs":
+        if self.intro == "globe":
+            s, pn = mx.whoosh(1.6); mx.add(0.2, s, 0.45, pn)
+            mx.add(1.15, mx.riser(1.4), 0.3)
+            mx.add(1.8, mx.pop(), 0.35)
+            mx.add(1.95, mx.pop(), 0.35)
+            mx.add(2.6, mx.hit(1.6), 0.7)
+        elif self.intro == "vs":
             s, pn = mx.whoosh(0.5); mx.add(0.0, s, 0.5, pn)
             s, pn = mx.whoosh(0.5); mx.add(0.0, s, 0.5, pn[::-1])
             mx.add(0.45, mx.hit(1.6), 0.85)
@@ -887,6 +1042,11 @@ class TimelineVideo:
         else:
             for i in range(self.G):
                 mx.add(self.bars_t0 + 0.25 * i, mx.pop(), 0.3)
+        if self.polish:
+            for w in self.whips:
+                s, pn = mx.whoosh(0.5); mx.add(w - 0.25, s, 0.45, pn[::-1])
+            if self.intro == "vs":
+                s, pn = mx.whoosh(0.6); mx.add(2.3, s, 0.4, pn)
         mx.add(self.s0 - 1.1, mx.riser(1.1), 0.3)
         mx.add(self.s0 + 0.47, mx.hit(2.4), 0.95)
         mx.add(self.E + 0.2, mx.chime(), 0.35)

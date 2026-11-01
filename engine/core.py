@@ -418,15 +418,18 @@ def ffmpeg_exe():
     raise RuntimeError("FFmpeg not found. Run: pip install imageio-ffmpeg")
 
 
-def encode(render, n_frames, fps, wav_path, out_path, progress=None):
+def encode(render, n_frames, fps, wav_path, out_path, progress=None, frames=None):
+    """Pipe frames into FFmpeg. `frames` (optional) is an iterable of raw RGB frame bytes in order;
+    without it each frame is made with render(t)."""
     cmd = [ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
            "-s", f"{W}x{H}", "-r", str(fps), "-i", "-", "-i", wav_path,
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", out_path]
     ff = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
-        for i in range(n_frames):
-            ff.stdin.write(render(i / fps).tobytes())
+        source = frames if frames is not None else (render(i / fps).tobytes() for i in range(n_frames))
+        for i, raw in enumerate(source):
+            ff.stdin.write(raw)
             if progress and i % 10 == 0:
                 progress(i / n_frames)
         ff.stdin.close()

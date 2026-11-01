@@ -61,6 +61,9 @@
     "reveal": "[green]السعودية أكبر من\nضعف مساحة مصر!",
     "maps": true,
     "guess": true,
-    "guess_q": ""
+    "guess_q": "",
+    "polish": true,
+    "finish": true,
+    "intro": "globe"
   }
 }

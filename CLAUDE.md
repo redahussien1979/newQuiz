@@ -13,7 +13,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
 - `engine/batch.py` — MCQ from an Excel/CSV sheet: parse rows + audio, split into N-question videos
 - `engine/tl_batch.py` — Timeline from an Excel/CSV sheet: one row = one video (countries + values + texts);
   template `projects/countries_template.xlsx`
-- Timeline options `intro` (`hook` / `vs`) and `map_style` (`auto` / `overlay` / `tiles` / `side`)
+- Timeline options `intro` (`hook` / `vs` / `globe`), `map_style` (`auto` / `overlay` / `tiles` / `side`),
+  `polish` and `finish` (`engine/finish.py`: camera, transitions, motion blur / glow, grain, light leaks)
+- `engine/globe.py` — real-Earth globe intro from `data/earth.jpg` (NASA Blue Marble, public domain)
+- `engine/render.py` renders frames on several processes (`frame_stream`); templates' `render(t)` must depend only on t
 - `engine/render.py` — build / render_still / render_clip / render_video
 - `projects/example_*.json` — example projects (same format the app saves)
 

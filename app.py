@@ -40,7 +40,7 @@ SHARED_KEYS = [("settings", "theme"), ("settings", "language"), ("settings", "mu
                ("ending", "intro"), ("ending", "question"), ("ending", "cta"),
                ("settings", "intro_sound"), ("settings", "tick_sound"), ("settings", "tick_gain")]
 TL_KEYS = ["mode", "hook", "hide_first_in_hook", "doubt", "doubt_sub", "compare_title", "reveal", "unit",
-           "maps", "guess", "guess_q", "intro", "map_style"]
+           "maps", "guess", "guess_q", "intro", "map_style", "polish", "finish"]
 EV_KEYS = ["enabled", "name", "year", "label", "color", "icon", "image", "country", "outline"]
 QZ_KEYS = ["title", "subtitle", "clues", "clue_seconds", "answer_intro", "answer", "answer_sub", "answer_image", "accent"]
 MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", "accent", "style", "timer",
@@ -49,7 +49,7 @@ KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline"}
 MEDIA_LISTS = {"narration"}  # fields holding several files
 DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": "", "maps": False, "guess": False,
-            "guess_q": "", "intro": "hook", "map_style": "auto",
+            "guess_q": "", "intro": "hook", "map_style": "auto", "polish": False, "finish": False,
             "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
@@ -101,6 +101,10 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 - **Map scene style:** *Overlay* (the smaller slides on top), *Tile fill* (copies of the smallest fill the largest
   while the badge counts up, for 2× to 400×), *Side by side* (on platforms, best for near-equal sizes).
   **Auto** picks: tile fill from 20× apart, side by side within 1.5×, overlay otherwise.
+- **🌍 Globe intro:** a real-Earth globe (NASA Blue Marble) rotates and zooms in to the countries, which light up.
+- **✨ Motion polish:** slow camera drift, push-ins on key moments, zoom-through and whip-pan transitions, motion blur
+  on fast moves (text stays sharp). **🎬 Cinematic finish:** soft glow, vignette, film grain, light leaks on the hits.
+  Both make rendering about 2× slower; switch them off for a quick test render.
 - **⚔️ VS battle intro:** the two flags crash together with "VS" before the hook (first and last event).
 - **📊 Excel batch** (Timeline tab): one row = one video. Download the template (10 ready country comparisons), edit it,
   upload it and press 🎬 Render all. Countries can be written in Arabic or English; empty hook / reveal cells are
@@ -791,11 +795,17 @@ def build_ui():
                                 guess_q = gr.Textbox(lines=2, max_lines=3, rtl=True, label="Guess question (optional)",
                                                      placeholder="Empty = automatic. {a} = smaller, {b} = bigger")
                                 with gr.Row():
-                                    intro = gr.Radio([("Hook text", "hook"), ("⚔️ VS battle", "vs")], value="hook",
+                                    intro = gr.Radio([("Hook text", "hook"), ("⚔️ VS battle", "vs"), ("🌍 Globe", "globe")],
+                                                     value="hook",
                                                      label="Intro")
                                     map_style = gr.Radio([("Auto", "auto"), ("Overlay", "overlay"),
                                                           ("Tile fill", "tiles"), ("Side by side", "side")],
                                                          value="auto", label="Map scene style")
+                                with gr.Row():
+                                    polish = gr.Checkbox(value=True, label="✨ Motion polish (camera, motion blur, "
+                                                                           "transitions)")
+                                    finish = gr.Checkbox(value=True, label="🎬 Cinematic finish (glow, grain, "
+                                                                           "vignette, light leaks)")
                         with gr.Tab("🗓️ Events"):
                             ev_fields = []
                             with gr.Tabs():
@@ -827,7 +837,7 @@ def build_ui():
                         tl_end = ending_tab()
                     tl_fields = (shared_fields(tl_st, tl_end)
                                  + [mode, hook, hide_first, doubt, doubt_sub, compare_title, reveal, unit, maps, guess, guess_q,
-                                    intro, map_style]
+                                    intro, map_style, polish, finish]
                                  + ev_fields)
                 tl_pv = preview_panel("timeline")
             wire(tl_proj, tl_pv, tl_fields)
