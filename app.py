@@ -637,7 +637,7 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
 
 # ------------------------------------------------------------------ Excel batch (Timeline Collision)
 TL_BATCH_HELP = """**One row = one video.** Write 2-5 countries (Arabic or English names) and their areas per row,
-plus — optionally — the hook, reveal, intro (`hook` / `vs`), map style (`auto` / `overlay` / `tiles` / `side`),
+plus — optionally — the hook, doubt word («مستحيل؟») and its subtitle, comparison title, reveal, intro (`hook` / `vs`), map style (`auto` / `overlay` / `tiles` / `side`),
 guess (`yes` / `no`) and the ending question. Empty hook / reveal cells are written automatically from the numbers.
 Every video uses the theme, music, handle and ending you set in the other tabs. Get the **template** (10 ready
 comparisons) on the right."""
