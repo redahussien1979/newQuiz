@@ -124,19 +124,22 @@ def plan(items):
     return lon_c, lat_c, R
 
 
-def outlines(items, lon0, lat0, R, a, cy=960):
-    """Glowing country borders + soft fill on the globe. items: [(code, outline, colour)]."""
+def outlines(items, lon0, lat0, R, draw=1.0, fill=1.0, cy=960):
+    """Glowing country borders on the globe. `draw` (0-1) traces the border on like a pen; `fill` fades in a soft
+    colour fill. items: [(code, outline, colour)]."""
     lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(lay)
     for code, ol, col in items:
         for ring in geo_rings(code, ol):
             x, y, vis = to_screen(ring[:, 0], ring[:, 1], lon0, lat0, R, cy)
-            if vis.all() and len(x) > 2:
-                xy = list(zip(x.tolist(), y.tolist()))
-                d.polygon(xy, fill=tuple(col) + (int(70 * a),))
-                d.line(xy + [xy[0]], fill=tuple(col) + (int(255 * a),), width=6, joint="curve")
-    g = lay.filter(ImageFilter.GaussianBlur(10))
-    return Image.alpha_composite(g, lay)
+            if not vis.all() or len(x) < 3:
+                continue
+            xy = list(zip(x.tolist(), y.tolist()))
+            if fill > 0:
+                d.polygon(xy, fill=tuple(col) + (int(80 * fill),))
+            n = max(2, int(len(xy) * draw))
+            d.line(xy[:n] + ([xy[0]] if draw >= 1 else []), fill=tuple(col) + (255,), width=6, joint="curve")
+    return Image.alpha_composite(lay.filter(ImageFilter.GaussianBlur(10)), lay)
 
 
 def label_points(items):
@@ -152,6 +155,47 @@ def label_points(items):
     return out
 
 
-@lru_cache(maxsize=16)
-def label(txt):
-    return text_img(txt, 70, (255, 255, 255))
+@lru_cache(maxsize=32)
+def tag(name, code, col, rtl=True):
+    """Callout name tag: dark pill with a coloured border, round flag and name."""
+    S = 2
+    fl = CT.flag_round(code, 58) if code else None
+    t = text_img(name, 46, (255, 255, 255), "Bold", shadow=False, max_w=420)
+    w, h = t.width + (58 + 64 if fl else 56), 84
+    im = Image.new("RGBA", (w * S, h * S), (0, 0, 0, 0))
+    ImageDraw.Draw(im).rounded_rectangle([0, 0, w * S - 1, h * S - 1], h * S // 2, fill=(10, 14, 30, 235),
+                                         outline=tuple(col) + (255,), width=3 * S)
+    im = im.resize((w, h), Image.LANCZOS)
+    if fl and rtl:  # flag on the reading side
+        im.alpha_composite(fl, (w - 58 - 14, (h - 58) // 2))
+        im.alpha_composite(t, (w - 58 - 28 - t.width, (h - t.height) // 2))
+    elif fl:
+        im.alpha_composite(fl, (14, (h - 58) // 2))
+        im.alpha_composite(t, (14 + 58 + 14, (h - t.height) // 2))
+    else:
+        im.alpha_composite(t, ((w - t.width) // 2, (h - t.height) // 2))
+    return im
+
+
+@lru_cache(maxsize=1)
+def hook_shade():
+    """Soft, feathered dark shade behind the hook text at the top (no hard edges)."""
+    sh = Image.new("RGBA", (W, H), (5, 8, 20, 0))
+    a = np.clip(1 - np.abs(np.arange(H) - 360) / 300.0, 0, 1) ** 1.5 * 175
+    sh.putalpha(Image.fromarray(a.astype(np.uint8)[:, None].repeat(W, 1), "L"))
+    return sh
+
+
+def callout_layout(anchors, tags, gap=22, max_w=1000.0):
+    """Tags in one row away from the map, in the left-to-right order of their anchors (so leader lines never
+    cross), packed by their real widths. anchors: [(x, y)]; returns ([(slot index -> tag x)], row y, scale)."""
+    order = sorted(range(len(anchors)), key=lambda i: anchors[i][0])
+    below = max(a[1] for a in anchors) + 230
+    row_y = below if below < 1560 else min(a[1] for a in anchors) - 230
+    total = sum(tags[i].width for i in order) + gap * (len(order) - 1)
+    k = min(1.0, max_w / total)
+    xs, x = {}, 540 - total * k / 2
+    for i in order:
+        xs[i] = x + tags[i].width * k / 2
+        x += (tags[i].width + gap) * k
+    return xs, row_y, k, order

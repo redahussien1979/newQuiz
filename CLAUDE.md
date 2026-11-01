@@ -15,7 +15,8 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   template `projects/countries_template.xlsx`
 - Timeline options `intro` (`hook` / `vs` / `globe`), `map_style` (`auto` / `overlay` / `tiles` / `side`),
   `polish` and `finish` (`engine/finish.py`: camera drift / push-ins; glow, grain, vignette, light leaks)
-- `engine/globe.py` — real-Earth globe intro from `data/earth.jpg` (NASA Blue Marble, public domain)
+- `engine/globe.py` — real-Earth globe intro from `data/earth.jpg` (NASA Blue Marble, public domain); in
+  `timeline.py` the globe intro lasts `GLOBE_LEN` and the rest of the video is shifted by `self.off` (frames + sounds)
 - `engine/render.py` renders frames on several processes (`frame_stream`); templates' `render(t)` must depend only on t
 - `engine/render.py` — build / render_still / render_clip / render_video
 - `projects/example_*.json` — example projects (same format the app saves)
