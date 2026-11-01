@@ -163,7 +163,7 @@ class TimelineVideo:
         if intro == "globe" and not (mev and GL.available()):
             intro = "hook"  # the globe needs at least one country (or own outline)
         self.intro = intro if intro in ("vs", "globe") else "hook"
-        self.polish = bool(d.get("polish"))  # motion blur, camera drift / push-ins, transitions
+        self.polish = bool(d.get("polish"))  # slow camera drift + push-ins on key moments
         self.finish = bool(d.get("finish"))  # bloom, vignette, grain, light leaks
 
         # ---------------- camera plan
@@ -358,20 +358,9 @@ class TimelineVideo:
 
     # ------------------------------------------------------------ render
     def render(self, t):
-        n = self._blur_n(t) if self.polish else 1
-        if n > 1:  # motion blur: average sub-frames of the moving picture, then draw the text once, sharp
-            acc = None
-            for i in range(n):
-                tt = t + (i / (n - 1) - 0.5) * 0.5 / self.fps
-                arr = np.asarray(self._compose(tt, text=False).convert("RGB"), np.float32)
-                acc = arr if acc is None else acc + arr
-            frame = Image.fromarray((acc / n).astype(np.uint8)).convert("RGBA")
-            self._text(frame, t)
-        else:
-            frame = self._compose(t)
-        return self._post(frame, t)
+        return self._post(self._compose(t), t)
 
-    def _compose(self, t, text=True):
+    def _compose(self, t):
         cam, z = self.camera(t)
         flying = next((f for f in self.flights if f["fs"] <= t < f["fe"]), None)
         # ambient light: tinted by the era the camera is in, brighter while travelling
@@ -402,7 +391,7 @@ class TimelineVideo:
             tl_a *= prog(t, 2.45, 2.8)
         if tl_a > 0.01:
             cv = frame if tl_a >= 0.999 else Image.new("RGBA", frame.size, (0, 0, 0, 0))
-            self._timeline(cv, t, cam, z, flying, text)
+            self._timeline(cv, t, cam, z, flying)
             if cv is not frame:
                 frame.alpha_composite(fade(cv, tl_a))
 
@@ -416,23 +405,13 @@ class TimelineVideo:
             self._vs(frame, t)
         if self.intro == "globe" and t < 2.85:
             self._globe(frame, t)
-        if text:
-            for sc_ in self.scenes:
-                draw_scene(frame, t, sc_)
-            draw_ending(frame, t, self.E, *self.ending, self.accent)
-        return frame
-
-    def _text(self, frame, t):
-        """Text drawn on top of a motion-blurred frame (counters, titles, ending)."""
-        if not (self.t_hide is not None and t >= self.t_hide):
-            self._counters(frame, t, self.camera(t)[0])
         for sc_ in self.scenes:
             draw_scene(frame, t, sc_)
         draw_ending(frame, t, self.E, *self.ending, self.accent)
+        return frame
 
     def _post(self, frame, t):
-        if self.polish:
-            frame = self._transitions(frame, t)
+        if self.polish:  # slow camera drift + push-ins (no blur of any kind)
             frame = FX.camera(frame, 1.035 + self._bump(t, self.pushes, 0.035),
                               9 * math.sin(t * 0.55), 7 * math.sin(t * 0.43 + 1.1))
         if self.finish:
@@ -453,18 +432,6 @@ class TimelineVideo:
         self.pushes = [f["fe"] for f in self.flights] + land + [self.s0 + 0.47] + \
             ([self.g_ans] if self.use_guess else [])
         self.leaks = land + [self.s0 + 0.47]
-        self.whips = ([self.g0] if self.use_guess else []) + ([self.m0] if self.use_maps else [])
-        self.blur_windows = [(tk, tk + 0.45) for tk in self.m_t]
-        if self.use_maps and self.map_style == "side":
-            self.blur_windows += [(t0, t0 + 0.55) for t0 in self.side_t]
-        if self.intro == "vs":
-            self.blur_windows.append((0.0, 0.6))
-
-    def _blur_n(self, t):
-        if any(a <= t <= b for a, b in self.blur_windows):
-            return 4
-        f = next((f for f in self.flights if f["fs"] <= t < f["fe"]), None)
-        return 4 if f is not None and self.speed(t) > 250 else 1
 
     @staticmethod
     def _bump(t, times, amount):
@@ -481,23 +448,7 @@ class TimelineVideo:
     def _leak(self, t):
         return max([0.0] + [0.55 * max(0.0, 1 - abs(t - p - 0.15) / 0.35) for p in self.leaks])
 
-    def _transitions(self, frame, t):
-        if self.intro in ("vs", "globe"):  # zoom-through from the intro into the timeline
-            if 2.3 <= t < 2.6:
-                k = ease_io(prog(t, 2.3, 2.6))
-                frame = FX.zoom_blur(FX.camera(frame, 1 + 0.6 * k), 0.25 * k).convert("RGBA")
-                frame.alpha_composite(Image.new("RGBA", frame.size, (255, 255, 255, int(110 * k))))
-            elif 2.6 <= t < 2.9:
-                k = 1 - ease_io(prog(t, 2.6, 2.9))
-                frame = FX.zoom_blur(FX.camera(frame, 1 + 0.3 * k), 0.2 * k).convert("RGBA")
-                frame.alpha_composite(Image.new("RGBA", frame.size, (255, 255, 255, int(80 * k))))
-        for w in self.whips:  # whip pan into the guess / the maps
-            k = max(0.0, 1 - abs(t - w) / 0.25)
-            if k > 0:
-                frame = FX.whip(frame, 260 * k)
-        return frame
-
-    def _timeline(self, frame, t, cam, z, flying, text=True):
+    def _timeline(self, frame, t, cam, z, flying):
         sx = lambda v: 540 + (v - cam) * z
         d = ImageDraw.Draw(frame)
         # ribbon + ticks
@@ -599,8 +550,7 @@ class TimelineVideo:
                 paste(frame, ev["halo"], xc, cy, s_card, hl * min(1, p * 1.6))
             paste(frame, img, xc, cy, s_card, min(1, p * 1.6))
 
-        if text:
-            self._counters(frame, t, cam)
+        self._counters(frame, t, cam)
 
     def _counters(self, frame, t, cam):
         for f in self.flights:
@@ -1042,11 +992,6 @@ class TimelineVideo:
         else:
             for i in range(self.G):
                 mx.add(self.bars_t0 + 0.25 * i, mx.pop(), 0.3)
-        if self.polish:
-            for w in self.whips:
-                s, pn = mx.whoosh(0.5); mx.add(w - 0.25, s, 0.45, pn[::-1])
-            if self.intro == "vs":
-                s, pn = mx.whoosh(0.6); mx.add(2.3, s, 0.4, pn)
         mx.add(self.s0 - 1.1, mx.riser(1.1), 0.3)
         mx.add(self.s0 + 0.47, mx.hit(2.4), 0.95)
         mx.add(self.E + 0.2, mx.chime(), 0.35)

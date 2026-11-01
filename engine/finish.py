@@ -1,5 +1,5 @@
-"""Studio polish applied to finished frames: virtual camera (drift / push-in), transitions (zoom-through,
-whip pan) and a cinematic finish (bloom, vignette, film grain, light leaks)."""
+"""Studio polish applied to finished frames: virtual camera (slow drift / push-in) and a cinematic finish
+(bloom, vignette, film grain, light leaks). Nothing here blurs the picture."""
 from functools import lru_cache
 
 import numpy as np
@@ -15,33 +15,6 @@ def camera(img, zoom=1.0, ox=0.0, oy=0.0):
     x0 = min(max((W - w) / 2 - ox, 0.0), W - w)
     y0 = min(max((H - h) / 2 - oy, 0.0), H - h)
     return img.convert("RGB").resize((W, H), Image.BILINEAR, box=(x0, y0, x0 + w, y0 + h))
-
-
-def zoom_blur(img, amount, n=8):
-    """Radial (zoom) blur, `amount` = how much bigger the last copy is (0.25 = 25 %)."""
-    if amount <= 0.005:
-        return img
-    rgb = img.convert("RGB")
-    acc = np.zeros((H, W, 3), np.float32)
-    for i in range(n):
-        s = 1 + amount * i / (n - 1)
-        w, h = W / s, H / s
-        acc += np.asarray(rgb.transform((W, H), Image.EXTENT, ((W - w) / 2, (H - h) / 2, (W + w) / 2, (H + h) / 2),
-                                        Image.BILINEAR), np.float32)
-    return Image.fromarray((acc / n).astype(np.uint8)).convert("RGBA")
-
-
-def whip(img, amount):
-    """Horizontal motion smear for a whip pan (box blur along x, `amount` pixels)."""
-    k = int(amount)
-    if k < 2:
-        return img
-    a = np.asarray(img.convert("RGB"), np.float32)
-    pad = np.pad(a, ((0, 0), (k, 0), (0, 0)), mode="edge")
-    cs = np.cumsum(pad, axis=1)
-    sm = (cs[:, k:] - cs[:, :-k]) / k
-    sm = np.concatenate([a[:, :1], sm], axis=1)[:, :W]
-    return Image.fromarray(np.clip(sm, 0, 255).astype(np.uint8)).convert("RGBA")
 
 
 @lru_cache(maxsize=1)

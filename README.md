@@ -164,7 +164,7 @@ engine/icons.py      icons + event card
 engine/countries.py  country names, flags, outlines, true-size map drawing
 engine/tl_batch.py   Timeline videos from an Excel sheet (one row = one video)
 engine/globe.py      real-Earth globe intro (data/earth.jpg)
-engine/finish.py     motion polish (camera, transitions) + cinematic finish (glow, grain, vignette, light leaks)
+engine/finish.py     motion polish (camera drift, push-ins) + cinematic finish (glow, grain, vignette, light leaks)
 engine/strings.py    Arabic/English wording, year & number formatting
 engine/templates/    timeline.py, quiz.py, mcq.py (add yours here)
 fonts/               Cairo.ttf + licence
