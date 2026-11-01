@@ -6,7 +6,7 @@ Three ready templates:
 
 | Template | What it makes |
 |---|---|
-| **⏳ Timeline Collision** | 2–5 events on a flying timeline, year counters, comparison bars, a bass-hit reveal and an ending teaser. Works with calendar years (BC/AD), deep time ("150 million years ago") or a **number line in any unit** (km², metres, °C, $…). Pick a **country** per event for its flag and map, add a **true-size map scene** (countries drawn at their real relative size) and a **guess moment** (3 choices + timer). |
+| **⏳ Timeline Collision** | 2–5 events on a flying timeline, year counters, comparison bars, a bass-hit reveal and an ending teaser. Works with calendar years (BC/AD), deep time ("150 million years ago") or a **number line in any unit** (km², metres, °C, $…). Pick a **country** per event for its flag and map, add a **true-size map scene** (countries drawn at their real relative size) and a **guess moment** (3 choices + timer). **📊 Excel batch:** one row per video — render many country comparisons at once from `projects/countries_template.xlsx`. |
 | **✅ Multiple Choice** | Up to 10 questions with 2–4 options each, a countdown timer with ticking, then the correct answer turns green with a "ding" and an optional explanation. Optional narration clips, and many videos at once from an Excel sheet. |
 | **❓ Clue Quiz** | One mystery answer revealed after 1–8 clues, each with a countdown bar and ticking sound, then a big reveal with confetti and an optional photo. |
 
@@ -162,6 +162,7 @@ engine/core.py       drawing, text, themes, encoding
 engine/audio.py      sound effects, music beds, voice, mixing
 engine/icons.py      icons + event card
 engine/countries.py  country names, flags, outlines, true-size map drawing
+engine/tl_batch.py   Timeline videos from an Excel sheet (one row = one video)
 engine/strings.py    Arabic/English wording, year & number formatting
 engine/templates/    timeline.py, quiz.py, mcq.py (add yours here)
 fonts/               Cairo.ttf + licence

@@ -23,6 +23,7 @@ from engine.templates import TEMPLATES
 from engine.templates.mcq import narration_report, parse_questions
 from engine import batch
 from engine import countries
+from engine import tl_batch
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(ROOT, "outputs")
@@ -101,6 +102,9 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   while the badge counts up, for 2× to 400×), *Side by side* (on platforms, best for near-equal sizes).
   **Auto** picks: tile fill from 20× apart, side by side within 1.5×, overlay otherwise.
 - **⚔️ VS battle intro:** the two flags crash together with "VS" before the hook (first and last event).
+- **📊 Excel batch** (Timeline tab): one row = one video. Download the template (10 ready country comparisons), edit it,
+  upload it and press 🎬 Render all. Countries can be written in Arabic or English; empty hook / reveal cells are
+  written automatically; card colours follow each country's flag.
 - **🤔 Guess moment:** before the answer, 3 choices (× ratio) and a 3-second timer, so viewers comment their guess.
 - 2 to 5 events; they are sorted by value automatically. The shortest gap gets the glowing highlight.
 - Leave *Card subtitle* empty to show the year (or value with its unit) automatically.
@@ -631,6 +635,128 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
                  [pv["vid"], pv["info"], xl["files"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]])
 
 
+# ------------------------------------------------------------------ Excel batch (Timeline Collision)
+TL_BATCH_HELP = """**One row = one video.** Write 2-5 countries (Arabic or English names) and their areas per row,
+plus — optionally — the hook, reveal, intro (`hook` / `vs`), map style (`auto` / `overlay` / `tiles` / `side`),
+guess (`yes` / `no`) and the ending question. Empty hook / reveal cells are written automatically from the numbers.
+Every video uses the theme, music, handle and ending you set in the other tabs. Get the **template** (10 ready
+comparisons) on the right."""
+
+
+def _tl_template_path():
+    path = os.path.join(PROJ_DIR, "countries_template.xlsx")
+    if not os.path.isfile(path):
+        try:
+            tl_batch.write_template(path)
+        except Exception:  # openpyxl missing: no template button
+            return None
+    return path
+
+
+def tl_batch_tab():
+    with gr.Row(equal_height=True):
+        gr.Markdown(TL_BATCH_HELP)
+        tpl = _tl_template_path()
+        gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), size="sm", min_width=130, scale=0)
+    sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Videos sheet (.xlsx or .csv)",
+                    height=120)
+    with gr.Row(equal_height=True):
+        info = gr.Markdown("Upload a sheet to see how many videos it makes.")
+        go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, min_width=230, scale=0)
+    files = gr.File(label="Rendered videos (each is a separate file)", file_count="multiple", visible=False,
+                    height=150)
+    with gr.Row(equal_height=True):
+        part = gr.Dropdown([], label="Preview one video in the editor", scale=2)
+        load = gr.Button("📥 Load into editor", scale=1, min_width=120)
+    return dict(sheet=sheet, info=info, go=go, files=files, part=part, load=load)
+
+
+def wire_tl_batch(xl, pv, fields):
+    def read(sheet):
+        if not sheet:
+            raise ValueError("Upload a videos sheet first.")
+        return tl_batch.load_sheet(sheet)
+
+    def check(sheet):
+        off = gr.update(value="🎬 Render all videos", interactive=False)
+        if not sheet:
+            return "Upload a sheet to see how many videos it makes.", gr.update(choices=[], value=None), off
+        try:
+            specs, problems = read(sheet)
+        except Exception as e:
+            return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
+        choices = [(f"Video {k} — row {sp['row']}: {tl_batch.file_name(sp, k)[3:].replace('_', ' ')}", k)
+                   for k, sp in enumerate(specs, 1)]
+        n = len(specs)
+        go = gr.update(value=f"🎬 Render all {n} video{'s' if n != 1 else ''}" if n else "🎬 Render all videos",
+                       interactive=bool(n))
+        return tl_batch.summary(specs, problems), gr.update(choices=choices, value=1 if choices else None), go
+
+    def load_part(sheet, k, *vals):
+        try:
+            specs, _ = read(sheet)
+            k = int(k or 1)
+            if not 1 <= k <= len(specs):
+                raise ValueError("Pick a video to preview.")
+            project = tl_batch.to_project(values_to_project("timeline", vals), specs[k - 1])
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        gr.Info(f"Video {k} of {len(specs)} is in the editor. 🎬 Render video makes only this one — "
+                f"use 🎬 Render all in 📊 Excel batch for all {len(specs)}.", duration=8)
+        return project_to_values(project, "timeline")
+
+    def start(request: gr.Request):
+        if not _claim(request):
+            raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+        return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
+                gr.update(interactive=False), "⏳ Rendering all videos…")
+
+    def render_all(request: gr.Request, sheet, *vals, progress=gr.Progress()):
+        done = []
+        unlock = (False, gr.update(selected="vid"), gr.update(interactive=True), gr.update(interactive=True),
+                  gr.update(interactive=True))
+        try:
+            specs, problems = read(sheet)
+            if not specs:
+                raise ValueError("The sheet has no usable rows." + (f" First problem: {problems[0]}" if problems else ""))
+            base = values_to_project("timeline", vals)
+            lang = base.get("settings", {}).get("language") or "ar"
+            out_dir = os.path.join(OUT_DIR, f"batch_timeline_{_stamp()}")
+            os.makedirs(out_dir, exist_ok=True)
+            total = len(specs)
+            for k, sp in enumerate(specs, 1):
+                name = tl_batch.file_name(sp, k, lang)
+                project = tl_batch.to_project(base, sp)
+                with open(os.path.join(out_dir, name + ".json"), "w", encoding="utf-8") as f:
+                    json.dump(project, f, ensure_ascii=False, indent=2)
+                out = os.path.join(out_dir, name + ".mp4")
+                progress((k - 1) / total, desc=f"Video {k} of {total}: preparing…")
+
+                def cb(x, k=k):
+                    try:
+                        progress((k - 1 + x) / total, desc=f"Video {k} of {total}: rendering frames…")
+                    except Exception:
+                        pass
+                render_video(project, out, cb)
+                done.append(out)
+            msg = (f"✅ {total} video{'s' if total != 1 else ''} saved in `{os.path.relpath(out_dir, ROOT)}`"
+                   + (" — the player shows the last one" if total > 1 else ""))
+            return (done[-1], msg, gr.update(value=done, visible=True), *unlock)
+        except Exception as e:
+            gr.Warning(_msg(e))
+            got = f" ({len(done)} finished before the error)" if done else ""
+            return (done[-1] if done else gr.update(), f"⚠️ {_msg(e)}{got}",
+                    gr.update(value=done or None, visible=bool(done)), *unlock)
+        finally:
+            _release(request)
+
+    xl["sheet"].change(check, xl["sheet"], [xl["info"], xl["part"], xl["go"]], show_progress="hidden")
+    xl["load"].click(load_part, [xl["sheet"], xl["part"]] + fields, fields)
+    xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"]], queue=False) \
+        .success(render_all, [xl["sheet"]] + fields,
+                 [pv["vid"], pv["info"], xl["files"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]])
+
+
 def build_ui():
     kw = {"css": CSS} if "css" in inspect.signature(gr.Blocks.__init__).parameters else {}
     with gr.Blocks(title="Video Studio", **kw) as demo:
@@ -694,6 +820,9 @@ def build_ui():
                                             ol = gr.File(label="Own map outline (optional GeoJSON, replaces the border)",
                                                          file_types=[".geojson", ".json"], type="filepath", height=90)
                                     ev_fields += [en, nm, yr, lb, cl, ic, im, co, ol]
+                        with gr.Tab("📊 Excel batch"):
+                            with gr.Column(elem_classes="pane"):
+                                tl_xl = tl_batch_tab()
                         tl_st = style_tab()
                         tl_end = ending_tab()
                     tl_fields = (shared_fields(tl_st, tl_end)
@@ -702,6 +831,7 @@ def build_ui():
                                  + ev_fields)
                 tl_pv = preview_panel("timeline")
             wire(tl_proj, tl_pv, tl_fields)
+            wire_tl_batch(tl_xl, tl_pv, tl_fields)
 
         with gr.Tab("❓ Clue Quiz"):
             with gr.Row(equal_height=False):
