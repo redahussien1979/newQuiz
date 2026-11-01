@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFilter
 from .. import countries as CT
 from .. import finish as FX
 from .. import globe as GL
-from ..core import (COLORS, GREY, W, WHITE, Stars, clamp, composite, draw_ending, draw_scene, ease_io, ease_out_back, fade,
+from ..core import (COLORS, GREY, H, W, WHITE, Stars, clamp, composite, draw_ending, draw_scene, ease_io, ease_out_back, fade,
                     get_theme, global_fade, make_bg, nice_step, parse_lines, paste, prog, shade, stack_lines,
                     text_img, to_rgb)
 from ..icons import make_card
@@ -20,6 +20,8 @@ from ..strings import (S, amount_str, fmt_num, fmt_val, gap_str, gap_years, rati
 NAME = "Timeline Collision"
 DEFAULT_COLORS = ["sand", "gold", "blue", "green", "pink"]
 RIBBON_Y = 1150
+GLOBE_LEN = 8.2    # length of the globe intro (beats: zoom, borders, labels, hold, dim, fly into the cards)
+GLOBE_HAND = 3.35  # timeline time shown when the globe hands over (the cards are in place)
 
 EXAMPLE = {
     "template": "timeline",
@@ -104,6 +106,19 @@ def _panel(col, card_bg, w=880, h=320):
     ImageDraw.Draw(im).rounded_rectangle([20 * S, 20 * S, (w + 20) * S, (h + 20) * S], 36 * S,
                                          fill=tuple(card_bg) + (190,), outline=col + (150,), width=3 * S)
     return im.resize((w + 40, h + 40), Image.LANCZOS)
+
+
+class _Shifted:
+    """Mixer wrapper that plays every sound `off` seconds later (after the globe intro)."""
+
+    def __init__(self, mx, off):
+        self._mx, self._off = mx, off
+
+    def add(self, t0, sig, gain=1.0, pan=0.0):
+        return self._mx.add(t0 + self._off, sig, gain, pan)
+
+    def __getattr__(self, name):
+        return getattr(self._mx, name)
 
 
 class TimelineVideo:
@@ -295,6 +310,11 @@ class TimelineVideo:
         self.ending = (e.get("intro", ""), parse_lines(e.get("question", ""), ["white", "gold"]),
                        e.get("cta", ""), s.get("handle", ""))
         self.accent = evs[1]["col"] if N > 2 else evs[-1]["col"]
+        # the globe intro has its own length: everything after it is shifted by `off`
+        self.off = GLOBE_LEN - GLOBE_HAND if self.intro == "globe" else 0.0
+        if self.off:
+            self.base_duration = self.dur = self.dur + self.off
+            self.silences = [(a + self.off, b + self.off) for a, b in self.silences]
 
     # ------------------------------------------------------------ number formatting (years or any unit)
     def fmt_pos(self, v, short=False):
@@ -358,7 +378,9 @@ class TimelineVideo:
 
     # ------------------------------------------------------------ render
     def render(self, t):
-        return self._post(self._compose(t), t)
+        if self.off and t < GLOBE_LEN:
+            return self._post(self._globe_intro(t), t, None)
+        return self._post(self._compose(t - self.off), t, t - self.off)
 
     def _compose(self, t):
         cam, z = self.camera(t)
@@ -403,19 +425,18 @@ class TimelineVideo:
             self._maps(frame, t)
         if self.intro == "vs" and t < 2.85:
             self._vs(frame, t)
-        if self.intro == "globe" and t < 2.85:
-            self._globe(frame, t)
         for sc_ in self.scenes:
             draw_scene(frame, t, sc_)
         draw_ending(frame, t, self.E, *self.ending, self.accent)
         return frame
 
-    def _post(self, frame, t):
+    def _post(self, frame, t, te):
+        """t = video time, te = timeline time (None during the globe intro)."""
         if self.polish:  # slow camera drift + push-ins (no blur of any kind)
-            frame = FX.camera(frame, 1.035 + self._bump(t, self.pushes, 0.035),
-                              9 * math.sin(t * 0.55), 7 * math.sin(t * 0.43 + 1.1))
+            push = self._bump(te, self.pushes, 0.035) if te is not None else 0.0
+            frame = FX.camera(frame, 1.035 + push, 9 * math.sin(t * 0.55), 7 * math.sin(t * 0.43 + 1.1))
         if self.finish:
-            frame = FX.grade(frame, int(round(t * self.fps)), self._leak(t))
+            frame = FX.grade(frame, int(round(t * self.fps)), self._leak(te) if te is not None else 0.0)
         frame = frame.convert("RGBA")
         global_fade(frame, t, self.dur)
         return frame.convert("RGB")
@@ -798,44 +819,97 @@ class TimelineVideo:
     def _setup_globe(self, mev):
         items = [(x["code"], x["outline"]) for x in mev]
         self.gl_plan = GL.plan(items)
+        self.gl_mev = mev
         self.gl_items = [(x["code"], x["outline"], tuple(x["col"])) for x in mev]
-        self.gl_labels = list(zip([x["name"] for x in mev], GL.label_points(items)))
+        self.gl_points = GL.label_points(items)
+        self.gl_tags = [GL.tag(x["name"], x["code"], tuple(x["col"]), self.rtl) for x in mev]
+        self.gl_icons = [CT.map_icon(x["code"], x["outline"], tuple(x["col"]), 420) for x in mev]
+        # where each country's card (its flag circle) is when the globe hands over
+        cam, z = self.camera(GLOBE_HAND)
+        sc = self.card_scale(z)
+        anchors = [540 + (v - cam) * z for v in self.ys]
+        cx = _spread(anchors, 500 * sc + 16)
+        if z <= self.z_full * 1.3:
+            lo, hi = 250 * sc + 12, W - 250 * sc - 12
+            shift = (lo - min(cx)) if min(cx) < lo else ((hi - max(cx)) if max(cx) > hi else 0)
+            cx = [c + shift for c in cx]
+        self.gl_targets = []
+        for x in mev:
+            i = self.evs.index(x)
+            top = RIBBON_Y - 40 * sc - self.evs[i]["img"].height * sc
+            self.gl_targets.append((cx[i], top + 170 * sc, sc))
+        has_hook = any(line[0] for line in self.scenes[0]["lines"])
+        self.gl_hook = dict(self.scenes[0], t_in=0.15, t_out=5.7) if has_hook else None
 
-    def _globe(self, frame, t):
-        a = 1 - prog(t, 2.55, 2.8)
-        if a <= 0 or not self.gl_plan:
-            return
+    @staticmethod
+    def _smooth(x):
+        x = clamp(x)
+        return x * x * x * (x * (x * 6 - 15) + 10)
+
+    def _globe_intro(self, t):
+        """0-3.6 s zoom and settle, 2.6-3.8 borders draw on, 3.3-4.6 callout labels, hold, 5.8-6.5 the Earth
+        dims, 6.3-7.8 the countries fly into their cards, then a short dissolve into the timeline."""
+        sm = self._smooth
         lon_c, lat_c, rt = self.gl_plan
-        k1 = ease_io(prog(t, 0.0, 1.6))
-        k2 = ease_io(prog(t, 0.5, 2.2))
-        lon0, lat0 = lon_c - 70 * (1 - k1), lat_c * (0.3 + 0.7 * k1)
-        R = math.exp(math.log(430) + (math.log(max(rt, 430)) - math.log(430)) * k2)
+        k = sm(t / 3.6)
+        lon0, lat0 = lon_c - 55 * (1 - k), lat_c * (0.35 + 0.65 * k)
+        R = math.exp(math.log(470) + (math.log(max(rt, 470)) - math.log(470)) * k) * (1 + 0.03 * sm((t - 3.6) / 2.6))
         g = GL.render(lon0, lat0, R)
-        a1 = ease_io(prog(t, 1.3, 1.8))
-        if a1 > 0:
-            g.alpha_composite(GL.outlines(self.gl_items, lon0, lat0, R, a1))
-        a2 = prog(t, 1.8, 2.15)
-        if a2 > 0:
-            placed = []  # (x, y, half width, half height) of labels already drawn: move a new one if they overlap
-            for name, pt in self.gl_labels:
-                if pt is None:
+        dim = sm(prog(t, 5.8, 6.5))
+        if dim > 0:  # the Earth dims away, the countries stay lit
+            g.alpha_composite(Image.new("RGBA", (W, H), (6, 9, 20, int(235 * dim))))
+        fly = sm(prog(t, 6.3, 7.8))
+        draw = sm(prog(t, 2.6, 3.8))
+        if draw > 0 and fly < 1:
+            g.alpha_composite(fade(GL.outlines(self.gl_items, lon0, lat0, R, draw, sm(prog(t, 3.4, 4.0))), 1 - fly))
+        pts = []
+        for pt in self.gl_points:
+            if pt is None:
+                pts.append(None)
+                continue
+            x, y, vis = GL.to_screen(np.array([pt[0]]), np.array([pt[1]]), lon0, lat0, R)
+            pts.append((float(x[0]), float(y[0])) if vis[0] else None)
+        out = 1 - prog(t, 6.0, 6.4)
+        shown = [i for i, p in enumerate(pts) if p is not None]
+        if t >= 3.3 and out > 0 and shown:  # callouts: dot -> line -> name tag, one country after another
+            xs, row_y, ks, order = GL.callout_layout([pts[i] for i in shown], [self.gl_tags[i] for i in shown])
+            d = ImageDraw.Draw(g)
+            for slot, j in enumerate(order):
+                i = shown[j]
+                ax, ay = pts[i]
+                col = tuple(self.gl_mev[i]["col"])
+                k0 = 3.3 + 0.3 * slot
+                pd, pl, pt_ = prog(t, k0, k0 + 0.3), sm(prog(t, k0 + 0.15, k0 + 0.75)), sm(prog(t, k0 + 0.55, k0 + 1.05))
+                if pd > 0:
+                    r = 9 * ease_out_back(pd)
+                    d.ellipse([ax - r - 5, ay - r - 5, ax + r + 5, ay + r + 5], fill=col + (int(110 * out),))
+                    d.ellipse([ax - r, ay - r, ax + r, ay + r], fill=(255, 255, 255, int(255 * out)), outline=col + (255,),
+                              width=3)
+                tx, ty = xs[j], row_y + (-42 if row_y > ay else 42) * ks
+                if pl > 0:
+                    d.line([(ax, ay), (ax + (tx - ax) * pl, ay + (ty - ay) * pl)], fill=(255, 255, 255, int(220 * out)),
+                           width=3)
+                if pt_ > 0:
+                    paste(g, self.gl_tags[i], tx, row_y + (1 - pt_) * 30, ks * (0.9 + 0.1 * pt_), pt_ * out)
+        if fly > 0:  # the countries lift off the globe and fly into their cards
+            fade_out = 1 - sm(prog(t, 7.75, GLOBE_LEN))
+            for i, p in enumerate(pts):
+                if p is None:
                     continue
-                x, y, vis = GL.to_screen(np.array([pt[0]]), np.array([pt[1]]), lon0, lat0, R)
-                if not vis[0]:
-                    continue
-                lab = GL.label(name)
-                x, y, hw, hh = float(x[0]), float(y[0]), lab.width / 2, lab.height / 2
-                for _ in range(6):
-                    hit = next((p for p in placed if abs(p[0] - x) < p[2] + hw and abs(p[1] - y) < p[3] + hh), None)
-                    if hit is None:
-                        break
-                    y = hit[1] + (hit[3] + hh + 6) * (1 if y >= hit[1] else -1)
-                placed.append((x, y, hw, hh))
-                paste(g, lab, x, y, 0.8 + 0.2 * ease_out_back(a2), a2)
-        ph = prog(t, 0.05, 0.35) * (1 - prog(t, 2.45, 2.7))  # dark band behind the hook text
-        if ph > 0:
-            g.alpha_composite(Image.new("RGBA", (W, 400), (5, 8, 20, int(170 * ph))), (0, 190))
-        frame.alpha_composite(fade(g, a))
+                tx, ty, sc = self.gl_targets[i]
+                px = p[0] + (tx - p[0]) * fly
+                py = p[1] + (ty - p[1]) * fly - math.sin(fly * math.pi) * 120
+                size = 1.0 + (190 * sc / 420 / 0.84 - 1.0) * fly
+                paste(g, self.gl_icons[i], px, py, size, fade_out)
+        if self.gl_hook:  # the hook text over a soft shade
+            ph = prog(t, 0.1, 0.5) * (1 - prog(t, 5.7, 6.1))
+            if ph > 0:
+                g.alpha_composite(fade(GL.hook_shade(), ph))
+                draw_scene(g, t, self.gl_hook)
+        kx = sm(prog(t, GLOBE_LEN - 0.4, GLOBE_LEN))
+        if kx > 0:  # dissolve into the timeline, where the cards already are
+            g = Image.blend(g, self._compose(GLOBE_HAND - 0.4 * (1 - kx)).convert("RGBA"), kx)
+        return g
 
     # ------------------------------------------------------------ VS intro
     def _setup_vs(self, pair):
@@ -935,11 +1009,12 @@ class TimelineVideo:
     # ------------------------------------------------------------ sound
     def sound(self, mx):
         if self.intro == "globe":
-            s, pn = mx.whoosh(1.6); mx.add(0.2, s, 0.45, pn)
-            mx.add(1.15, mx.riser(1.4), 0.3)
-            mx.add(1.8, mx.pop(), 0.35)
-            mx.add(1.95, mx.pop(), 0.35)
-            mx.add(2.6, mx.hit(1.6), 0.7)
+            s, pn = mx.whoosh(3.0); mx.add(0.1, s, 0.4, pn)
+            mx.add(2.2, mx.riser(1.4), 0.22)
+            for k in range(len(self.gl_mev)):
+                mx.add(3.3 + 0.3 * k, mx.pop(), 0.35)
+            s, pn = mx.whoosh(1.5); mx.add(6.3, s, 0.5, pn)
+            mx = _Shifted(mx, self.off)  # the rest of the video plays `off` seconds later
         elif self.intro == "vs":
             s, pn = mx.whoosh(0.5); mx.add(0.0, s, 0.5, pn)
             s, pn = mx.whoosh(0.5); mx.add(0.0, s, 0.5, pn[::-1])

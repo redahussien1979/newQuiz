@@ -101,7 +101,9 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 - **Map scene style:** *Overlay* (the smaller slides on top), *Tile fill* (copies of the smallest fill the largest
   while the badge counts up, for 2× to 400×), *Side by side* (on platforms, best for near-equal sizes).
   **Auto** picks: tile fill from 20× apart, side by side within 1.5×, overlay otherwise.
-- **🌍 Globe intro:** a real-Earth globe (NASA Blue Marble) rotates and zooms in to the countries, which light up.
+- **🌍 Globe intro** (about 8 s): a real-Earth globe (NASA Blue Marble) drifts in and settles on the countries, their
+  borders draw on, callout tags name them one by one, then the Earth dims and each country flies into its card.
+  The video gets about 5 s longer.
 - **✨ Motion polish:** slow camera drift and push-ins on key moments. **🎬 Cinematic finish:** soft glow, vignette, film grain, light leaks on the hits.
   Both make rendering about 2× slower; switch them off for a quick test render.
 - **⚔️ VS battle intro:** the two flags crash together with "VS" before the hook (first and last event).
