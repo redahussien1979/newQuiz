@@ -1,0 +1,56 @@
+{
+  "template": "timeline",
+  "settings": {
+    "theme": "Night Sky",
+    "language": "ar",
+    "fps": 30,
+    "music": "Tension",
+    "music_gain": 1.0,
+    "music_file": "",
+    "voice_file": "",
+    "voice_offset": 0.5,
+    "voice_gain": 1.0,
+    "handle": "@Ma3loomaFast",
+    "font_file": ""
+  },
+  "ending": {
+    "intro": "سؤال الحلقة القادمة:",
+    "question": "أيهما أكبر:\n[gold]غرينلاند أم السعودية؟",
+    "cta": "اكتب دولتك وسنقارنها!"
+  },
+  "timeline": {
+    "mode": "scale",
+    "unit": "كم²",
+    "events": [
+      {
+        "country": "LBN",
+        "year": 10452,
+        "color": "red",
+        "icon": "flag"
+      },
+      {
+        "country": "QAT",
+        "year": 11586,
+        "color": "pink",
+        "icon": "flag"
+      },
+      {
+        "country": "SAU",
+        "year": 2149690,
+        "color": "green",
+        "icon": "flag"
+      }
+    ],
+    "hook": "لبنان يدخل في\n[green]السعودية\n[red]أكثر من 200 مرة!",
+    "hide_first_in_hook": false,
+    "doubt": "مستحيل؟",
+    "doubt_sub": "تابع المساحة…",
+    "compare_title": "بالحجم الحقيقي…",
+    "reveal": "[red]لبنان يدخل في السعودية\n206 مرات!",
+    "maps": true,
+    "guess": true,
+    "guess_q": "",
+    "intro": "vs",
+    "map_style": "auto"
+  }
+}
