@@ -471,7 +471,7 @@ def write_template(path):
         (["Intro"], ["hook", "vs", "globe"], True, "hook = text intro, vs = flags battle, globe = real Earth zoom-in"),
         (["Map style"], ["auto", "overlay", "tiles", "side"], True, "auto picks the best style from the numbers"),
         (["Guess"], ["yes", "no"], True, "Show the guess moment (3 choices + timer)?"),
-        (["Polish", "Finish"], ["yes", "no"], True, "Polish = camera, motion blur, transitions; Finish = glow, grain"),
+        (["Polish", "Finish"], ["yes", "no"], True, "Polish = camera drift and push-ins; Finish = glow, grain"),
         (["Unit"], UNITS, False, "Pick a unit or type your own"),
         (["Mode"], ["number line", "calendar", "years ago"], True, "Empty = number line"),
         (["Theme"], list(THEME_NAMES), True, "Empty = the theme set in the app"),

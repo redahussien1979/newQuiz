@@ -102,8 +102,7 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   while the badge counts up, for 2× to 400×), *Side by side* (on platforms, best for near-equal sizes).
   **Auto** picks: tile fill from 20× apart, side by side within 1.5×, overlay otherwise.
 - **🌍 Globe intro:** a real-Earth globe (NASA Blue Marble) rotates and zooms in to the countries, which light up.
-- **✨ Motion polish:** slow camera drift, push-ins on key moments, zoom-through and whip-pan transitions, motion blur
-  on fast moves (text stays sharp). **🎬 Cinematic finish:** soft glow, vignette, film grain, light leaks on the hits.
+- **✨ Motion polish:** slow camera drift and push-ins on key moments. **🎬 Cinematic finish:** soft glow, vignette, film grain, light leaks on the hits.
   Both make rendering about 2× slower; switch them off for a quick test render.
 - **⚔️ VS battle intro:** the two flags crash together with "VS" before the hook (first and last event).
 - **📊 Excel batch** (Timeline tab): one row = one video. Download the template (10 ready country comparisons), edit it,
@@ -802,8 +801,7 @@ def build_ui():
                                                           ("Tile fill", "tiles"), ("Side by side", "side")],
                                                          value="auto", label="Map scene style")
                                 with gr.Row():
-                                    polish = gr.Checkbox(value=True, label="✨ Motion polish (camera, motion blur, "
-                                                                           "transitions)")
+                                    polish = gr.Checkbox(value=True, label="✨ Motion polish (camera drift, push-ins)")
                                     finish = gr.Checkbox(value=True, label="🎬 Cinematic finish (glow, grain, "
                                                                            "vignette, light leaks)")
                         with gr.Tab("🗓️ Events"):
