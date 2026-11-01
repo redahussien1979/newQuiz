@@ -11,6 +11,9 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
 - `engine/countries.py` — country names/flags/outlines (`data/`, built by `tools/build_countries.py`), true-size maps
 - Timeline modes: `calendar`, `ago`, `scale` (number line with `unit`); options `maps` (true-size map scene) and `guess`
 - `engine/batch.py` — MCQ from an Excel/CSV sheet: parse rows + audio, split into N-question videos
+- `engine/tl_batch.py` — Timeline from an Excel/CSV sheet: one row = one video (countries + values + texts);
+  template `projects/countries_template.xlsx`
+- Timeline options `intro` (`hook` / `vs`) and `map_style` (`auto` / `overlay` / `tiles` / `side`)
 - `engine/render.py` — build / render_still / render_clip / render_video
 - `projects/example_*.json` — example projects (same format the app saves)
 
