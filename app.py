@@ -250,6 +250,56 @@ def _release(request):
         _jobs.pop(_job_key(request), None)
 
 
+def _stream_batch(request, plan, progress):
+    """Render a batch one video at a time and yield after each one, so every finished video shows up in the
+    "Rendered videos" list (and the player) right away instead of only when the whole batch is done.
+
+    plan() -> (out_dir, total, jobs) where jobs yields (file name without extension, project).
+    Yields (player, message, files, busy, tabs, clip, render, go) for the outputs of the batch button."""
+    done = []
+    keep = (gr.update(),) * 5  # still working: leave busy / tabs / buttons as start() set them
+    unlock = (False, gr.update(selected="vid"), gr.update(interactive=True), gr.update(interactive=True),
+              gr.update(interactive=True))
+    try:
+        out_dir, total, jobs = plan()
+        where = os.path.relpath(out_dir, ROOT)
+        for k, (name, project) in enumerate(jobs, 1):
+            with open(os.path.join(out_dir, name + ".json"), "w", encoding="utf-8") as f:
+                json.dump(project, f, ensure_ascii=False, indent=2)
+            out = os.path.join(out_dir, name + ".mp4")
+            progress((k - 1) / total, desc=f"Video {k} of {total}: preparing…")
+
+            def cb(x, k=k):
+                try:
+                    progress((k - 1 + x) / total, desc=f"Video {k} of {total}: rendering frames…")
+                except Exception:
+                    pass
+            render_video(project, out, cb)
+            done.append(out)
+            if k < total:
+                yield (out, f"✅ {k} of {total} finished — download them below while video {k + 1} renders… "
+                            f"(saved in `{where}`)", gr.update(value=list(done), visible=True), *keep)
+        msg = (f"✅ {total} video{'s' if total != 1 else ''} saved in `{where}`"
+               + (" — the player shows the last one" if total > 1 else ""))
+        yield (done[-1], msg, gr.update(value=list(done), visible=True), *unlock)
+    except Exception as e:
+        gr.Warning(_msg(e))
+        got = f" ({len(done)} finished before the error)" if done else ""
+        yield (done[-1] if done else gr.update(), f"⚠️ {_msg(e)}{got}",
+               gr.update(value=list(done) or None, visible=bool(done)), *unlock)
+    finally:
+        _release(request)
+
+
+def _progress_on(dep, comp):
+    """Show the batch progress bar only on `comp` (not over the list of finished videos) when Gradio allows it."""
+    try:
+        ok = "show_progress_on" in inspect.signature(dep.success).parameters
+    except (TypeError, ValueError):
+        ok = False
+    return {"show_progress_on": [comp]} if ok else {}
+
+
 # ------------------------------------------------------------------ actions
 def make_actions(tpl):
     def preview(t, safe, *vals):
@@ -536,8 +586,8 @@ def batch_tab():
     with gr.Row(equal_height=True):
         info = gr.Markdown("Upload a sheet to see how many videos it makes.")
         go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, min_width=230, scale=0)
-    files = gr.File(label="Rendered videos (each is a separate file)", file_count="multiple", visible=False,
-                    height=150)
+    files = gr.File(label="Rendered videos — each one appears here as soon as it finishes", file_count="multiple",
+                    visible=False, height=320)
     with gr.Row(equal_height=True):
         part = gr.Dropdown([], label="Preview one video in the editor", scale=2)
         load = gr.Button("📥 Load into editor", scale=1, min_width=120)
@@ -590,13 +640,11 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
         if not _claim(request):
             raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
         return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
-                gr.update(interactive=False), "⏳ Rendering all videos…")
+                gr.update(interactive=False), "⏳ Rendering all videos… each one appears below as soon as it is done.",
+                gr.update(value=None, visible=False))
 
     def render_all(request: gr.Request, sheet, clips, folder, per, title_tpl, *vals, progress=gr.Progress()):
-        done = []
-        unlock = (False, gr.update(selected="vid"), gr.update(interactive=True), gr.update(interactive=True),
-                  gr.update(interactive=True))
-        try:
+        def plan():
             items, problems = _read_batch(sheet, clips, folder)
             parts = batch.split(items, per)
             if not parts:
@@ -605,39 +653,24 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
             out_dir = os.path.join(OUT_DIR, f"batch_{_stamp()}")
             os.makedirs(out_dir, exist_ok=True)
             total = len(parts)
-            for k, chunk in enumerate(parts, 1):
-                name = f"mcq_video_{k:02d}_of_{total:02d}"
-                project = batch.part_project(base, chunk, k, total, os.path.join(out_dir, f"{name}_audio"),
-                                             title_tpl if str(title_tpl or "").strip() else None)
-                with open(os.path.join(out_dir, name + ".json"), "w", encoding="utf-8") as f:
-                    json.dump(project, f, ensure_ascii=False, indent=2)
-                out = os.path.join(out_dir, name + ".mp4")
-                progress((k - 1) / total, desc=f"Video {k} of {total}: preparing sound…")
+            tpl = title_tpl if str(title_tpl or "").strip() else None
 
-                def cb(x, k=k):
-                    try:
-                        progress((k - 1 + x) / total, desc=f"Video {k} of {total}: rendering frames…")
-                    except Exception:
-                        pass
-                render_video(project, out, cb)
-                done.append(out)
-            msg = (f"✅ {total} video{'s' if total != 1 else ''} saved in `{os.path.relpath(out_dir, ROOT)}`"
-                   + (" — the player shows the last one" if total > 1 else ""))
-            return (done[-1], msg, gr.update(value=done, visible=True), *unlock)
-        except Exception as e:
-            gr.Warning(_msg(e))
-            got = f" ({len(done)} finished before the error)" if done else ""
-            return (done[-1] if done else gr.update(), f"⚠️ {_msg(e)}{got}",
-                    gr.update(value=done or None, visible=bool(done)), *unlock)
-        finally:
-            _release(request)
+            def jobs():
+                for k, chunk in enumerate(parts, 1):
+                    name = f"mcq_video_{k:02d}_of_{total:02d}"
+                    yield name, batch.part_project(base, chunk, k, total, os.path.join(out_dir, f"{name}_audio"), tpl)
+            return out_dir, total, jobs()
+
+        yield from _stream_batch(request, plan, progress)
 
     gr.on(triggers=[c.change for c in inputs], fn=check, inputs=inputs, outputs=[xl["info"], xl["part"], xl["go"]],
           trigger_mode="always_last", show_progress="hidden")
     xl["load"].click(load_part, inputs + [xl["part"], xl["title"], m_title], [m_qs, m_narr, m_title])
-    xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"]], queue=False) \
-        .success(render_all, inputs + [xl["title"]] + fields,
-                 [pv["vid"], pv["info"], xl["files"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]])
+    dep = xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"], xl["files"]],
+                         queue=False)
+    dep.success(render_all, inputs + [xl["title"]] + fields,
+                [pv["vid"], pv["info"], xl["files"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]],
+                **_progress_on(dep, pv["vid"]))
 
 
 # ------------------------------------------------------------------ Excel batch (Timeline Collision)
@@ -668,8 +701,8 @@ def tl_batch_tab():
     with gr.Row(equal_height=True):
         info = gr.Markdown("Upload a sheet to see how many videos it makes.")
         go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, min_width=230, scale=0)
-    files = gr.File(label="Rendered videos (each is a separate file)", file_count="multiple", visible=False,
-                    height=150)
+    files = gr.File(label="Rendered videos — each one appears here as soon as it finishes", file_count="multiple",
+                    visible=False, height=320)
     with gr.Row(equal_height=True):
         part = gr.Dropdown([], label="Preview one video in the editor", scale=2)
         load = gr.Button("📥 Load into editor", scale=1, min_width=120)
@@ -714,13 +747,11 @@ def wire_tl_batch(xl, pv, fields):
         if not _claim(request):
             raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
         return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
-                gr.update(interactive=False), "⏳ Rendering all videos…")
+                gr.update(interactive=False), "⏳ Rendering all videos… each one appears below as soon as it is done.",
+                gr.update(value=None, visible=False))
 
     def render_all(request: gr.Request, sheet, *vals, progress=gr.Progress()):
-        done = []
-        unlock = (False, gr.update(selected="vid"), gr.update(interactive=True), gr.update(interactive=True),
-                  gr.update(interactive=True))
-        try:
+        def plan():
             specs, problems = read(sheet)
             if not specs:
                 raise ValueError("The sheet has no usable rows." + (f" First problem: {problems[0]}" if problems else ""))
@@ -728,38 +759,18 @@ def wire_tl_batch(xl, pv, fields):
             lang = base.get("settings", {}).get("language") or "ar"
             out_dir = os.path.join(OUT_DIR, f"batch_timeline_{_stamp()}")
             os.makedirs(out_dir, exist_ok=True)
-            total = len(specs)
-            for k, sp in enumerate(specs, 1):
-                name = tl_batch.file_name(sp, k, lang)
-                project = tl_batch.to_project(base, sp)
-                with open(os.path.join(out_dir, name + ".json"), "w", encoding="utf-8") as f:
-                    json.dump(project, f, ensure_ascii=False, indent=2)
-                out = os.path.join(out_dir, name + ".mp4")
-                progress((k - 1) / total, desc=f"Video {k} of {total}: preparing…")
+            jobs = ((tl_batch.file_name(sp, k, lang), tl_batch.to_project(base, sp)) for k, sp in enumerate(specs, 1))
+            return out_dir, len(specs), jobs
 
-                def cb(x, k=k):
-                    try:
-                        progress((k - 1 + x) / total, desc=f"Video {k} of {total}: rendering frames…")
-                    except Exception:
-                        pass
-                render_video(project, out, cb)
-                done.append(out)
-            msg = (f"✅ {total} video{'s' if total != 1 else ''} saved in `{os.path.relpath(out_dir, ROOT)}`"
-                   + (" — the player shows the last one" if total > 1 else ""))
-            return (done[-1], msg, gr.update(value=done, visible=True), *unlock)
-        except Exception as e:
-            gr.Warning(_msg(e))
-            got = f" ({len(done)} finished before the error)" if done else ""
-            return (done[-1] if done else gr.update(), f"⚠️ {_msg(e)}{got}",
-                    gr.update(value=done or None, visible=bool(done)), *unlock)
-        finally:
-            _release(request)
+        yield from _stream_batch(request, plan, progress)
 
     xl["sheet"].change(check, xl["sheet"], [xl["info"], xl["part"], xl["go"]], show_progress="hidden")
     xl["load"].click(load_part, [xl["sheet"], xl["part"]] + fields, fields)
-    xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"]], queue=False) \
-        .success(render_all, [xl["sheet"]] + fields,
-                 [pv["vid"], pv["info"], xl["files"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]])
+    dep = xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"], xl["files"]],
+                         queue=False)
+    dep.success(render_all, [xl["sheet"]] + fields,
+                [pv["vid"], pv["info"], xl["files"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]],
+                **_progress_on(dep, pv["vid"]))
 
 
 def build_ui():
