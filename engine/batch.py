@@ -252,6 +252,34 @@ def fill_title(text, n, total):
     return str(text or "").replace("{n}", str(n)).replace("{total}", str(total))
 
 
+NAME_MAX = 80  # characters; keeps full paths well under the Windows limit
+_BAD_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f_]+')  # not allowed in Windows file names (+ underscores)
+_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+
+
+def video_name(items, n, taken=None):
+    """File name (no extension) for one video: the text of its first question, as plain text.
+
+    Colour tags like '[gold]' and characters Windows does not allow (and underscores) are removed,
+    `{count}` becomes the number of questions, the name is cut at a word to NAME_MAX characters, and
+    a repeated name gets ' (2)', ' (3)' … (`taken` is a set of names already used, updated in place)."""
+    q = str(items[0]["q"] if items else "").replace("{count}", str(len(items)))
+    lines = [re.sub(r"^\s*\[[^\]]+\]\s*", "", line) for line in q.splitlines()]
+    name = " ".join(_BAD_NAME_CHARS.sub(" ", " ".join(lines)).split())
+    if len(name) > NAME_MAX:
+        cut = name[:NAME_MAX + 1].rsplit(" ", 1)[0]
+        name = cut if len(cut) >= NAME_MAX // 2 else name[:NAME_MAX]
+    name = name.rstrip(" .")
+    if not name or name.split(".")[0].strip().lower() in _RESERVED:
+        name = f"Video {n}" + (f" {name}" if name else "")
+    if taken is not None:
+        base, k = name, 2
+        while name.lower() in taken:
+            name, k = f"{base} ({k})", k + 1
+        taken.add(name.lower())
+    return name
+
+
 def part_project(base, items, n, total, audio_dir, title=None, subtitle=None):
     """A normal MCQ project for part n of total, built from the editor's settings."""
     p = copy.deepcopy(base)
