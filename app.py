@@ -21,7 +21,7 @@ from engine.mcq_styles import STYLE_NAMES
 from engine.timers import TIMER_FX, TIMER_NAMES
 from engine.render import render_clip, render_still, render_video
 from engine.templates import TEMPLATES
-from engine.templates.mcq import narration_report, parse_questions
+from engine.templates.mcq import TITLE_STYLES, narration_report, parse_questions
 from engine import batch
 from engine import countries
 from engine import tl_batch
@@ -45,13 +45,13 @@ TL_KEYS = ["mode", "hook", "hide_first_in_hook", "doubt", "doubt_sub", "compare_
 EV_KEYS = ["enabled", "name", "year", "label", "color", "icon", "image", "country", "outline"]
 QZ_KEYS = ["title", "subtitle", "clues", "clue_seconds", "answer_intro", "answer", "answer_sub", "answer_image", "accent"]
 MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", "accent", "style", "timer",
-           "colors", "narration", "narration_gain", "timer_fx"]
+           "colors", "narration", "narration_gain", "timer_fx", "title_style"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline"}
 MEDIA_LISTS = {"narration"}  # fields holding several files
 DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": "", "maps": False, "guess": False,
             "guess_q": "", "intro": "hook", "map_style": "auto", "polish": False, "finish": False,
-            "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0}  # for projects saved before these options existed
+            "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0, "title_style": "Fancy"}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -935,6 +935,10 @@ def build_ui():
                                 with gr.Row():
                                     m_think = gr.Slider(2, 10, value=5, step=0.5, label="Seconds to think (countdown)")
                                     m_rev = gr.Slider(1.5, 5, value=2.8, step=0.1, label="Seconds to show the answer")
+                                m_tstyle = gr.Radio(TITLE_STYLES, value="Fancy", label="Opening title",
+                                                    info="Fancy = animated badge, 3D title slam, shockwave, sparks and "
+                                                         "a light sweep (best with the 'Swoosh + impact' opening "
+                                                         "sound). Simple = the classic pop-in.")
                                 m_fx = gr.CheckboxGroup(TIMER_FX, value=["pulse", "glow", "ripple", "shake"],
                                                         label="Timer effects while ticking",
                                                         info="Pick any mix — they work with every timer type.")
@@ -956,7 +960,8 @@ def build_ui():
                         mq_st = style_tab()
                         mq_end = ending_tab(COUNT_NOTE)
                     mq_fields = shared_fields(mq_st, mq_end) + [m_title, m_sub, m_qs, m_think, m_rev, m_acc, m_style,
-                                                                 m_timer, m_colors, m_narr, m_narr_gain, m_fx]
+                                                                 m_timer, m_colors, m_narr, m_narr_gain, m_fx,
+                                                                 m_tstyle]
                 mq_pv = preview_panel("mcq")
             wire(mq_proj, mq_pv, mq_fields)
             gr.on(triggers=[m_narr.change, m_qs.change], fn=narration_report, inputs=[m_narr, m_qs],
