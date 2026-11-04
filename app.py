@@ -10,6 +10,7 @@ import os
 import shutil
 import threading
 import time
+import zipfile
 
 import gradio as gr
 
@@ -250,13 +251,35 @@ def _release(request):
         _jobs.pop(_job_key(request), None)
 
 
+def _zip_videos(paths, out_dir):
+    """Pack the finished videos into one .zip next to them (stored, not re-compressed: MP4 is already compressed)."""
+    path = os.path.join(out_dir, os.path.basename(os.path.normpath(out_dir)) + ".zip")
+    tmp = path + ".part"
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+        for p in paths:
+            z.write(p, os.path.basename(p))
+    os.replace(tmp, path)
+    return path
+
+
+def _zip_update(paths, out_dir):
+    try:
+        zp = _zip_videos(paths, out_dir)
+    except Exception as e:  # the videos themselves are fine; only the zip failed
+        gr.Warning(f"Could not make the .zip: {_msg(e)}")
+        return gr.update(value=None, visible=False)
+    n = len(paths)
+    return gr.update(value=zp, visible=True, label=f"📦 Download all {n} video{'s' if n != 1 else ''} (.zip)")
+
+
 def _stream_batch(request, plan, progress):
     """Render a batch one video at a time and yield after each one, so every finished video shows up in the
     "Rendered videos" list (and the player) right away instead of only when the whole batch is done.
 
     plan() -> (out_dir, total, jobs) where jobs yields (file name without extension, project).
-    Yields (player, message, files, busy, tabs, clip, render, go) for the outputs of the batch button."""
-    done = []
+    Yields (player, message, files, zip, busy, tabs, clip, render, go) for the outputs of the batch button;
+    the zip of all finished videos is offered at the end (also after an error, with the ones that finished)."""
+    done, out_dir = [], None
     keep = (gr.update(),) * 5  # still working: leave busy / tabs / buttons as start() set them
     unlock = (False, gr.update(selected="vid"), gr.update(interactive=True), gr.update(interactive=True),
               gr.update(interactive=True))
@@ -278,15 +301,16 @@ def _stream_batch(request, plan, progress):
             done.append(out)
             if k < total:
                 yield (out, f"✅ {k} of {total} finished — download them below while video {k + 1} renders… "
-                            f"(saved in `{where}`)", gr.update(value=list(done), visible=True), *keep)
+                            f"(saved in `{where}`)", gr.update(value=list(done), visible=True), gr.update(), *keep)
         msg = (f"✅ {total} video{'s' if total != 1 else ''} saved in `{where}`"
                + (" — the player shows the last one" if total > 1 else ""))
-        yield (done[-1], msg, gr.update(value=list(done), visible=True), *unlock)
+        yield (done[-1], msg, gr.update(value=list(done), visible=True), _zip_update(done, out_dir), *unlock)
     except Exception as e:
         gr.Warning(_msg(e))
         got = f" ({len(done)} finished before the error)" if done else ""
         yield (done[-1] if done else gr.update(), f"⚠️ {_msg(e)}{got}",
-               gr.update(value=list(done) or None, visible=bool(done)), *unlock)
+               gr.update(value=list(done) or None, visible=bool(done)),
+               _zip_update(done, out_dir) if done else gr.update(value=None, visible=False), *unlock)
     finally:
         _release(request)
 
@@ -586,13 +610,14 @@ def batch_tab():
     with gr.Row(equal_height=True):
         info = gr.Markdown("Upload a sheet to see how many videos it makes.")
         go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, min_width=230, scale=0)
+    zipb = gr.DownloadButton("📦 Download all (.zip)", visible=False, variant="primary")
     files = gr.File(label="Rendered videos — each one appears here as soon as it finishes", file_count="multiple",
                     visible=False, height=320)
     with gr.Row(equal_height=True):
         part = gr.Dropdown([], label="Preview one video in the editor", scale=2)
         load = gr.Button("📥 Load into editor", scale=1, min_width=120)
     return dict(sheet=sheet, clips=clips, folder=folder, per=per, title=title, info=info, part=part, load=load,
-                go=go, files=files)
+                go=go, files=files, zip=zipb)
 
 
 def _read_batch(sheet, clips, folder):
@@ -641,7 +666,7 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
             raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
         return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
                 gr.update(interactive=False), "⏳ Rendering all videos… each one appears below as soon as it is done.",
-                gr.update(value=None, visible=False))
+                gr.update(value=None, visible=False), gr.update(value=None, visible=False))
 
     def render_all(request: gr.Request, sheet, clips, folder, per, title_tpl, *vals, progress=gr.Progress()):
         def plan():
@@ -666,10 +691,10 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
     gr.on(triggers=[c.change for c in inputs], fn=check, inputs=inputs, outputs=[xl["info"], xl["part"], xl["go"]],
           trigger_mode="always_last", show_progress="hidden")
     xl["load"].click(load_part, inputs + [xl["part"], xl["title"], m_title], [m_qs, m_narr, m_title])
-    dep = xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"], xl["files"]],
-                         queue=False)
+    dep = xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"],
+                                       xl["files"], xl["zip"]], queue=False)
     dep.success(render_all, inputs + [xl["title"]] + fields,
-                [pv["vid"], pv["info"], xl["files"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]],
+                [pv["vid"], pv["info"], xl["files"], xl["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]],
                 **_progress_on(dep, pv["vid"]))
 
 
@@ -701,12 +726,13 @@ def tl_batch_tab():
     with gr.Row(equal_height=True):
         info = gr.Markdown("Upload a sheet to see how many videos it makes.")
         go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, min_width=230, scale=0)
+    zipb = gr.DownloadButton("📦 Download all (.zip)", visible=False, variant="primary")
     files = gr.File(label="Rendered videos — each one appears here as soon as it finishes", file_count="multiple",
                     visible=False, height=320)
     with gr.Row(equal_height=True):
         part = gr.Dropdown([], label="Preview one video in the editor", scale=2)
         load = gr.Button("📥 Load into editor", scale=1, min_width=120)
-    return dict(sheet=sheet, info=info, go=go, files=files, part=part, load=load)
+    return dict(sheet=sheet, info=info, go=go, files=files, zip=zipb, part=part, load=load)
 
 
 def wire_tl_batch(xl, pv, fields):
@@ -748,7 +774,7 @@ def wire_tl_batch(xl, pv, fields):
             raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
         return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
                 gr.update(interactive=False), "⏳ Rendering all videos… each one appears below as soon as it is done.",
-                gr.update(value=None, visible=False))
+                gr.update(value=None, visible=False), gr.update(value=None, visible=False))
 
     def render_all(request: gr.Request, sheet, *vals, progress=gr.Progress()):
         def plan():
@@ -766,10 +792,10 @@ def wire_tl_batch(xl, pv, fields):
 
     xl["sheet"].change(check, xl["sheet"], [xl["info"], xl["part"], xl["go"]], show_progress="hidden")
     xl["load"].click(load_part, [xl["sheet"], xl["part"]] + fields, fields)
-    dep = xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"], xl["files"]],
-                         queue=False)
+    dep = xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"],
+                                       xl["files"], xl["zip"]], queue=False)
     dep.success(render_all, [xl["sheet"]] + fields,
-                [pv["vid"], pv["info"], xl["files"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]],
+                [pv["vid"], pv["info"], xl["files"], xl["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]],
                 **_progress_on(dep, pv["vid"]))
 
 
