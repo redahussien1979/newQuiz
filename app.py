@@ -681,9 +681,10 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
             tpl = title_tpl if str(title_tpl or "").strip() else None
 
             def jobs():
+                taken = set()
                 for k, chunk in enumerate(parts, 1):
-                    name = f"mcq_video_{k:02d}_of_{total:02d}"
-                    yield name, batch.part_project(base, chunk, k, total, os.path.join(out_dir, f"{name}_audio"), tpl)
+                    name = batch.video_name(chunk, k, taken)  # the first question's text
+                    yield name, batch.part_project(base, chunk, k, total, os.path.join(out_dir, f"{name} audio"), tpl)
             return out_dir, total, jobs()
 
         yield from _stream_batch(request, plan, progress)
