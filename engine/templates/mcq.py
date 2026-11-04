@@ -26,6 +26,7 @@ from ..audio import audio_length
 from ..mcq_styles import STYLE_NAMES, Backdrop, build_box, get_style, letter_badge, with_theme_colors
 from ..strings import S
 from ..timers import TIMER_FX, TIMER_NAMES, draw_timer
+from ..title_fx import TitleIntro
 
 NAME = "Multiple Choice"
 OPT_COLORS = ["gold", "blue", "pink", "purple"]
@@ -157,6 +158,9 @@ def parse_questions(text):
     return qs[:10]
 
 
+TITLE_STYLES = ["Fancy", "Simple"]  # opening title: animated (engine/title_fx.py) or the classic pop-in
+
+
 class MCQVideo:
     def __init__(self, project):
         s = project.get("settings", {})
@@ -203,7 +207,14 @@ class MCQVideo:
         if sub:
             sub_col = shade(self.accent, 0.62) if self.st.get("light") else self.accent  # readable on light pages
             lines.append((sub, 54, sub_col, (lines[-1][3] if lines else 720) + 150))
-        self.scenes = [dict(t_in=0.1, t_out=2.4, lines=lines)]
+        self.title_style = m.get("title_style") if m.get("title_style") in TITLE_STYLES else "Fancy"
+        if self.title_style == "Fancy":
+            self.intro = TitleIntro(lines[:-1] if sub else lines, sub, lines[-1][2] if sub else self.accent,
+                                    self.ink, self.accent, light=bool(self.st.get("light")), rtl=self.rtl)
+            self.scenes = []
+        else:
+            self.intro = None
+            self.scenes = [dict(t_in=0.1, t_out=2.4, lines=lines)]
         self.ending = (fill(e.get("intro", "")), parse_lines(fill(e.get("question", "")), ["white", "gold"]),
                        fill(e.get("cta", "")), s.get("handle", ""))
 
@@ -291,6 +302,8 @@ class MCQVideo:
         i = bisect.bisect_right(self.starts, t) - 1 if self.q0 <= t < self.E else -1
         if 0 <= i < n:
             self._question(frame, d, i, t - self.qs[i]["t0"])
+        if self.intro is not None:
+            self.intro.draw(frame, t)
         for sc in self.scenes:
             draw_scene(frame, t, sc)
         draw_ending(frame, t, self.E, *self.ending, self.accent)
