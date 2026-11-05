@@ -8,7 +8,10 @@ STR = {
                clue="الدليل {i} من {n}", answer_intro="الجواب…",
                question="السؤال {i} من {n}", letters=["أ", "ب", "ج", "د"],
                guess_area="خمّن: كم مرة تدخل\n[{ca}]{a} في {b}؟", guess_ratio="خمّن: {b} أكبر من\n[{ca}]{a} بكم مرة؟",
-               diff="الفرق {p}% فقط!"),
+               diff="الفرق {p}% فقط!",
+               levels=dict(easy="سهل", medium="متوسط", hard="صعب"), final="السؤال الأخير!",
+               score_q="كم نقطة حصلت؟", score_levels=["مبتدئ", "خبير", "عبقري!"],
+               subscribe="اشترك", subscribed="تم الاشتراك"),
     "en": dict(bce="BC", ce="AD", years="years", years_few="years", now="Now",
                ago_short="{n} ago", ago_full="{n} years ago",
                frm="From {a}", to="to {b}", from_to="{a} to {b}",
@@ -16,8 +19,27 @@ STR = {
                clue="Clue {i} of {n}", answer_intro="The answer…",
                question="Question {i} of {n}", letters=["A", "B", "C", "D"],
                guess_area="Guess: how many times does\n[{ca}]{a} fit in {b}?", guess_ratio="Guess: how many times is {b}\n[{ca}]bigger than {a}?",
-               diff="Only {p}% apart!"),
+               diff="Only {p}% apart!",
+               levels=dict(easy="Easy", medium="Medium", hard="Hard"), final="FINAL QUESTION!",
+               score_q="What's your score?", score_levels=["Beginner", "Expert", "Genius!"],
+               subscribe="SUBSCRIBE", subscribed="SUBSCRIBED"),
 }
+
+
+_LEVEL_WORDS = {"easy": ["easy", "e", "1", "سهل", "سهله", "سهلة"],
+                "medium": ["medium", "med", "m", "normal", "average", "2", "متوسط", "متوسطه", "متوسطة", "وسط"],
+                "hard": ["hard", "h", "difficult", "3", "صعب", "صعبه", "صعبة"]}
+LEVEL_LOOKUP = {w: k for k, ws in _LEVEL_WORDS.items() for w in ws}
+
+
+def level_key(txt):
+    """'Hard' / 'صعب' / '3' -> 'hard'; '' -> None; anything else -> ValueError."""
+    t = " ".join(str(txt or "").split()).strip().lower()
+    if not t:
+        return None
+    if t not in LEVEL_LOOKUP:
+        raise ValueError(f"unknown difficulty “{str(txt).strip()}” — use Easy, Medium or Hard (سهل، متوسط، صعب)")
+    return LEVEL_LOOKUP[t]
 
 
 def S(lang):

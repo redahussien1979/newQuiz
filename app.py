@@ -21,6 +21,7 @@ from engine.mcq_styles import STYLE_NAMES
 from engine.timers import TIMER_FX, TIMER_NAMES
 from engine.render import render_clip, render_still, render_video
 from engine.templates import TEMPLATES
+from engine.quiz_fx import FX_KEYS, FX_OPTIONS
 from engine.templates.mcq import HEADER_STYLES, TITLE_STYLES, narration_report, parse_questions
 from engine import batch
 from engine import countries
@@ -45,13 +46,13 @@ TL_KEYS = ["mode", "hook", "hide_first_in_hook", "doubt", "doubt_sub", "compare_
 EV_KEYS = ["enabled", "name", "year", "label", "color", "icon", "image", "country", "outline"]
 QZ_KEYS = ["title", "subtitle", "clues", "clue_seconds", "answer_intro", "answer", "answer_sub", "answer_image", "accent"]
 MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", "accent", "style", "timer",
-           "colors", "narration", "narration_gain", "timer_fx", "title_style", "header_style"]
+           "colors", "narration", "narration_gain", "timer_fx", "title_style", "header_style", "fx"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline"}
 MEDIA_LISTS = {"narration"}  # fields holding several files
 DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": "", "maps": False, "guess": False,
             "guess_q": "", "intro": "hook", "map_style": "auto", "polish": False, "finish": False,
-            "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0, "title_style": "Fancy", "header_style": "Fancy"}  # for projects saved before these options existed
+            "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0, "title_style": "Fancy", "header_style": "Fancy", "fx": []}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -574,7 +575,8 @@ COUNT_NOTE = ("Write `{count}` where the number of questions should appear — e
               "It also works in the Title and Subtitle.")
 
 BATCH_HELP = """**Make many videos from one spreadsheet.** One question per row with the columns
-`Question · Option A–D · Correct · Explanation` and, optionally, `Question audio · A–D audio · Explanation audio`
+`Question · Option A–D · Correct · Explanation` and, optionally, `Difficulty` (Easy / Medium / Hard — shows a
+badge with stars) and `Question audio · A–D audio · Explanation audio`
 (English or Arabic headers — get the **template** on the right). Every video uses the design, timer, music and ending
 you set in the other tabs. In the title, `{n}` becomes the video number and `{total}` the number of videos
 (leave it empty to use the Title from 📝 Questions)."""
@@ -923,8 +925,9 @@ def build_ui():
                                     m_sub = gr.Textbox(label="Subtitle", rtl=True)
                                 m_qs = gr.Textbox(lines=12, max_lines=40, rtl=True, label="Questions — see format below",
                                                   info="Question line, then 3 or 4 option lines. Put * after the correct "
-                                                       "option. Optional explanation line starting with >. Leave an EMPTY "
-                                                       "line between questions (max 10).")
+                                                       "option. Optional explanation line starting with >, optional "
+                                                       "difficulty line: ! easy / ! medium / ! hard (or ! سهل / ! متوسط "
+                                                       "/ ! صعب). Leave an EMPTY line between questions (max 10).")
                         with gr.Tab("⏱️ Design & timing"):
                             with gr.Column(elem_classes="pane"):
                                 with gr.Row():
@@ -946,6 +949,13 @@ def build_ui():
                                 m_fx = gr.CheckboxGroup(TIMER_FX, value=["pulse", "glow", "ripple", "shake"],
                                                         label="Timer effects while ticking",
                                                         info="Pick any mix — they work with every timer type.")
+                                m_qfx = gr.CheckboxGroup(FX_OPTIONS, value=list(FX_KEYS), label="Animations",
+                                                         info="Lock-in = options flash before the reveal, a ✔ draws on "
+                                                              "the answer and the wrong ones shake with a ✖. Final "
+                                                              "question = red ribbon + heartbeat on the last question. "
+                                                              "Score-levels ending = Beginner / Expert / Genius cards "
+                                                              "and a subscribe tap (uses the Ending question as title; "
+                                                              "the ending lasts 5 s). Each comes with its own sound.")
                                 m_colors = gr.Radio([("Style's own colours", "style"), ("Theme colours", "theme")],
                                                     value="style", label="Colours",
                                                     info="Theme colours = background and cards follow the Theme in "
@@ -965,7 +975,7 @@ def build_ui():
                         mq_end = ending_tab(COUNT_NOTE)
                     mq_fields = shared_fields(mq_st, mq_end) + [m_title, m_sub, m_qs, m_think, m_rev, m_acc, m_style,
                                                                  m_timer, m_colors, m_narr, m_narr_gain, m_fx,
-                                                                 m_tstyle, m_hstyle]
+                                                                 m_tstyle, m_hstyle, m_qfx]
                 mq_pv = preview_panel("mcq")
             wire(mq_proj, mq_pv, mq_fields)
             gr.on(triggers=[m_narr.change, m_qs.change], fn=narration_report, inputs=[m_narr, m_qs],
