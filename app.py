@@ -21,6 +21,7 @@ from engine.mcq_styles import STYLE_NAMES
 from engine.timers import TIMER_FX, TIMER_NAMES
 from engine.render import render_clip, render_still, render_video
 from engine.templates import TEMPLATES
+from engine.header_fx import NUMBER_STYLES
 from engine.quiz_fx import FX_KEYS, FX_OPTIONS
 from engine.templates.mcq import HEADER_STYLES, TITLE_STYLES, narration_report, parse_questions
 from engine import batch
@@ -46,13 +47,13 @@ TL_KEYS = ["mode", "hook", "hide_first_in_hook", "doubt", "doubt_sub", "compare_
 EV_KEYS = ["enabled", "name", "year", "label", "color", "icon", "image", "country", "outline"]
 QZ_KEYS = ["title", "subtitle", "clues", "clue_seconds", "answer_intro", "answer", "answer_sub", "answer_image", "accent"]
 MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", "accent", "style", "timer",
-           "colors", "narration", "narration_gain", "timer_fx", "title_style", "header_style", "fx"]
+           "colors", "narration", "narration_gain", "timer_fx", "title_style", "header_style", "fx", "number_style"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline"}
 MEDIA_LISTS = {"narration"}  # fields holding several files
 DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": "", "maps": False, "guess": False,
             "guess_q": "", "intro": "hook", "map_style": "auto", "polish": False, "finish": False,
-            "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0, "title_style": "Fancy", "header_style": "Fancy", "fx": []}  # for projects saved before these options existed
+            "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0, "title_style": "Fancy", "header_style": "Fancy", "fx": [], "number_style": "plain"}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -946,6 +947,10 @@ def build_ui():
                                                     info="Fancy = glass pill with a light sweep and ornaments, plus a "
                                                          "progress bar that fills during each question. Simple = flat "
                                                          "pill with dots.")
+                                m_nstyle = gr.Dropdown(NUMBER_STYLES, value="coin", label="Question number style",
+                                                       info="How the numbers in the Fancy header look: gold coin, "
+                                                            "two circles, progress ring (fills as the quiz goes on), "
+                                                            "hexagon gem, scoreboard (3/5 capsule) or plain text.")
                                 m_fx = gr.CheckboxGroup(TIMER_FX, value=["pulse", "glow", "ripple", "shake"],
                                                         label="Timer effects while ticking",
                                                         info="Pick any mix — they work with every timer type.")
@@ -975,7 +980,7 @@ def build_ui():
                         mq_end = ending_tab(COUNT_NOTE)
                     mq_fields = shared_fields(mq_st, mq_end) + [m_title, m_sub, m_qs, m_think, m_rev, m_acc, m_style,
                                                                  m_timer, m_colors, m_narr, m_narr_gain, m_fx,
-                                                                 m_tstyle, m_hstyle, m_qfx]
+                                                                 m_tstyle, m_hstyle, m_qfx, m_nstyle]
                 mq_pv = preview_panel("mcq")
             wire(mq_proj, mq_pv, mq_fields)
             gr.on(triggers=[m_narr.change, m_qs.change], fn=narration_report, inputs=[m_narr, m_qs],

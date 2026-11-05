@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw, ImageFilter
 from ..core import (GREY, WHITE, Stars, draw_ending, draw_scene, ease_out_back, fade, get_theme, global_fade,
                     make_bg, parse_lines, paste, prog, shade, stack_lines, text_img, to_rgb, wrap)
 from ..audio import audio_length
-from ..header_fx import QuestionHeader
+from ..header_fx import NUMBER_KEYS, QuestionHeader
 from ..quiz_fx import FX_KEYS, LEVELS_END, FINAL_LEN, WIPE_HALF, QuizFX, shine
 from ..mcq_styles import STYLE_NAMES, Backdrop, build_box, get_style, letter_badge, with_theme_colors
 from ..strings import S, level_key
@@ -62,6 +62,7 @@ EXAMPLE = {
         "colors": "style",
         "timer_fx": ["pulse", "glow", "ripple", "shake"],
         "fx": ["lockin", "confetti", "wipe", "final", "levels"],
+        "number_style": "coin",
         "narration": [],
         "narration_gain": 1.0,
     },
@@ -232,8 +233,9 @@ class MCQVideo:
             self.intro = None
             self.scenes = [dict(t_in=0.1, t_out=2.4, lines=lines)]
         self.header_style = m.get("header_style") if m.get("header_style") in HEADER_STYLES else "Fancy"
-        self.header = (QuestionHeader(self.accent, self.ink, light=bool(self.st.get("light")), rtl=self.rtl)
-                       if self.header_style == "Fancy" else None)
+        num_style = m.get("number_style") if m.get("number_style") in NUMBER_KEYS else "plain"
+        self.header = (QuestionHeader(self.accent, self.ink, light=bool(self.st.get("light")), rtl=self.rtl,
+                                      num_style=num_style) if self.header_style == "Fancy" else None)
         self.qfx = QuizFX(self.accent, self.ink, self.L, rtl=self.rtl, light=bool(self.st.get("light")))
         self.ending = (fill(e.get("intro", "")), parse_lines(fill(e.get("question", "")), ["white", "gold"]),
                        fill(e.get("cta", "")), s.get("handle", ""))
@@ -344,12 +346,11 @@ class MCQVideo:
         u = u_all - q["pre"]  # question time (after the "Final question" ribbon, if any)
         a_in = prog(u, 0, 0.3)
         fx, qfx = self.fx, self.qfx
-        if q["pre"]:
-            qfx.final_tint(frame, u - ts)
 
         # header + progress
         if self.header is not None:
-            self.header.draw(frame, self.L["question"].format(i=i + 1, n=n), i, n, u, D, a_in * (1 - out))
+            self.header.draw(frame, self.L["question"].format(i=i + 1, n=n), i, n, u, D, a_in * (1 - out),
+                             fmt=self.L["question"])
         else:
             self._simple_header(frame, d, i, n, a_in, out)
         if q.get("level"):
