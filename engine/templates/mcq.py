@@ -23,6 +23,7 @@ from PIL import Image, ImageDraw, ImageFilter
 from ..core import (GREY, WHITE, Stars, draw_ending, draw_scene, ease_out_back, fade, get_theme, global_fade,
                     make_bg, parse_lines, paste, prog, shade, stack_lines, text_img, to_rgb, wrap)
 from ..audio import audio_length
+from ..header_fx import QuestionHeader
 from ..mcq_styles import STYLE_NAMES, Backdrop, build_box, get_style, letter_badge, with_theme_colors
 from ..strings import S
 from ..timers import TIMER_FX, TIMER_NAMES, draw_timer
@@ -159,6 +160,7 @@ def parse_questions(text):
 
 
 TITLE_STYLES = ["Fancy", "Simple"]  # opening title: animated (engine/title_fx.py) or the classic pop-in
+HEADER_STYLES = ["Fancy", "Simple"]  # "Question i of n" header: glass pill + progress bar (engine/header_fx.py) or pill + dots
 
 
 class MCQVideo:
@@ -215,6 +217,9 @@ class MCQVideo:
         else:
             self.intro = None
             self.scenes = [dict(t_in=0.1, t_out=2.4, lines=lines)]
+        self.header_style = m.get("header_style") if m.get("header_style") in HEADER_STYLES else "Fancy"
+        self.header = (QuestionHeader(self.accent, self.ink, light=bool(self.st.get("light")), rtl=self.rtl)
+                       if self.header_style == "Fancy" else None)
         self.ending = (fill(e.get("intro", "")), parse_lines(fill(e.get("question", "")), ["white", "gold"]),
                        fill(e.get("cta", "")), s.get("handle", ""))
 
@@ -317,22 +322,11 @@ class MCQVideo:
         out = prog(u, D - 0.3, D)
         a_in = prog(u, 0, 0.3)
 
-        # header + progress dots
-        light = self.st.get("light")
-        hdr = text_img(self.L["question"].format(i=i + 1, n=n), 46, (32, 30, 40) if light else self.accent, "Black", shadow=False)
-        pill = Image.new("RGBA", (hdr.width + 20, 86), (0, 0, 0, 0))
-        ImageDraw.Draw(pill).rounded_rectangle([0, 6, pill.width - 1, 80], 37,
-                                               fill=(self.accent if light else shade(self.accent, 0.22)) + (255,))
-        pill.alpha_composite(hdr, (10, 43 - hdr.height // 2))
-        paste(frame, pill, 540, 285, 1.0, a_in * (1 - out))
-        gap = 34
-        x0 = 540 - (n - 1) * gap / 2
-        for k in range(n):
-            x = x0 + (k if not self.rtl else (n - 1 - k)) * gap
-            rr = 10 if k == i else 7
-            col = self.accent if k == i else (shade(self.ink, 0.6) if k < i else ((200, 190, 170) if light else (70, 80, 105)))
-            al = int(255 * a_in * (1 - out))
-            d.ellipse([x - rr, 372 - rr, x + rr, 372 + rr], fill=col + (al,))
+        # header + progress
+        if self.header is not None:
+            self.header.draw(frame, self.L["question"].format(i=i + 1, n=n), i, n, u, D, a_in * (1 - out))
+        else:
+            self._simple_header(frame, d, i, n, a_in, out)
 
         # question card
         p = prog(u, 0.05, 0.45)
@@ -371,6 +365,24 @@ class MCQVideo:
             for k, line in enumerate(q["expl_lines"]):
                 paste(frame, text_img(line, 40, self.ink, "SemiBold", shadow=not self.st.get("light"), max_w=960), 540, ty - 20 + k * 58,
                       0.9 + 0.1 * pe, pe * (1 - out))
+
+    def _simple_header(self, frame, d, i, n, a_in, out):
+        """Classic header: flat pill + progress dots."""
+        light = self.st.get("light")
+        hdr = text_img(self.L["question"].format(i=i + 1, n=n), 46, (32, 30, 40) if light else self.accent, "Black", shadow=False)
+        pill = Image.new("RGBA", (hdr.width + 20, 86), (0, 0, 0, 0))
+        ImageDraw.Draw(pill).rounded_rectangle([0, 6, pill.width - 1, 80], 37,
+                                               fill=(self.accent if light else shade(self.accent, 0.22)) + (255,))
+        pill.alpha_composite(hdr, (10, 43 - hdr.height // 2))
+        paste(frame, pill, 540, 285, 1.0, a_in * (1 - out))
+        gap = 34
+        x0 = 540 - (n - 1) * gap / 2
+        for k in range(n):
+            x = x0 + (k if not self.rtl else (n - 1 - k)) * gap
+            rr = 10 if k == i else 7
+            col = self.accent if k == i else (shade(self.ink, 0.6) if k < i else ((200, 190, 170) if light else (70, 80, 105)))
+            al = int(255 * a_in * (1 - out))
+            d.ellipse([x - rr, 372 - rr, x + rr, 372 + rr], fill=col + (al,))
 
     # ------------------------------------------------------------ sound
     def sound(self, mx):
