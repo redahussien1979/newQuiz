@@ -2,8 +2,10 @@
 split them into several videos and build one ordinary MCQ project per video.
 
 Sheet layout (first row = headers, English or Arabic, any order; see write_template()):
-    Question | Option A | Option B | Option C | Option D | Correct | Explanation |
+    Question | Option A | Option B | Option C | Option D | Correct | Difficulty | Explanation |
     Question audio | A audio | B audio | C audio | D audio | Explanation audio
+
+- Difficulty (optional): Easy / Medium / Hard (or سهل / متوسط / صعب, or 1-3) -> badge with stars on the question.
 
 - Correct: A/B/C/D, أ/ب/ج/د, 1-4, or the exact text of the right option (or end that option with *).
 - Audio cells: a file name of an uploaded clip, a path relative to the audio folder, or a full path.
@@ -14,6 +16,8 @@ import math
 import os
 import re
 import shutil
+
+from .strings import level_key
 
 AUDIO_SLOTS = ["q", "a", "b", "c", "d", "e"]  # question, options A-D, explanation
 MAX_PER_VIDEO = 10
@@ -35,6 +39,8 @@ _ALIASES = {
     "opt3": ["optiond", "d", "choiced", "answerd", "option4", "choice4", "الخيارد", "خيارد", "د", "الخيار4", "خيار4"],
     "correct": ["correct", "correctanswer", "answer", "right", "rightanswer", "key", "الاجابه", "الاجابهالصحيحه",
                 "الصحيح", "الجواب", "الجوابالصحيح"],
+    "diff": ["difficulty", "level", "difficultylevel", "hardness", "الصعوبه", "مستويالصعوبه", "المستوي", "مستوي",
+             "درجهالصعوبه"],
     "expl": ["explanation", "explain", "note", "fact", "info", "الشرح", "شرح", "التفسير", "تفسير", "معلومه"],
     "aud_q": ["questionaudio", "qaudio", "audio", "audioquestion", "questionsound", "صوتالسؤال", "صوت"],
     "aud_a": ["optionaaudio", "aaudio", "audioa", "choiceaaudio", "option1audio", "صوتا", "صوتالخيارا", "صوت1"],
@@ -46,9 +52,10 @@ _ALIASES = {
 _LOOKUP = {_norm(a): key for key, names in _ALIASES.items() for a in names}
 # column order used when the sheet has no header row
 _POSITIONAL = ["question", "opt0", "opt1", "opt2", "opt3", "correct", "expl",
-               "aud_q", "aud_a", "aud_b", "aud_c", "aud_d", "aud_e"]
-TEMPLATE_HEADERS = ["Question", "Option A", "Option B", "Option C", "Option D", "Correct", "Explanation",
+               "aud_q", "aud_a", "aud_b", "aud_c", "aud_d", "aud_e", "diff"]
+TEMPLATE_HEADERS = ["Question", "Option A", "Option B", "Option C", "Option D", "Correct", "Difficulty", "Explanation",
                     "Question audio", "A audio", "B audio", "C audio", "D audio", "Explanation audio"]
+LEVEL_NAMES = {"easy": "Easy", "medium": "Medium", "hard": "Hard"}
 
 
 # ------------------------------------------------------------------ reading
@@ -209,7 +216,12 @@ def parse_rows(rows, finder=None):
         if missing:
             problems.append(f"{where}: audio not found: {', '.join(missing)} — question kept without "
                             f"{'it' if len(missing) == 1 else 'them'}")
-        items.append(dict(row=n, q=q, opts=opts, correct=correct, expl=get(row, "expl"), audio=audio))
+        level = None
+        try:
+            level = level_key(get(row, "diff"))
+        except ValueError as e:
+            problems.append(f"{where}: {e} — shown without a difficulty badge")
+        items.append(dict(row=n, q=q, opts=opts, correct=correct, expl=get(row, "expl"), level=level, audio=audio))
     return items, problems
 
 
@@ -228,6 +240,8 @@ def questions_text(items):
     blocks = []
     for it in items:
         lines = [it["q"]] + [o + (" *" if i == it["correct"] else "") for i, o in enumerate(it["opts"])]
+        if it.get("level"):
+            lines.append("! " + LEVEL_NAMES[it["level"]].lower())
         if it["expl"]:
             lines.append("> " + it["expl"])
         blocks.append("\n".join(lines))
@@ -345,7 +359,7 @@ def write_template(path, example_items=None):
     for it in example_items or []:
         opts = (it["opts"] + ["", "", "", ""])[:4]
         n = it.get("n", 1)
-        ws.append([it["q"], *opts, "ABCD"[it["correct"]], it.get("expl", ""),
+        ws.append([it["q"], *opts, "ABCD"[it["correct"]], LEVEL_NAMES.get(it.get("level"), ""), it.get("expl", ""),
                    f"q{n}.mp3", f"q{n}a.mp3", f"q{n}b.mp3", f"q{n}c.mp3" if opts[2] else "",
                    f"q{n}d.mp3" if opts[3] else "", f"q{n}e.mp3" if it.get("expl") else ""])
     head = PatternFill("solid", fgColor="1F3A68")
@@ -353,7 +367,7 @@ def write_template(path, example_items=None):
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = head
         c.alignment = Alignment(horizontal="center", vertical="center")
-    for col, w in zip("ABCDEFGHIJKLM", [46, 18, 18, 18, 18, 9, 40, 16, 12, 12, 12, 12, 18]):
+    for col, w in zip("ABCDEFGHIJKLMN", [46, 18, 18, 18, 18, 9, 12, 40, 16, 12, 12, 12, 12, 18]):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
     ws.sheet_view.rightToLeft = False
@@ -363,6 +377,8 @@ def write_template(path, example_items=None):
         "Correct has a dropdown list: click the cell and pick A, B, C or D (or أ ب ج د).",
         "Options: 2 to 4. Leave Option C / D empty for fewer options.",
         "Correct: A, B, C or D (or أ ب ج د, or 1-4, or the exact text of the right option).",
+        "Difficulty: optional — pick Easy, Medium or Hard (or سهل، متوسط، صعب) from the dropdown. It shows a badge",
+        "with 1-3 stars above the question. Leave it empty for no badge.",
         "Explanation: optional, shown after the answer is revealed.",
         "Audio columns are optional. Write the clip's file name (q1.mp3) and upload the clips in the app,",
         "or write a path relative to the 'Audio folder' you set in the app, or a full path (C:\\quiz\\q1.mp3).",
@@ -371,7 +387,9 @@ def write_template(path, example_items=None):
         notes.append([line])
     notes.column_dimensions["A"].width = 110
     add_dropdowns(wb, ws, [(["Correct"], ["A", "B", "C", "D", "أ", "ب", "ج", "د"], True,
-                            "Pick the right option: A, B, C or D")])
+                            "Pick the right option: A, B, C or D"),
+                           (["Difficulty"], ["Easy", "Medium", "Hard", "سهل", "متوسط", "صعب"], False,
+                            "Optional: Easy, Medium or Hard")])
     wb.save(path)
     return path
 

@@ -168,6 +168,52 @@ class Mixer:
                 for f, a, d in [(880, 1, 2.2), (1320, .5, 3), (1760, .3, 4), (2640, .15, 5)])
         return s / np.abs(s).max()
 
+    # -------------------------------------------------- quiz effects (engine/quiz_fx.py)
+    def drumroll(self, dur=0.6):
+        """Snare roll that speeds up and swells into the answer reveal."""
+        n = int(dur * SR)
+        out = np.zeros(n)
+        t = 0.0
+        while t < dur - 0.02:
+            x = t / dur
+            hit = _snare(self.rng, 0.1) * (0.35 + 0.65 * x ** 1.5)
+            i = int(t * SR)
+            m = min(len(hit), n - i)
+            out[i:i + m] += hit[:m]
+            t += 0.075 - 0.04 * x
+        return _norm(out)
+
+    @staticmethod
+    def buzz():
+        """Short low 'wrong' buzz."""
+        t = _t(0.28)
+        saw = 2 * ((t * 130) % 1) - 1 + 0.6 * (2 * ((t * 133.5) % 1) - 1)
+        return _norm(_fade(_lowpass(saw, 1400) * np.exp(-t * 5), 0.003, 0.05))
+
+    def sparkle(self):
+        """Bright confetti 'pop' + a run of high plucks."""
+        out = np.zeros(int(0.9 * SR))
+        nz = self.rng.standard_normal(int(0.08 * SR)) * np.exp(-_t(0.08) * 60)
+        out[:len(nz)] += nz * 0.6
+        for k, note in enumerate([84, 88, 91, 96, 100]):
+            i = int((0.03 + 0.055 * k) * SR)
+            pl = _pluck(_hz(note), 0.5, 2.0) * (0.9 - 0.1 * k)
+            m = min(len(pl), len(out) - i)
+            out[i:i + m] += pl[:m]
+        return _norm(out)
+
+    @staticmethod
+    def thump():
+        """One heartbeat thump."""
+        t = _t(0.3)
+        f = 42 + 40 * np.exp(-t * 25)
+        return _norm(_fade(np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 14), 0.002, 0.03))
+
+    def click(self):
+        """Button tap."""
+        t = _t(0.05)
+        return _norm(self.rng.standard_normal(len(t)) * np.exp(-t * 180) + np.sin(2 * np.pi * 1800 * t) * np.exp(-t * 120))
+
     # -------------------------------------------------- beds
     def silence_env(self, silences):
         x = np.arange(self.n) / SR

@@ -7,6 +7,7 @@ Questions are written as blocks separated by an empty line:
     Option 3
     Option 4            (optional 4th option)
     > Explanation shown after the reveal (optional)
+    ! hard              (optional difficulty: easy / medium / hard, or سهل / متوسط / صعب)
 
 Narration (optional): upload audio clips named after what they read, e.g.
     q1.mp3   -> question 1        q1a.mp3 / q1-b.wav / q1_3.m4a -> an option of question 1
@@ -24,8 +25,9 @@ from ..core import (GREY, WHITE, Stars, draw_ending, draw_scene, ease_out_back, 
                     make_bg, parse_lines, paste, prog, shade, stack_lines, text_img, to_rgb, wrap)
 from ..audio import audio_length
 from ..header_fx import QuestionHeader
+from ..quiz_fx import FX_KEYS, LEVELS_END, FINAL_LEN, WIPE_HALF, QuizFX, shine
 from ..mcq_styles import STYLE_NAMES, Backdrop, build_box, get_style, letter_badge, with_theme_colors
-from ..strings import S
+from ..strings import S, level_key
 from ..timers import TIMER_FX, TIMER_NAMES, draw_timer
 from ..title_fx import TitleIntro
 
@@ -46,11 +48,11 @@ EXAMPLE = {
         "title": "اختبر معلوماتك!",
         "subtitle": "{count} أسئلة — هل تجيب عنها كلها؟",
         "questions": (
-            "كم عدد عظام جسم الإنسان البالغ؟\n186\n206 *\n226\n306\n> يولد الطفل بنحو 300 عظمة يلتحم بعضها مع النمو\n\n"
-            "ما أكبر كوكب في المجموعة الشمسية؟\nزحل\nنبتون\nالمشتري *\n> يتسع حجمه لأكثر من 1300 كوكب بحجم الأرض\n\n"
-            "في أي مدينة تأسست جامعة القرويين؟\nالقيروان\nبغداد\nالقاهرة\nفاس *\n> أسستها فاطمة الفهرية سنة 859م\n\n"
-            "ما الفلز السائل في درجة حرارة الغرفة؟\nالزئبق *\nالرصاص\nالصوديوم\n> الزئبق هو الفلز الوحيد السائل في الظروف العادية\n\n"
-            "كم يستغرق ضوء الشمس ليصل إلى الأرض؟\nنحو 30 ثانية\nنحو 8 دقائق *\nنحو ساعة\nنحو يوم كامل\n> نحو 8 دقائق و20 ثانية"
+            "كم عدد عظام جسم الإنسان البالغ؟\n186\n206 *\n226\n306\n! easy\n> يولد الطفل بنحو 300 عظمة يلتحم بعضها مع النمو\n\n"
+            "ما أكبر كوكب في المجموعة الشمسية؟\nزحل\nنبتون\nالمشتري *\n! medium\n> يتسع حجمه لأكثر من 1300 كوكب بحجم الأرض\n\n"
+            "في أي مدينة تأسست جامعة القرويين؟\nالقيروان\nبغداد\nالقاهرة\nفاس *\n! medium\n> أسستها فاطمة الفهرية سنة 859م\n\n"
+            "ما الفلز السائل في درجة حرارة الغرفة؟\nالزئبق *\nالرصاص\nالصوديوم\n! hard\n> الزئبق هو الفلز الوحيد السائل في الظروف العادية\n\n"
+            "كم يستغرق ضوء الشمس ليصل إلى الأرض؟\nنحو 30 ثانية\nنحو 8 دقائق *\nنحو ساعة\nنحو يوم كامل\n! easy\n> نحو 8 دقائق و20 ثانية"
         ),
         "think_seconds": 5,
         "reveal_seconds": 2.8,
@@ -59,6 +61,7 @@ EXAMPLE = {
         "timer": "Ring",
         "colors": "style",
         "timer_fx": ["pulse", "glow", "ripple", "shake"],
+        "fx": ["lockin", "confetti", "wipe", "final", "levels"],
         "narration": [],
         "narration_gain": 1.0,
     },
@@ -140,7 +143,14 @@ def parse_questions(text):
     for n, block in enumerate(blocks, 1):
         lines = [l.strip() for l in block.split("\n") if l.strip()]
         expl = " ".join(l.lstrip(">»").strip() for l in lines if l.startswith((">", "»")))
-        lines = [l for l in lines if not l.startswith((">", "»"))]
+        level = None
+        for l in lines:
+            if l.startswith("!"):
+                try:
+                    level = level_key(l[1:])
+                except ValueError as e:
+                    raise ValueError(f"Question {n}: {e}") from None
+        lines = [l for l in lines if not l.startswith((">", "»", "!"))]
         if len(lines) < 3:
             raise ValueError(f"Question {n}: write the question, then 2-4 options on separate lines.")
         q, opts, correct = lines[0], [], []
@@ -153,7 +163,7 @@ def parse_questions(text):
             raise ValueError(f"Question {n}: maximum 4 options (found {len(opts)}).")
         if len(correct) != 1:
             raise ValueError(f"Question {n}: mark exactly ONE correct option with * at the end of its line.")
-        qs.append(dict(q=q, opts=opts, correct=correct[0], expl=expl))
+        qs.append(dict(q=q, opts=opts, correct=correct[0], expl=expl, level=level))
     if not qs:
         raise ValueError("Add at least one question.")
     return qs[:10]
@@ -183,6 +193,7 @@ class MCQVideo:
         self.ink = self.st["ink"]
         self.card_ink = self.st["card_text"]
         self.qs = parse_questions(m.get("questions", ""))
+        self.fx = {k for k in (m.get("fx") or []) if k in FX_KEYS}
         self.T = max(2.0, float(m.get("think_seconds") or 5))
         self.R = max(1.5, float(m.get("reveal_seconds") or 2.8))
         self.q0 = 2.6
@@ -191,11 +202,14 @@ class MCQVideo:
         t = self.q0
         for i, q in enumerate(self.qs):
             self._plan(i, q, narr)
+            # "Final question" ribbon: the last question's content starts FINAL_LEN later
+            q["pre"] = FINAL_LEN if ("final" in self.fx and i == len(self.qs) - 1 and len(self.qs) > 1) else 0.0
+            q["D"] += q["pre"]
             q["t0"] = t
             t += q["D"]
         self.starts = [q["t0"] for q in self.qs]
         self.E = t
-        self.base_duration = self.dur = self.E + 4.0
+        self.base_duration = self.dur = self.E + (LEVELS_END if "levels" in self.fx else 4.0)
         self.silences = []
         if self.st["card"] is None:
             self.st = dict(self.st, card=get_theme(s.get("theme"))["card"])
@@ -220,6 +234,7 @@ class MCQVideo:
         self.header_style = m.get("header_style") if m.get("header_style") in HEADER_STYLES else "Fancy"
         self.header = (QuestionHeader(self.accent, self.ink, light=bool(self.st.get("light")), rtl=self.rtl)
                        if self.header_style == "Fancy" else None)
+        self.qfx = QuizFX(self.accent, self.ink, self.L, rtl=self.rtl, light=bool(self.st.get("light")))
         self.ending = (fill(e.get("intro", "")), parse_lines(fill(e.get("question", "")), ["white", "gold"]),
                        fill(e.get("cta", "")), s.get("handle", ""))
 
@@ -311,28 +326,41 @@ class MCQVideo:
             self.intro.draw(frame, t)
         for sc in self.scenes:
             draw_scene(frame, t, sc)
-        draw_ending(frame, t, self.E, *self.ending, self.accent)
+        if "levels" in self.fx:
+            intro, qlines, cta, handle = self.ending
+            self.qfx.levels_ending(frame, t, self.E, n, qlines, cta, handle)
+        else:
+            draw_ending(frame, t, self.E, *self.ending, self.accent)
+        if "wipe" in self.fx:
+            self.qfx.wipe(frame, t, self.starts[1:] + [self.E])
         global_fade(frame, t, self.dur)
         return frame.convert("RGB")
 
-    def _question(self, frame, d, i, u):
+    def _question(self, frame, d, i, u_all):
         q, n = self._assets(i), len(self.qs)
         D, T = q["D"], self.T
         r, ts = q["r"], q["ts"]
-        out = prog(u, D - 0.3, D)
+        out = prog(u_all, D - 0.3, D)
+        u = u_all - q["pre"]  # question time (after the "Final question" ribbon, if any)
         a_in = prog(u, 0, 0.3)
+        fx, qfx = self.fx, self.qfx
+        if q["pre"]:
+            qfx.final_tint(frame, u - ts)
 
         # header + progress
         if self.header is not None:
             self.header.draw(frame, self.L["question"].format(i=i + 1, n=n), i, n, u, D, a_in * (1 - out))
         else:
             self._simple_header(frame, d, i, n, a_in, out)
+        if q.get("level"):
+            qfx.difficulty(frame, q["level"], u, 1 - out)
 
         # question card
         p = prog(u, 0.05, 0.45)
         paste(frame, q["card"], 540, 560 - out * 60, 0.85 + 0.15 * ease_out_back(p), min(1, p * 1.5) * (1 - out))
 
         # options
+        lock = prog(u, r - 0.55, r) if "lockin" in fx else 0
         for k, img in enumerate(q["imgs"]):
             y = q["opt_y0"] + k * 140
             pk = prog(u, q["opt_t"][k], q["opt_t"][k] + 0.35)
@@ -344,10 +372,31 @@ class MCQVideo:
                     pulse = 1 + 0.06 * math.sin(math.pi * prog(u, r, r + 0.4))
                     paste(frame, self.glow, 540, y, pulse, (0.55 + 0.3 * math.sin((u - r) * 5)) * pr * (1 - out))
                     paste(frame, img, 540, y, pulse, alpha * (1 - pr))
-                    paste(frame, q["ok_img"], 540, y, pulse, alpha * pr)
+                    ok = q["ok_img"]
+                    ps = prog(u, r + 0.15, r + 0.85)
+                    if "confetti" in fx and 0 < ps < 1:
+                        ok = shine(ok, ps, 0.6, 45, self.rtl)
+                    paste(frame, ok, 540, y, pulse, alpha * pr)
+                    pm = prog(u, r + 0.1, r + 0.45)
+                    if "lockin" in fx and pm > 0:
+                        paste(frame, qfx.mark(True, prog(u, r + 0.2, r + 0.55)), qfx.badge_x(), y,
+                              0.4 + 0.6 * ease_out_back(pm), min(1, pm * 2) * (1 - out))
+                    continue
+                if "lockin" in fx:  # wrong answer: shake + red cross
+                    sh = prog(u, r + 0.05, r + 0.45)
+                    if 0 < sh < 1:
+                        dx = 14 * math.sin(sh * 40) * (1 - sh)
+                    alpha *= 1 - 0.55 * prog(u, r + 0.2, r + 0.5)
+                    paste(frame, img, 540 + dx, y, 1.0, alpha)
+                    pm = prog(u, r + 0.05, r + 0.35)
+                    if pm > 0:
+                        paste(frame, qfx.mark(False, pm), qfx.badge_x() + dx, y, 0.4 + 0.6 * ease_out_back(pm),
+                              min(1, pm * 2) * (1 - out))
                     continue
                 alpha *= 1 - 0.65 * prog(u, r, r + 0.3)
             paste(frame, img, 540 + dx, y, 1.0, alpha)
+            if lock > 0 and u < r:
+                qfx.lock_flash(frame, 540 + dx, y, lock, alpha)
 
         # timer ring, then explanation
         ty = q["opt_y0"] + (len(q["opts"]) - 1) * 140 + 150
@@ -365,6 +414,10 @@ class MCQVideo:
             for k, line in enumerate(q["expl_lines"]):
                 paste(frame, text_img(line, 40, self.ink, "SemiBold", shadow=not self.st.get("light"), max_w=960), 540, ty - 20 + k * 58,
                       0.9 + 0.1 * pe, pe * (1 - out))
+        if "confetti" in fx and u >= r:
+            qfx.confetti(frame, q["opt_y0"] + q["correct"] * 140, u - r, seed=i + 1)
+        if q["pre"]:
+            qfx.final_banner(frame, u_all)
 
     def _simple_header(self, frame, d, i, n, a_in, out):
         """Classic header: flat pill + progress dots."""
@@ -387,19 +440,45 @@ class MCQVideo:
     # ------------------------------------------------------------ sound
     def sound(self, mx):
         mx.intro(0.05)
+        fx = self.fx
         for i, q in enumerate(self.qs):
-            t0, ts = q["t0"], q["t0"] + q["ts"]
+            t0 = q["t0"] + q["pre"]  # question time 0 (after the "Final question" ribbon, if any)
+            ts, rv = t0 + q["ts"], t0 + q["r"]
             s, pn = mx.whoosh(0.8)
-            mx.add(t0 - 0.05, s, 0.45, pn[::-1] if self.rtl else pn)
+            pan = pn[::-1] if self.rtl else pn
+            if "wipe" in fx and i > 0:
+                mx.add(q["t0"] - WIPE_HALF, s, 0.5, pan)
+            else:
+                mx.add(q["t0"] - 0.05, s, 0.45, pan)
+            if q["pre"]:
+                mx.add(q["t0"] + 0.2, mx.hit(1.4), 0.5)
+                mx.add(t0 - 0.05, s, 0.3, pan)
+            if q.get("level"):
+                mx.add(t0 + 0.25, mx.pop(), 0.15)
             for k in range(len(q["opts"])):
                 mx.add(t0 + q["opt_t"][k] + 0.05, mx.pop(), 0.22)
             secs = int(math.ceil(self.T))
             for k in range(secs):
                 hi = k >= secs - 2
                 mx.add(ts + k, mx.tick(2400 if hi else 1500), 0.32 if hi else 0.24)
+                if q["pre"]:  # heartbeat under the last question's countdown
+                    mx.add(ts + k, mx.thump(), 0.55)
+                    mx.add(ts + k + 0.2, mx.thump(), 0.35)
             if self.timer == "Fuse":
                 mx.add(ts, mx.sizzle(self.T), 0.22)
-            mx.add(t0 + q["r"], mx.ding(), 0.55)
+            if "lockin" in fx:
+                mx.add(rv - 0.6, mx.drumroll(0.6), 0.3)
+                mx.add(rv + 0.08, mx.buzz(), 0.14)
+            mx.add(rv, mx.ding(), 0.55)
+            if "confetti" in fx:
+                mx.add(rv + 0.02, mx.sparkle(), 0.28)
             for off, path in q["voice"]:
                 mx.add_voice(path, t0 + off, self.narr_gain)
+        if "wipe" in fx:
+            s, pn = mx.whoosh(0.8)
+            mx.add(self.E - WIPE_HALF, s, 0.5, pn[::-1] if self.rtl else pn)
         mx.add(self.E + 0.2, mx.chime(), 0.3)
+        if "levels" in fx:
+            for k in range(3):
+                mx.add(self.E + 1.2 + 0.35 * k, mx.pop(), 0.25)
+            mx.add(self.E + 3.15, mx.click(), 0.35)
