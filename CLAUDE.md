@@ -8,7 +8,7 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
 - `engine/audio.py` — synthesized SFX, music beds, voiceover ducking, mixing
 - `engine/mcq_styles.py` — MCQ design styles; `engine/timers.py` — countdown timer designs
 - `engine/title_fx.py` — MCQ animated opening title (`mcq.title_style`: `Fancy` default / `Simple` = classic pop-in)
-- `engine/header_fx.py` — MCQ "Question i of n" header (`mcq.header_style`: `Fancy` default = glass pill + filling progress bar / `Simple` = flat pill + dots)
+- `engine/header_fx.py` — MCQ "Question i of n" header (`mcq.header_style`: `Fancy` default = glass pill + filling progress bar / `Simple` = flat pill + dots); `mcq.number_style` decorates its numbers (`plain` / `coin` / `circles` / `ring` / `gem` / `score`)
 - `engine/quiz_fx.py` — MCQ extra animations, `mcq.fx` list: `lockin`, `confetti`, `wipe`, `final` (last question
   starts `FINAL_LEN` later via `q["pre"]`), `levels` (score-levels ending, ending lasts `LEVELS_END`); plus the
   per-question difficulty badge (`! easy|medium|hard` line in the questions text / `Difficulty` column in Excel)

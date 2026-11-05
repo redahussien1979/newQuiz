@@ -4,7 +4,7 @@
               the wrong ones shake and get a red cross
     confetti  confetti bursts from the right answer and a light sweep runs across it
     wipe      a diagonal accent band sweeps across the screen between questions (and into the ending)
-    final     "Final question!" ribbon before the last question, then a red heartbeat glow during it
+    final     "Final question!" ribbon before the last question (heartbeat sound under its countdown)
     levels    ending with score levels (Beginner / Expert / Genius) lighting up and a subscribe-button tap
     difficulty badge (Easy / Medium / Hard + 1-3 stars): shown for every question that has a level
 
@@ -210,11 +210,6 @@ class QuizFX:
                     d.polygon([(x0, 0), (x1, 0), (x1 - sk, H), (x0 - sk, H)], fill=tuple(col) + (255,))
 
     # ------------------------------------------------------------ final question
-    def final_tint(self, frame, u):
-        """Red heartbeat glow at the screen edges (u = seconds into the last question's countdown)."""
-        hb = heartbeat(u)
-        frame.alpha_composite(colorize(self.vig, (200, 20, 40), int(150 * (0.45 + 0.55 * min(1, hb)))))
-
     def final_banner(self, frame, v):
         """Tilted red ribbon sliding through the screen during the first FINAL_LEN seconds."""
         if not 0 <= v < FINAL_LEN + 0.05:

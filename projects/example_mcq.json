@@ -43,6 +43,7 @@
       "final",
       "levels"
     ],
-    "header_style": "Fancy"
+    "header_style": "Fancy",
+    "number_style": "coin"
   }
 }
