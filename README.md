@@ -2,13 +2,14 @@
 
 A local app that turns your facts into animated vertical videos (YouTube Shorts, TikTok, Reels, 1080×1920) with Arabic or English text, motion, sound effects and music, all generated on your own computer. No subscriptions and no watermark.
 
-Three ready templates:
+Four ready templates:
 
 | Template | What it makes |
 |---|---|
 | **⏳ Timeline Collision** | 2–5 events on a flying timeline, year counters, comparison bars, a bass-hit reveal and an ending teaser. Works with calendar years (BC/AD), deep time ("150 million years ago") or a **number line in any unit** (km², metres, °C, $…). Pick a **country** per event for its flag and map, add a **true-size map scene** (countries drawn at their real relative size) and a **guess moment** (3 choices + timer). **📊 Excel batch:** one row per video — render many country comparisons at once from `projects/countries_template.xlsx`. |
 | **✅ Multiple Choice** | Up to 10 questions with 2–4 options each, a countdown timer with ticking, then the correct answer turns green with a "ding" and an optional explanation. Optional narration clips, and many videos at once from an Excel sheet. |
 | **❓ Clue Quiz** | One mystery answer revealed after 1–8 clues, each with a countdown bar and ticking sound, then a big reveal with confetti and an optional photo. |
+| **🔤 English Words** | English lessons for Arabic speakers in groups (General words, Political words, Proverbs, Idioms, Common mistakes or your own), each with its own badge, colour and theme. Word cards with IPA, guess-the-meaning quizzes, common mistakes, proverbs with their Arabic equivalent and idioms, your own pronunciation audio per word, a recap and a cover picture. **📊 Excel batch:** one row per word, split into one video per group. |
 
 ---
 
@@ -104,6 +105,44 @@ Rows with problems (no question, fewer than 2 options, unclear correct answer) a
 
 **Timer effects** (⏱️ Design & timing, any mix, with every timer type): **Pulse** on every tick, **Glow** halo, **Ripple** wave from each tick, **Shake** in the last 3 seconds and a **Red flash** of the screen edges in the last 3 seconds.
 
+### English Words
+Pick a **group** (it sets the badge, colour and background) and write the items, one block each with an empty line
+between them:
+```
+type: word
+word: Sanctions
+ipa: /ˈsæŋkʃənz/
+pos: noun • اسم
+meaning: عقوبات (على دولة أو جهة)
+example: UN imposes new sanctions on the regime
+example_ar: فرضت الأمم المتحدة عقوبات جديدة على النظام
+also: embargo, penalties
+
+type: guess
+word: Ceasefire
+- إعلان الحرب
+- وقف إطلاق النار *
+- انتخابات مبكرة
+example: Both sides agreed to a ceasefire last night
+```
+| Type | What it shows |
+|---|---|
+| `word` | Word card: the word, 🔊 IPA, part of speech, Arabic meaning, example (the word is highlighted and underlined) with its translation, similar words. In **Political words** the example is a **BREAKING NEWS** headline with a news sting. |
+| `guess` | Guess the meaning: 2–4 options, a countdown (any timer type), the right one lights up with a ding, then the example. In Proverbs it asks for the Arabic proverb, in Common mistakes "Which one is correct?". |
+| `reverse` | The same, Arabic shown and English options ("How do you say it in English?"). |
+| `mistake` | `wrong:` sentence struck out with a buzz → `right:` sentence with a ✔ → the rule (`meaning:`) → example. |
+| `proverb` | The English proverb appears word by word → `literal:` translation → `equivalent:` the Arabic proverb in a gold card → `meaning:` → example. |
+| `idiom` | The idiom → `literal:` meaning crossed out → the real `meaning:` (+ `note:`) → example. |
+
+- **Type** can be left out: options make a guess, `wrong:` a mistake, `equivalent:` a proverb, `literal:` an idiom, anything else a word card. **➕ Add item** inserts an empty item of the chosen type; **🔁 Make all word cards** turns every guess into a word card.
+- **Highlight:** the word is found in the example by itself (also *studies*, *procrastinated*…); put `*stars*` around other words to choose.
+- **Audio (🎙️ tab):** clips named `w1` (item 1: the word, proverb or correct sentence) and `w1e` (its example). Each item waits for its clips, the 🔊 icon animates while the word plays and the music gets quieter.
+- **Opening:** automatic title per group ("5 Political Words — كلمات تسمعها في الأخبار كل يوم!"), or your own (`{count}` = number of items), an optional lesson line (`English Lesson #{n}`) and, if you like, the first word shown faintly behind the title.
+- **Ending:** a **recap** ("What did we learn today?") then your ending card. **Pace** (Slow / Normal / Fast) sets how long each line stays; 5 items take about 60 s at Normal.
+- **Cover picture:** every render also saves `<video name> cover.png` (the opening title) for the Shorts / Reels thumbnail.
+- **Excel batch:** download the template (an example row of every group and type), one item per row. **One group per video** makes separate videos for each group (15 political rows + 10 proverb rows at 5 per video = 3 + 2 videos); **In sheet order** keeps the rows in order and lets groups mix (every item keeps its own badge and colour). Lesson numbers count up from the number you choose.
+- The videos are 1080 × 1920 MP4 (H.264 + AAC, fast start): ready for YouTube Shorts, Instagram Reels, Facebook Reels and TikTok. The preview warns when a video is longer than 60 s (keep Facebook Reels under 60 s).
+
 ### Sound
 - **Built-in music** is generated from scratch, so there are no copyright claims. **Quiz Show**, **Bright Pop**, **Lo-fi Chill**, **Epic** and **Ambient** are real music loops (chords, bass and drums); Tension, Mystery, Calm and Pulse are the original atmospheric drones.
 - **Opening sound**: Bass hit, Cinematic boom, Swoosh + impact, Game show jingle, Sparkle, Deep drums or None.
@@ -127,6 +166,7 @@ Rows with problems (no question, fewer than 2 options, unclear correct answer) a
 | **fontTools** | Checks which Arabic letter forms the font has, so no letters show as boxes. |
 | **openpyxl** | Reads your Excel question sheets and writes the Excel template (Excel batch). |
 | **Cairo font** (Google Fonts, OFL licence) | The Arabic/Latin typeface. You can upload any other .ttf in the app. |
+| **Noto Sans Bold** (Google, OFL licence) | The IPA pronunciation in English Words (Cairo has no IPA letters). |
 
 ### How a video is made
 1. The template turns your inputs into a **timeline of scenes**: camera moves, text pop-ins, counters and bars, all driven by easing curves.
@@ -163,11 +203,12 @@ engine/audio.py      sound effects, music beds, voice, mixing
 engine/icons.py      icons + event card
 engine/countries.py  country names, flags, outlines, true-size map drawing
 engine/tl_batch.py   Timeline videos from an Excel sheet (one row = one video)
+engine/vocab_batch.py English Words videos from an Excel sheet (one row = one item, split per group)
 engine/globe.py      real-Earth globe intro (data/earth.jpg)
 engine/finish.py     motion polish (camera drift, push-ins) + cinematic finish (glow, grain, vignette, light leaks)
 engine/strings.py    Arabic/English wording, year & number formatting
-engine/templates/    timeline.py, quiz.py, mcq.py (add yours here)
-fonts/               Cairo.ttf + licence
+engine/templates/    timeline.py, quiz.py, mcq.py, vocab.py (add yours here)
+fonts/               Cairo.ttf, NotoSans-Bold.ttf (IPA) + licences
 data/                countries.json (outlines) + flags/ — rebuilt with tools/build_countries.py
 projects/            saved projects (+ media/ for your pictures/audio)
 outputs/             rendered videos
