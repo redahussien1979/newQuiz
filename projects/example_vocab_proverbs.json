@@ -1,0 +1,47 @@
+{
+  "template": "vocab",
+  "settings": {
+    "theme": "Emerald",
+    "language": "ar",
+    "fps": 30,
+    "music": "Lo-fi Chill",
+    "music_gain": 1.0,
+    "music_file": "",
+    "voice_file": "",
+    "voice_offset": 0.5,
+    "voice_gain": 1.0,
+    "handle": "@Ma3loomaFast",
+    "font_file": "",
+    "intro_sound": "Swoosh + impact",
+    "tick_sound": "Classic",
+    "tick_gain": 1.0
+  },
+  "ending": {
+    "intro": "الدرس القادم:",
+    "question": "5 English idioms\n[gold]عن المال والعمل",
+    "cta": "أي مثل أعجبك أكثر؟ اكتبه في التعليقات"
+  },
+  "vocab": {
+    "group": "proverbs",
+    "group_name": "",
+    "accent": "group",
+    "background": "group",
+    "title": "",
+    "subtitle": "",
+    "lesson": "English Lesson #{n}",
+    "lesson_n": 13,
+    "title_style": "Fancy",
+    "hook": true,
+    "items": "type: proverb\nword: Actions speak louder than words\nipa: /ˈækʃənz spiːk ˈlaʊdər ðæn wɜːrdz/\nliteral: الأفعال تتكلم بصوت أعلى من الكلمات\nequivalent: الأفعال أبلغ من الأقوال\nmeaning: ما تفعله يكشف حقيقتك أكثر مما تقوله\nexample: He said sorry, but *actions speak louder than words*.\nexample_ar: اعتذر، لكن الأفعال أبلغ من الأقوال.\n\ntype: guess\nword: Don't count your chickens before they hatch\n- الصبر مفتاح الفرج\n- لا تقل فول حتى يصير في المكيول *\n- العجلة من الشيطان\nexample: We may win, but don't count your chickens before they hatch.\n\nproverb: Every cloud has a silver lining\nequivalent: رُبَّ ضارةٍ نافعة\nmeaning: في كل مصيبة جانب إيجابي\nexample: I lost my job, but every cloud has a silver lining.\n\ntype: proverb\nword: Better late than never\nliteral: متأخرًا أفضل من ألّا تأتي أبدًا\nequivalent: أن تصل متأخرًا خيرٌ من ألّا تصل",
+    "guess_seconds": 5,
+    "timer": "Bar",
+    "timer_fx": [
+      "pulse",
+      "glow"
+    ],
+    "pace": "normal",
+    "recap": true,
+    "audio": [],
+    "audio_gain": 1.0
+  }
+}

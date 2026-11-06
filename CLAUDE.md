@@ -3,7 +3,8 @@
 Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / TikTok / Reels) with Pillow + NumPy + FFmpeg.
 
 ## Layout
-- `engine/templates/` — `timeline.py` (Timeline Collision), `quiz.py` (Clue Quiz), `mcq.py` (Multiple Choice); registered in `engine/templates/__init__.py`
+- `engine/templates/` — `timeline.py` (Timeline Collision), `quiz.py` (Clue Quiz), `mcq.py` (Multiple Choice),
+  `vocab.py` (English Words); registered in `engine/templates/__init__.py`
 - `engine/core.py` — drawing, text (Arabic shaping), themes, easing, encoding
 - `engine/audio.py` — synthesized SFX, music beds, voiceover ducking, mixing
 - `engine/mcq_styles.py` — MCQ design styles; `engine/timers.py` — countdown timer designs
@@ -23,7 +24,13 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
 - `engine/globe.py` — real-Earth globe intro from `data/earth.jpg` (NASA Blue Marble, public domain); in
   `timeline.py` the globe intro lasts `GLOBE_LEN` and the rest of the video is shifted by `self.off` (frames + sounds)
 - `engine/render.py` renders frames on several processes (`frame_stream`); templates' `render(t)` must depend only on t
-- `engine/render.py` — build / render_still / render_clip / render_video
+- `engine/render.py` — build / render_still / render_clip / render_video / render_cover (templates with `cover_time`)
+- `engine/templates/vocab.py` — English Words: groups (`GROUPS`: badge, colour, theme, `news` headline style) and item
+  types `word` / `guess` / `reverse` / `mistake` / `proverb` / `idiom` written as `key: value` blocks (`parse_items`,
+  `items_text`); an item may carry its own `group:`. Clips `w1` / `w1e` per item (scenes wait for them). Each scene
+  is a list of elements laid out by `_stack` at the biggest of `SCALES` that fits between `TOP` and `BOTTOM` (Shorts
+  safe area); IPA uses `fonts/NotoSans-Bold.ttf`. `engine/vocab_batch.py` — Excel rows -> items, split per group
+  (template `projects/words_template.xlsx`)
 - `projects/example_*.json` — example projects (same format the app saves)
 
 ## Rules

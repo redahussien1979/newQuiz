@@ -209,6 +209,21 @@ class Mixer:
         f = 42 + 40 * np.exp(-t * 25)
         return _norm(_fade(np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 14), 0.002, 0.03))
 
+    def news_sting(self):
+        """TV-news sting for a headline: three rising bright stabs landing on a low hit (English Words)."""
+        out = np.zeros(int(1.4 * SR))
+        for k, (note, d) in enumerate([(74, 0.0), (79, 0.1), (86, 0.2)]):
+            t = _t(0.45)
+            f = _hz(note)
+            stab = (np.sin(2 * np.pi * f * t) + 0.45 * np.sin(2 * np.pi * 2 * f * t)
+                    + 0.2 * np.sin(2 * np.pi * 3 * f * t)) * np.exp(-t * (9 - 2 * k))
+            i = int(d * SR)
+            out[i:i + len(stab)] += _fade(stab, 0.002, 0.05) * (0.55 + 0.2 * k)
+        i = int(0.2 * SR)
+        kick = _kick(0.6)
+        out[i:i + len(kick)] += kick * 0.9
+        return _norm(_fade(_reverb(out, self.rng, 0.9, 0.22)[:len(out)], 0.002, 0.1))
+
     def click(self):
         """Button tap."""
         t = _t(0.05)

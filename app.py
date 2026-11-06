@@ -19,14 +19,17 @@ from engine.core import COLOR_NAMES, THEME_NAMES
 from engine.icons import ICON_NAMES
 from engine.mcq_styles import STYLE_NAMES
 from engine.timers import TIMER_FX, TIMER_NAMES
-from engine.render import render_clip, render_still, render_video
+from engine.render import render_clip, render_cover, render_still, render_video
 from engine.templates import TEMPLATES
 from engine.header_fx import NUMBER_STYLES
 from engine.quiz_fx import FX_KEYS, FX_OPTIONS
 from engine.templates.mcq import HEADER_STYLES, TITLE_STYLES, narration_report, parse_questions
+from engine.templates.vocab import GROUP_CHOICES, GROUPS, PACES, TYPE_CHOICES, add_item, clips_report, to_word_cards
+from engine.templates.vocab import TITLE_STYLES as VC_TITLE_STYLES
 from engine import batch
 from engine import countries
 from engine import tl_batch
+from engine import vocab_batch
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(ROOT, "outputs")
@@ -48,12 +51,16 @@ EV_KEYS = ["enabled", "name", "year", "label", "color", "icon", "image", "countr
 QZ_KEYS = ["title", "subtitle", "clues", "clue_seconds", "answer_intro", "answer", "answer_sub", "answer_image", "accent"]
 MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", "accent", "style", "timer",
            "colors", "narration", "narration_gain", "timer_fx", "title_style", "header_style", "fx", "number_style"]
-KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS}
+VC_KEYS = ["group", "group_name", "title", "subtitle", "lesson", "lesson_n", "items", "accent", "background",
+           "title_style", "hook", "pace", "guess_seconds", "timer", "timer_fx", "recap", "audio", "audio_gain"]
+KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline"}
-MEDIA_LISTS = {"narration"}  # fields holding several files
+MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
 DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": "", "maps": False, "guess": False,
             "guess_q": "", "intro": "hook", "map_style": "auto", "polish": False, "finish": False,
-            "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0, "title_style": "Fancy", "header_style": "Fancy", "fx": [], "number_style": "plain"}  # for projects saved before these options existed
+            "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0, "title_style": "Fancy", "header_style": "Fancy", "fx": [], "number_style": "plain",
+            "group_name": "", "lesson": "", "lesson_n": 1, "accent": "group", "background": "group", "hook": False,
+            "pace": "normal", "guess_seconds": 5, "timer": "Bar", "recap": True, "audio_gain": 1.0}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -62,7 +69,7 @@ the countdown starts after the last one. The music gets quieter while a clip pla
 
 HELP = """
 ### How to use
-1. Pick a tab (**Timeline Collision**, **Clue Quiz** or **Multiple Choice**), or press **Load example** to start from a finished video.
+1. Pick a tab (**Timeline Collision**, **Clue Quiz**, **Multiple Choice** or **English Words**), or press **Load example** to start from a finished video.
 2. Fill in the fields. They are grouped in small tabs on the left (content, 🎨 Style & sound, 🔚 Ending), so everything fits on one screen.
    The preview on the right **updates by itself** as you type. Move the time slider to check any moment.
 3. Press **Render video**. The MP4 appears on the right (🎞️ Video tab) and is also saved in the `outputs` folder.
@@ -116,6 +123,17 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 - **🤔 Guess moment:** before the answer, 3 choices (× ratio) and a 3-second timer, so viewers comment their guess.
 - 2 to 5 events; they are sorted by value automatically. The shortest gap gets the glowing highlight.
 - Leave *Card subtitle* empty to show the year (or value with its unit) automatically.
+
+### English Words tips
+- Pick a **group** (General words, Political words, Proverbs, Idioms, Common mistakes or your own): it sets the badge,
+  colour and background theme. Political words show the example as a **BREAKING NEWS** headline.
+- Items are blocks of `key: value` lines (see the help above the Items box). Types: word card, guess the meaning,
+  reverse guess, common mistake, proverb (with the Arabic equivalent) and idiom. Mix them freely.
+- `ipa:` shows the pronunciation next to a 🔊 icon; upload clips `w1`, `w1e` in 🎙️ Audio to play your own voice.
+- The word is highlighted in the example automatically; `*stars*` choose other words.
+- Every render also saves a **cover picture** next to the video. 5 items ≈ 60 s at Normal pace; the preview warns
+  above 60 s (Facebook Reels).
+- **📊 Excel batch:** one item per row, one video per group (or in sheet order), lesson numbers count up.
 
 ### Sound
 - Built-in music moods are generated, so there are no copyright issues. You can also upload your own music file.
@@ -260,6 +278,9 @@ def _zip_videos(paths, out_dir):
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
         for p in paths:
             z.write(p, os.path.basename(p))
+            cover = os.path.splitext(p)[0] + " cover.png"
+            if os.path.isfile(cover):
+                z.write(cover, os.path.basename(cover))
     os.replace(tmp, path)
     return path
 
@@ -300,6 +321,7 @@ def _stream_batch(request, plan, progress):
                 except Exception:
                     pass
             render_video(project, out, cb)
+            _save_cover(project, out)
             done.append(out)
             if k < total:
                 yield (out, f"✅ {k} of {total} finished — download them below while video {k + 1} renders… "
@@ -315,6 +337,15 @@ def _stream_batch(request, plan, progress):
                _zip_update(done, out_dir) if done else gr.update(value=None, visible=False), *unlock)
     finally:
         _release(request)
+
+
+def _save_cover(project, video_path):
+    """Templates with a cover frame (English Words) also get '<video name> cover.png' next to the MP4,
+    ready to upload as the Shorts / Reels thumbnail. A failed cover never fails the video."""
+    try:
+        return render_cover(project, os.path.splitext(video_path)[0] + " cover.png")
+    except Exception:
+        return None
 
 
 def _progress_on(dep, comp):
@@ -333,7 +364,10 @@ def make_actions(tpl):
             img, dur = render_still(values_to_project(tpl, vals), t, safe, cached=True)
         except Exception as e:
             raise gr.Error(str(e))
-        return img, f"Video length: **{dur:.1f} s**", gr.update(maximum=max(1.0, round(dur, 1)))
+        msg = f"Video length: **{dur:.1f} s**"
+        if tpl == "vocab" and dur > 60:
+            msg += " — ⚠️ over 60 s: fine for YouTube Shorts and Instagram Reels, but keep Facebook Reels under 60 s"
+        return img, msg, gr.update(maximum=max(1.0, round(dur, 1)))
 
     def clip(t, *vals):
         try:
@@ -355,9 +389,10 @@ def make_actions(tpl):
                 except Exception:
                     pass
             render_video(project, out, cb)
+            cover = _save_cover(project, out)
         except Exception as e:
             raise gr.Error(str(e))
-        return out, f"✅ Video saved to `{os.path.relpath(out, ROOT)}`"
+        return out, f"✅ Video saved to `{os.path.relpath(out, ROOT)}`" + (" (+ cover picture)" if cover else "")
 
     def save(*vals):
         p = values_to_project(tpl, vals)
@@ -370,6 +405,8 @@ def make_actions(tpl):
         elif tpl == "quiz":
             p["quiz"]["answer_image"] = _keep_media(p["quiz"].get("answer_image"))
         stamp = _stamp()
+        if tpl == "vocab":
+            p["vocab"]["audio"] = _keep_media_list(p["vocab"].get("audio"), os.path.join(MEDIA_DIR, f"words_audio_{stamp}"))
         if tpl == "mcq":
             p["mcq"]["narration"] = _keep_media_list(p["mcq"].get("narration"),
                                                      os.path.join(MEDIA_DIR, f"narration_{stamp}"))
@@ -803,6 +840,151 @@ def wire_tl_batch(xl, pv, fields):
                 **_progress_on(dep, pv["vid"]))
 
 
+# ------------------------------------------------------------------ English Words
+VC_ITEMS_HELP = """**One item per block, an empty line between items** (max 10). Start each line with a key:
+`type:` word / guess / reverse / mistake / proverb / idiom (optional — worked out from the lines) ·
+`word:` the word, phrase, proverb or idiom (`right:` the correct sentence of a mistake) · `ipa:` /prəˈnʌnsiˈeɪʃn/ ·
+`pos:` noun • اسم · `meaning:` · `example:` (put \\*stars\\* around words to choose what is highlighted) ·
+`example_ar:` · `also:` similar words, comma separated · `wrong:` the wrong sentence · `literal:` the literal meaning ·
+`equivalent:` the Arabic proverb · `note:` · `question:` your own question · `recap:` short meaning for the recap ·
+`group:` an item from another group (mixed videos).
+Guess options are lines starting with `-`; put `*` after the correct one."""
+VC_AUDIO_HELP = """**Your own audio per item.** Name each clip after its item: `w1` = item 1 (the word, proverb or
+correct sentence — it plays when it appears and the 🔊 icon animates) · `w1e` = item 1's example sentence.
+Any audio type works (mp3, wav, m4a…). The item waits for its clips, and the music gets quieter while they play.
+A voiceover for the whole video is in 🎨 Style & sound."""
+VC_BATCH_HELP = """**Make many videos from one spreadsheet.** One item per row: `Group · Type · Word / Phrase · IPA ·
+Part of speech · Meaning · Example · Example (Arabic) · Similar words · Option A–D · Correct · Wrong sentence ·
+Literal meaning · Arabic equivalent · Note · Question · Recap · Audio · Example audio` (English or Arabic headers — get
+the **template** on the right, it has an example of every group and type). Every video uses the design, timing,
+music and ending you set in the other tabs, and the colour and theme of its own group. In the title, `{n}` becomes the
+video number and `{total}` the number of videos (empty = automatic title per group)."""
+
+
+def _vc_template_path():
+    path = os.path.join(PROJ_DIR, "words_template.xlsx")
+    if not os.path.isfile(path):
+        try:
+            vocab_batch.write_template(path)
+        except Exception:  # openpyxl missing: no template button
+            return None
+    return path
+
+
+def vc_batch_tab():
+    with gr.Row(equal_height=True):
+        gr.Markdown(VC_BATCH_HELP)
+        tpl = _vc_template_path()
+        gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), size="sm", min_width=130, scale=0)
+    with gr.Row():
+        sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Words sheet (.xlsx or .csv)",
+                        height=120)
+        clips = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=120,
+                        label="Audio clips named in the sheet (optional)")
+    folder = gr.Textbox(label="…or the folder on this computer that holds the clips (optional)",
+                        placeholder=r"C:\english\audio")
+    with gr.Row():
+        per = gr.Slider(1, vocab_batch.MAX_ITEMS, value=5, step=1, label="Items per video")
+        split = gr.Radio(vocab_batch.SPLIT_MODES, value="group", label="Split")
+    with gr.Row():
+        title = gr.Textbox(label="Title of each video (optional)", placeholder="5 Political Words — Part {n}")
+        lesson0 = gr.Number(value=1, precision=0, label="First lesson number (English Lesson #{n})")
+    with gr.Row(equal_height=True):
+        info = gr.Markdown("Upload a sheet to see how many videos it makes.")
+        go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, min_width=230, scale=0)
+    zipb = gr.DownloadButton("📦 Download all (.zip)", visible=False, variant="primary")
+    files = gr.File(label="Rendered videos — each one appears here as soon as it finishes (a cover picture is saved "
+                          "next to each)", file_count="multiple", visible=False, height=320)
+    with gr.Row(equal_height=True):
+        part = gr.Dropdown([], label="Preview one video in the editor", scale=2)
+        load = gr.Button("📥 Load into editor", scale=1, min_width=120)
+    return dict(sheet=sheet, clips=clips, folder=folder, per=per, split=split, title=title, lesson0=lesson0, info=info,
+                go=go, files=files, zip=zipb, part=part, load=load)
+
+
+def wire_vc_batch(xl, pv, fields):
+    inputs = [xl["sheet"], xl["clips"], xl["folder"], xl["per"], xl["split"]]
+
+    def read(sheet, clips, folder, per, split, vals):
+        if not sheet:
+            raise ValueError("Upload a words sheet first.")
+        items, problems = vocab_batch.load_sheet(sheet, clips or [], folder or "")
+        base = values_to_project("vocab", vals)
+        g = base["vocab"].get("group") or "general"
+        videos = vocab_batch.split(items, per, split or "group", g)
+        return items, problems, videos, base
+
+    def check(sheet, clips, folder, per, split, *vals):
+        off = gr.update(value="🎬 Render all videos", interactive=False)
+        if not sheet:
+            return "Upload a sheet to see how many videos it makes.", gr.update(choices=[], value=None), off
+        try:
+            items, problems, videos, base = read(sheet, clips, folder, per, split, vals)
+        except Exception as e:
+            return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
+        g, gname = base["vocab"].get("group") or "general", base["vocab"].get("group_name") or ""
+        choices = [(f"Video {k} — {vocab_batch.group_label(v, g, gname)}, {len(v['items'])} items "
+                    f"(rows {v['items'][0]['row']}–{v['items'][-1]['row']})", k) for k, v in enumerate(videos, 1)]
+        n = len(videos)
+        go = gr.update(value=f"🎬 Render all {n} video{'s' if n != 1 else ''}" if n else "🎬 Render all videos",
+                       interactive=bool(n))
+        return (vocab_batch.summary(items, problems, videos, g, gname), gr.update(choices=choices, value=1 if choices else None),
+                go)
+
+    def load_part(sheet, clips, folder, per, split, k, title_tpl, lesson0, *vals):
+        try:
+            items, problems, videos, base = read(sheet, clips, folder, per, split, vals)
+            k = int(k or 1)
+            if not 1 <= k <= len(videos):
+                raise ValueError("Pick a video to preview.")
+            proj = vocab_batch.part_project(base, videos[k - 1], k, len(videos),
+                                            os.path.join(OUT_DIR, "_batch_preview", f"words_{k:02d}"),
+                                            lesson_n=int(lesson0 or 1) + k - 1, title=title_tpl or None)
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        gr.Info(f"Video {k} of {len(videos)} is in the editor. 🎬 Render video makes only this one — "
+                f"use 🎬 Render all in 📊 Excel batch for all {len(videos)}.", duration=8)
+        return project_to_values(proj, "vocab")
+
+    def start(request: gr.Request):
+        if not _claim(request):
+            raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+        return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
+                gr.update(interactive=False), "⏳ Rendering all videos… each one appears below as soon as it is done.",
+                gr.update(value=None, visible=False), gr.update(value=None, visible=False))
+
+    def render_all(request: gr.Request, sheet, clips, folder, per, split, title_tpl, lesson0, *vals,
+                   progress=gr.Progress()):
+        def plan():
+            items, problems, videos, base = read(sheet, clips, folder, per, split, vals)
+            if not videos:
+                raise ValueError("The sheet has no usable rows." + (f" First problem: {problems[0]}" if problems else ""))
+            g, gname = base["vocab"].get("group") or "general", base["vocab"].get("group_name") or ""
+            out_dir = os.path.join(OUT_DIR, f"batch_words_{_stamp()}")
+            os.makedirs(out_dir, exist_ok=True)
+            total = len(videos)
+            first = int(lesson0 or 1)
+
+            def jobs():
+                taken = set()
+                for k, video in enumerate(videos, 1):
+                    name = vocab_batch.video_name(video, k, g, gname, taken)
+                    yield name, vocab_batch.part_project(base, video, k, total, os.path.join(out_dir, f"{name} audio"),
+                                                         lesson_n=first + k - 1, title=title_tpl or None)
+            return out_dir, total, jobs()
+
+        yield from _stream_batch(request, plan, progress)
+
+    gr.on(triggers=[c.change for c in inputs], fn=check, inputs=inputs + fields,
+          outputs=[xl["info"], xl["part"], xl["go"]], trigger_mode="always_last", show_progress="hidden")
+    xl["load"].click(load_part, inputs + [xl["part"], xl["title"], xl["lesson0"]] + fields, fields)
+    dep = xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"],
+                                       xl["files"], xl["zip"]], queue=False)
+    dep.success(render_all, inputs + [xl["title"], xl["lesson0"]] + fields,
+                [pv["vid"], pv["info"], xl["files"], xl["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]],
+                **_progress_on(dep, pv["vid"]))
+
+
 def build_ui():
     kw = {"css": CSS} if "css" in inspect.signature(gr.Blocks.__init__).parameters else {}
     with gr.Blocks(title="Video Studio", **kw) as demo:
@@ -997,12 +1179,107 @@ def build_ui():
             # .select = only when the user picks a theme (not when an example or project is loaded)
             mq_st["theme"].select(theme_follows, [m_style, m_colors], m_colors, show_progress="hidden")
 
+        with gr.Tab("🔤 English Words"):
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=3, min_width=420):
+                    vc_proj = project_bar()
+                    with gr.Tabs():
+                        with gr.Tab("📝 Items"):
+                            with gr.Column(elem_classes="pane"):
+                                with gr.Row():
+                                    v_group = gr.Dropdown(GROUP_CHOICES, value="politics", label="Group",
+                                                          info="Sets the badge, colour and background of the video")
+                                    v_gname = gr.Textbox(label="Badge text (optional)",
+                                                         placeholder="Your own group's name, e.g. BUSINESS • أعمال",
+                                                         info="Your own group: its name. Other groups: renames the badge")
+                                with gr.Row():
+                                    v_title = gr.Textbox(label="Title (empty = automatic)",
+                                                         placeholder="{count} Political Words")
+                                    v_sub = gr.Textbox(label="Subtitle (empty = automatic)", rtl=True)
+                                with gr.Row():
+                                    v_lesson = gr.Textbox(label="Lesson line (optional)", placeholder="English Lesson #{n}",
+                                                          info="{n} = the lesson number")
+                                    v_lesson_n = gr.Number(value=1, precision=0, label="Lesson number")
+                                v_items = gr.Textbox(lines=16, max_lines=60, label="Items", info=VC_ITEMS_HELP)
+                                with gr.Row(equal_height=True):
+                                    v_type = gr.Dropdown(TYPE_CHOICES, value="word", label="New item type", scale=2)
+                                    v_add = gr.Button("➕ Add item", scale=1, min_width=110)
+                                    v_words = gr.Button("🔁 Make all word cards", scale=1, min_width=150)
+                        with gr.Tab("⏱️ Design & timing"):
+                            with gr.Column(elem_classes="pane"):
+                                with gr.Row():
+                                    v_acc = gr.Dropdown(["group"] + COLOR_NAMES, value="group", allow_custom_value=True,
+                                                        label="Accent colour", info="group = the group's own colour, "
+                                                                                    "or a colour name / #hex")
+                                    v_bg = gr.Radio([("Group's theme", "group"), ("Theme in 🎨 Style & sound", "theme")],
+                                                    value="group", label="Background")
+                                with gr.Row():
+                                    v_tstyle = gr.Radio(VC_TITLE_STYLES, value="Fancy", label="Opening title",
+                                                        info="Fancy = Aa badge, 3D title slam, shockwave and sparks "
+                                                             "(best with the 'Swoosh + impact' opening sound). "
+                                                             "Simple = clean pop-in.")
+                                    v_hook = gr.Checkbox(value=True, label="Show the first word faintly behind the title")
+                                with gr.Row():
+                                    v_pace = gr.Radio(PACES, value="normal", label="Pace",
+                                                      info="How long each line stays before the next one appears")
+                                    v_recap = gr.Checkbox(value=True, label="Recap at the end (What did we learn today?)")
+                                with gr.Row():
+                                    v_secs = gr.Slider(2, 15, value=5, step=1, label="Guess countdown (seconds)")
+                                    v_timer = gr.Dropdown(TIMER_NAMES, value="Bar", label="Guess timer")
+                                v_tfx = gr.CheckboxGroup(TIMER_FX, value=["pulse", "glow"], label="Timer effects")
+                        with gr.Tab("🎙️ Audio"):
+                            with gr.Column(elem_classes="pane"):
+                                gr.Markdown(VC_AUDIO_HELP)
+                                v_audio = gr.File(file_count="multiple", type="filepath", file_types=["audio"],
+                                                  label="Audio clips (select many at once)", height=170)
+                                v_again = gr.Slider(0, 2, value=1.0, step=0.05, label="Clips volume")
+                                v_ainfo = gr.Markdown("No audio clips yet.")
+                        with gr.Tab("📊 Excel batch"):
+                            with gr.Column(elem_classes="pane"):
+                                vxl = vc_batch_tab()
+                        vc_st = style_tab()
+                        vc_end = ending_tab()
+                    vc_fields = shared_fields(vc_st, vc_end) + [v_group, v_gname, v_title, v_sub, v_lesson, v_lesson_n,
+                                                                 v_items, v_acc, v_bg, v_tstyle, v_hook, v_pace, v_secs,
+                                                                 v_timer, v_tfx, v_recap, v_audio, v_again]
+                vc_pv = preview_panel("vocab")
+            wire(vc_proj, vc_pv, vc_fields)
+            wire_vc_batch(vxl, vc_pv, vc_fields)
+            gr.on(triggers=[v_audio.change, v_items.change], fn=clips_report, inputs=[v_audio, v_items],
+                  outputs=v_ainfo, trigger_mode="always_last", show_progress="hidden")
+            v_add.click(add_item, [v_items, v_type], v_items)
+
+            def make_words(text):
+                try:
+                    new, n = to_word_cards(text)
+                except ValueError as e:
+                    raise gr.Error(f"Fix the items first: {e}")
+                gr.Info(f"{n} guess item{'s' if n != 1 else ''} turned into word cards." if n else
+                        "There are no guess items to turn into word cards.", duration=5)
+                return new if n else gr.update()
+            v_words.click(make_words, v_items, v_items)
+
+            def group_theme(group, bg):
+                """Picking a group shows its own theme in 🎨 Style & sound (used while Background = Group's theme)."""
+                if bg == "group" and group in GROUPS:
+                    return gr.update(value=GROUPS[group]["theme"])
+                return gr.update()
+            v_group.select(group_theme, [v_group, v_bg], vc_st["theme"], show_progress="hidden")
+
+            def theme_picked(bg):
+                if bg != "theme":
+                    gr.Info("Background switched to the theme you picked (⏱️ Design & timing → Background).", duration=6)
+                    return "theme"
+                return gr.update()
+            vc_st["theme"].select(theme_picked, v_bg, v_bg, show_progress="hidden")
+
         with gr.Tab("📘 Help"):
             gr.Markdown(HELP)
 
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["timeline"][2]), "timeline"), None, tl_fields)
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["quiz"][2]), "quiz"), None, qz_fields)
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["mcq"][2]), "mcq"), None, mq_fields)
+        demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["vocab"][2]), "vocab"), None, vc_fields)
     return demo
 
 
