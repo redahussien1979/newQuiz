@@ -29,11 +29,15 @@ from engine.templates.vocab import TITLE_STYLES as VC_TITLE_STYLES
 from engine import batch
 from engine import countries
 from engine import tl_batch
+from engine import userdata
 from engine import vocab_batch
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-OUT_DIR = os.path.join(ROOT, "outputs")
-PROJ_DIR = os.path.join(ROOT, "projects")
+APP_PROJ_DIR = os.path.join(ROOT, "projects")  # ships with the app: example projects + Excel templates
+# Your own work lives outside the app folder (Documents/Video Studio), so a new download never deletes it.
+DATA_DIR = userdata.data_dir(ROOT)
+OUT_DIR = os.path.join(DATA_DIR, "outputs")
+PROJ_DIR = os.path.join(DATA_DIR, "projects")
 MEDIA_DIR = os.path.join(PROJ_DIR, "media")
 for _d in (OUT_DIR, PROJ_DIR, MEDIA_DIR):
     os.makedirs(_d, exist_ok=True)
@@ -72,8 +76,12 @@ HELP = """
 1. Pick a tab (**Timeline Collision**, **Clue Quiz**, **Multiple Choice** or **English Words**), or press **Load example** to start from a finished video.
 2. Fill in the fields. They are grouped in small tabs on the left (content, 🎨 Style & sound, 🔚 Ending), so everything fits on one screen.
    The preview on the right **updates by itself** as you type. Move the time slider to check any moment.
-3. Press **Render video**. The MP4 appears on the right (🎞️ Video tab) and is also saved in the `outputs` folder.
-4. **Save project** keeps everything (including your images and audio) as a `.json` file you can reopen later.
+3. Press **Render video**. The MP4 appears on the right (🎞️ Video tab) and is also saved in **Documents\\Video Studio\\outputs**.
+4. **Save project** keeps everything (including your images and audio) as a `.json` file in
+   **Documents\\Video Studio\\projects** that you can reopen later.
+5. Your work is kept **outside the app folder** (the exact folder is shown at the top of the page), so you can replace the
+   app with a new download without losing anything. Saved work found in the app's own `projects` / `outputs` folders
+   (from older versions) is moved there when the app starts.
 
 ### Text tricks
 - Multi-line fields: **one line per row**.
@@ -242,6 +250,11 @@ def _msg(e):
     return str(getattr(e, "message", None) or e)
 
 
+def _where(path):
+    """Full path for messages (your work is outside the app folder)."""
+    return os.path.abspath(path)
+
+
 def _stamp():
     return dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -308,7 +321,7 @@ def _stream_batch(request, plan, progress):
               gr.update(interactive=True))
     try:
         out_dir, total, jobs = plan()
-        where = os.path.relpath(out_dir, ROOT)
+        where = _where(out_dir)
         for k, (name, project) in enumerate(jobs, 1):
             with open(os.path.join(out_dir, name + ".json"), "w", encoding="utf-8") as f:
                 json.dump(project, f, ensure_ascii=False, indent=2)
@@ -392,7 +405,7 @@ def make_actions(tpl):
             cover = _save_cover(project, out)
         except Exception as e:
             raise gr.Error(str(e))
-        return out, f"✅ Video saved to `{os.path.relpath(out, ROOT)}`" + (" (+ cover picture)" if cover else "")
+        return out, f"✅ Video saved to `{_where(out)}`" + (" (+ cover picture)" if cover else "")
 
     def save(*vals):
         p = values_to_project(tpl, vals)
@@ -413,7 +426,7 @@ def make_actions(tpl):
         path = os.path.join(PROJ_DIR, f"{tpl}_{stamp}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(p, f, ensure_ascii=False, indent=2)
-        return f"💾 Project saved to `{os.path.relpath(path, ROOT)}`"
+        return f"💾 Project saved to `{_where(path)}`"
 
     def load(file):
         path = file if isinstance(file, str) else getattr(file, "name", None)
@@ -421,6 +434,8 @@ def make_actions(tpl):
             p = json.load(f)
         if p.get("template", "timeline") != tpl:
             raise gr.Error(f"This is a '{p.get('template')}' project — open it in its own tab.")
+        # pictures / audio that moved (older versions kept them inside the app folder): find them by name
+        userdata.relink(p, MEDIA_DIR, MEDIA_FIELDS | MEDIA_LISTS)
         return project_to_values(p, tpl)
 
     def example():
@@ -621,7 +636,7 @@ you set in the other tabs. In the title, `{n}` becomes the video number and `{to
 
 
 def _template_path():
-    path = os.path.join(PROJ_DIR, "questions_template.xlsx")
+    path = os.path.join(APP_PROJ_DIR, "questions_template.xlsx")
     if not os.path.isfile(path):
         try:
             items = parse_questions(TEMPLATES["mcq"][2]["mcq"]["questions"])
@@ -748,7 +763,7 @@ comparisons) on the right."""
 
 
 def _tl_template_path():
-    path = os.path.join(PROJ_DIR, "countries_template.xlsx")
+    path = os.path.join(APP_PROJ_DIR, "countries_template.xlsx")
     if not os.path.isfile(path):
         try:
             tl_batch.write_template(path)
@@ -862,7 +877,7 @@ video number and `{total}` the number of videos (empty = automatic title per gro
 
 
 def _vc_template_path():
-    path = os.path.join(PROJ_DIR, "words_template.xlsx")
+    path = os.path.join(APP_PROJ_DIR, "words_template.xlsx")
     if not os.path.isfile(path):
         try:
             vocab_batch.write_template(path)
@@ -988,7 +1003,8 @@ def wire_vc_batch(xl, pv, fields):
 def build_ui():
     kw = {"css": CSS} if "css" in inspect.signature(gr.Blocks.__init__).parameters else {}
     with gr.Blocks(title="Video Studio", **kw) as demo:
-        gr.Markdown("## 🎬 Video Studio <small>— the preview on the right updates live as you edit</small>",
+        gr.Markdown("## 🎬 Video Studio <small>— the preview on the right updates live as you edit · "
+                    f"💾 your projects and videos are saved in <code>{DATA_DIR}</code></small>",
                     elem_id="app-title")
         with gr.Tab("⏳ Timeline Collision"):
             with gr.Row(equal_height=False):
@@ -1284,9 +1300,25 @@ def build_ui():
 
 
 def launch_kwargs():
-    """Gradio 6 takes css in launch(); Gradio 5 takes it in Blocks()."""
-    return {"css": CSS} if "css" in inspect.signature(gr.Blocks.launch).parameters else {}
+    """Gradio 6 takes css in launch(); Gradio 5 takes it in Blocks(). The data folder is outside the app folder,
+    so the browser must be allowed to show the videos and pictures in it."""
+    kw = {"css": CSS} if "css" in inspect.signature(gr.Blocks.launch).parameters else {}
+    kw["allowed_paths"] = [DATA_DIR]
+    return kw
+
+
+def rescue_old_work():
+    """Older versions saved inside the app folder: copy / move that work to the data folder once."""
+    try:
+        done = userdata.rescue(ROOT, DATA_DIR)
+    except Exception as e:  # never stop the app over this
+        print(f"Could not move older saved work: {e}")
+        return
+    if done:
+        print(f"Moved {len(done)} saved item(s) from the app folder to {DATA_DIR}")
 
 
 if __name__ == "__main__":
+    rescue_old_work()
+    print(f"Your projects and videos are saved in: {DATA_DIR}")
     build_ui().queue().launch(inbrowser=True, **launch_kwargs())
