@@ -31,7 +31,11 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   is a list of elements laid out by `_stack` at the biggest of `SCALES` that fits between `TOP` and `BOTTOM` (Shorts
   safe area); IPA uses `fonts/NotoSans-Bold.ttf`. `engine/vocab_batch.py` — Excel rows -> items, split per group
   (template `projects/words_template.xlsx`)
-- `projects/example_*.json` — example projects (same format the app saves)
+- `projects/example_*.json` — example projects (same format the app saves); `projects/*_template.xlsx` — Excel templates
+- `engine/userdata.py` — the user's work lives OUTSIDE the app folder (the user updates by replacing the folder with a
+  new zip): `DATA_DIR` = Documents/Video Studio (or env `VS_DATA`) holds `projects/` (+ `media/`) and `outputs/`;
+  `APP_PROJ_DIR` (app `projects/`) only holds shipped files. `rescue()` moves work older versions saved inside the app
+  folder; `relink()` finds a project's media by name; `launch(allowed_paths=[DATA_DIR])` lets the browser show it
 
 ## Rules
 - Arabic text must stay right-to-left and correctly joined (RAQM when available, else arabic-reshaper + python-bidi fallback in `core._prep`).
