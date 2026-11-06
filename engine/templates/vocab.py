@@ -1447,8 +1447,29 @@ class VocabVideo:
         num = text_img(str(k + 1), 32, INK, "Black", shadow=False)
         im.alpha_composite(num, (cx - num.width // 2, int(cy - num.height // 2 - 2)))
 
+    def _recap_line(self, im, cy, en, esz, side, ssz, struck, acc, right):
+        """English on the left and the Arabic meaning (or the struck-out mistake) on the right, both on ONE
+        baseline, so words of different heights (Sanctions / عقوبات) sit exactly level with the number."""
+        base = cy + 0.3 * esz  # Latin capitals and Arabic letters both centre ~0.3 × size above the baseline
+        e = baseline_img(en, esz, acc, "Black")
+        im.alpha_composite(e, (40 + 104 - 20, int(base - esz * 1.2)))
+        if side:
+            a = baseline_img(side, ssz, (255, 140, 140) if struck else WHITE, "Bold")
+            ax = right - (a.width - 20)
+            im.alpha_composite(a, (int(ax), int(base - ssz * 1.2)))
+            if struck:
+                y = base - 0.3 * ssz
+                ImageDraw.Draw(im).line([(ax + 14, y + 2), (ax + a.width - 14, y - 2)], fill=RED + (255,), width=4)
+
     def _recap_row2(self, k, en, ar, struck):
         acc = self.items[k]["acc"]
+        side = struck or ar
+        if text_width(en, 48, "Black") + (text_width(side, 42, "Bold") + 60 if side else 0) <= 730:
+            h = 100  # short enough: one line, English left, meaning right
+            im = card(880, h, shade(acc, 0.85), self.card_fill, alpha=236, r=34, width=3).copy()
+            self._recap_num(im, k, 40 + h / 2)
+            self._recap_line(im, 40 + h / 2, en, 48, side, 42, struck, acc, 40 + 880 - 40)
+            return im, h
         el, esz = fit_lines(en, 48, "Black", 720, 2, 34)
         eimg = lines_img(el, esz, acc, "Black", align="l", pitch=int(esz * 1.22))
         side = struck or ar
@@ -1480,16 +1501,14 @@ class VocabVideo:
         im = card(880, h, shade(acc, 0.85), self.card_fill, alpha=236, r=30, width=3).copy()
         cy = 40 + h // 2
         self._recap_num(im, k, cy)
-        e = text_img(ellipsize(en, 30, "Black", 400), 40, acc, "Black", shadow=False, max_w=400)
-        im.alpha_composite(e, (40 + 100 - 30, cy - e.height // 2))
+        en = ellipsize(en, 40, "Black", 400)
+        esz = fit_lines(en, 40, "Black", 400, 1, 22)[1]
         side = struck or ar
+        ssz = 36
         if side:
-            side = ellipsize(side, 28, "Bold", 320)
-            a = text_img(side, 36, (255, 140, 140) if struck else WHITE, "Bold", shadow=False, max_w=320)
-            ax = 40 + 880 - 36 - a.width + 30
-            im.alpha_composite(a, (ax, cy - a.height // 2))
-            if struck:
-                ImageDraw.Draw(im).line([(ax + 22, cy + 2), (ax + a.width - 22, cy - 2)], fill=RED + (255,), width=4)
+            side = ellipsize(side, 36, "Bold", 320)
+            ssz = fit_lines(side, 36, "Bold", 320, 1, 20)[1]
+        self._recap_line(im, cy, en, esz, side, ssz, struck, acc, 40 + 880 - 36)
         return im, h
 
     # ============================================================ render
