@@ -1,0 +1,47 @@
+{
+  "template": "vocab",
+  "settings": {
+    "theme": "Royal Blue",
+    "language": "ar",
+    "fps": 30,
+    "music": "Lo-fi Chill",
+    "music_gain": 1.0,
+    "music_file": "",
+    "voice_file": "",
+    "voice_offset": 0.5,
+    "voice_gain": 1.0,
+    "handle": "@Ma3loomaFast",
+    "font_file": "",
+    "intro_sound": "Swoosh + impact",
+    "tick_sound": "Classic",
+    "tick_gain": 1.0
+  },
+  "ending": {
+    "intro": "الدرس القادم:",
+    "question": "5 English idioms\n[gold]عن المال والعمل",
+    "cta": "أي كلمة كانت جديدة عليك؟ اكتبها في التعليقات"
+  },
+  "vocab": {
+    "group": "politics",
+    "group_name": "",
+    "accent": "group",
+    "background": "group",
+    "title": "",
+    "subtitle": "",
+    "lesson": "English Lesson #{n}",
+    "lesson_n": 12,
+    "title_style": "Fancy",
+    "hook": true,
+    "items": "type: word\nword: Sanctions\nipa: /ˈsæŋkʃənz/\npos: noun • اسم\nmeaning: عقوبات (على دولة أو جهة)\nexample: UN imposes new *sanctions* on the regime\nexample_ar: فرضت الأمم المتحدة عقوبات جديدة على النظام\nalso: embargo, penalties\n\ntype: word\nword: Referendum\nipa: /ˌrefəˈrendəm/\npos: noun • اسم\nmeaning: استفتاء شعبي\nexample: Voters reject the *referendum* by a narrow margin\nexample_ar: الناخبون يرفضون الاستفتاء بفارق ضئيل\nalso: vote, ballot\n\ntype: guess\nword: Ceasefire\nipa: /ˈsiːsfaɪər/\n- إعلان الحرب\n- وقف إطلاق النار *\n- انتخابات مبكرة\n- تحالف عسكري\nexample: Both sides agreed to a *ceasefire* last night\nexample_ar: اتفق الطرفان على وقف إطلاق النار الليلة الماضية\n\ntype: word\nword: Coalition\nipa: /ˌkəʊəˈlɪʃn/\npos: noun • اسم\nmeaning: ائتلاف • تحالف\nexample: The new *coalition* government takes office\nexample_ar: حكومة الائتلاف الجديدة تتسلم السلطة\nalso: alliance, union\n\ntype: guess\nword: Veto\nipa: /ˈviːtəʊ/\n- حق النقض (الرفض) *\n- حق التصويت\n- حصانة دبلوماسية\n- قرار ملزم\nexample: Russia uses its *veto* at the Security Council\nexample_ar: روسيا تستخدم حق النقض في مجلس الأمن",
+    "guess_seconds": 5,
+    "timer": "Bar",
+    "timer_fx": [
+      "pulse",
+      "glow"
+    ],
+    "pace": "normal",
+    "recap": true,
+    "audio": [],
+    "audio_gain": 1.0
+  }
+}

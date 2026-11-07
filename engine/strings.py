@@ -12,7 +12,11 @@ STR = {
                levels=dict(easy="سهل", medium="متوسط", hard="صعب"), final="السؤال الأخير!",
                score_q="كم نقطة حصلت؟", score_levels=["مبتدئ", "خبير", "عبقري!"],
                subscribe="اشترك", subscribed="تم الاشتراك",
-               exam_title="اختبار المعلومات العامة", exam_name="الاسم:", excellent="ممتاز!"),
+               exam_title="اختبار المعلومات العامة", exam_name="الاسم:", excellent="ممتاز!",
+               # English Words (engine/templates/vocab.py)
+               vw_literal="الترجمة الحرفية", vw_real="المعنى الحقيقي", vw_equiv="المثل العربي المقابل",
+               vw_wrong="خطأ", vw_right="صحيح", vw_mistake="خطأ شائع عند العرب",
+               vw_proverb_q="ما المثل العربي المقابل؟", vw_recap="ماذا تعلّمنا اليوم؟"),
     "en": dict(bce="BC", ce="AD", years="years", years_few="years", now="Now",
                ago_short="{n} ago", ago_full="{n} years ago",
                frm="From {a}", to="to {b}", from_to="{a} to {b}",
@@ -24,7 +28,10 @@ STR = {
                levels=dict(easy="Easy", medium="Medium", hard="Hard"), final="FINAL QUESTION!",
                score_q="What's your score?", score_levels=["Beginner", "Expert", "Genius!"],
                subscribe="SUBSCRIBE", subscribed="SUBSCRIBED",
-               exam_title="General Knowledge Test", exam_name="Name:", excellent="Excellent!"),
+               exam_title="General Knowledge Test", exam_name="Name:", excellent="Excellent!",
+               vw_literal="Literal meaning", vw_real="Real meaning", vw_equiv="Arabic equivalent",
+               vw_wrong="WRONG", vw_right="CORRECT", vw_mistake="A very common mistake",
+               vw_proverb_q="Which Arabic proverb matches?", vw_recap="What did we learn today?"),
 }
 
 

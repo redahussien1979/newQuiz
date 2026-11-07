@@ -142,6 +142,17 @@ def render_video(project, out_path, progress=None):
     return out_path, video.dur
 
 
+def render_cover(project, out_path):
+    """Save the template's cover frame (its opening title) as a PNG for the Shorts / Reels thumbnail.
+    Returns the path, or None when the template has no cover (no `cover_time`)."""
+    video = build(project)
+    t = getattr(video, "cover_time", None)
+    if t is None:
+        return None
+    video.render(min(float(t), video.dur - 1.0 / video.fps)).save(out_path)
+    return out_path
+
+
 def render_clip(project, out_path, t0=0.0, secs=6.0, fps=15, scale=3):
     """Fast low-resolution motion preview (with sound) of a few seconds starting at t0."""
     import subprocess
