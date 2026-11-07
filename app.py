@@ -57,7 +57,7 @@ EV_KEYS = ["enabled", "name", "year", "label", "color", "icon", "image", "countr
 QZ_KEYS = ["title", "subtitle", "clues", "clue_seconds", "answer_intro", "answer", "answer_sub", "answer_image", "accent"]
 MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", "accent", "style", "timer",
            "colors", "narration", "narration_gain", "timer_fx", "title_style", "header_style", "fx", "number_style",
-           "layout"]
+           "layout", "letters"]
 VC_KEYS = ["group", "group_name", "title", "subtitle", "lesson", "lesson_n", "items", "accent", "background",
            "title_style", "hook", "pace", "guess_seconds", "timer", "timer_fx", "recap", "audio", "audio_gain"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS}
@@ -65,7 +65,7 @@ MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image"
 MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
 DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": "", "maps": False, "guess": False,
             "guess_q": "", "intro": "hook", "map_style": "auto", "polish": False, "finish": False,
-            "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0, "title_style": "Fancy", "header_style": "Fancy", "fx": [], "number_style": "plain", "layout": "Standard",
+            "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0, "title_style": "Fancy", "header_style": "Fancy", "fx": [], "number_style": "plain", "layout": "Standard", "letters": True,
             "group_name": "", "lesson": "", "lesson_n": 1, "accent": "group", "background": "group", "hook": False,
             "pace": "normal", "guess_seconds": 5, "timer": "Bar", "recap": True, "audio_gain": 1.0}  # for projects saved before these options existed
 
@@ -1251,6 +1251,9 @@ def build_ui():
                                                          "writes the explanation. Islamic = emerald and gold with a "
                                                          "mihrab-arch card. (Design style, header and number style "
                                                          "apply to Standard; timer type and animations to all.)")
+                                m_letters = gr.Checkbox(value=True, label="Show option letters (أ ب ج د / A B C D)",
+                                                        info="Off = the options without letters (centred on "
+                                                             "Standard cards).")
                                 with gr.Row():
                                     m_style = gr.Dropdown(STYLE_NAMES, value="Game Show", label="Design style")
                                     m_timer = gr.Dropdown(TIMER_NAMES, value="Ring", label="Timer type")
@@ -1301,7 +1304,7 @@ def build_ui():
                     mq_fields = shared_fields(mq_st, mq_end) + [m_title, m_sub, m_qs, m_think, m_rev, m_acc, m_style,
                                                                  m_timer, m_colors, m_narr, m_narr_gain, m_fx,
                                                                  m_tstyle, m_hstyle, m_qfx, m_nstyle,
-                                                                 m_layout]
+                                                                 m_layout, m_letters]
                 mq_pv = preview_panel("mcq")
             wire(mq_proj, mq_pv, mq_fields)
             gr.on(triggers=[m_narr.change, m_qs.change], fn=narration_report, inputs=[m_narr, m_qs],

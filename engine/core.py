@@ -246,6 +246,89 @@ _SKIP = set(" \t\n\r\u200b\u200c\u200d\u200e\u200f\u061c\u2066\u2067\u2068\u2069
 _covered = {}
 
 
+def _covers(path, ch):
+    key = (path, ch)
+    if key not in _covered:
+        cmap = _font_cmap(path)
+        _covered[key] = (ord(ch) in cmap) if cmap is not None else _pil_has(path, ch)
+    return _covered[key]
+
+
+# in Arabic text, characters a font often lacks -> the Arabic form it usually has (used only when that is so)
+_SUBST = {**{str(d): chr(0x660 + d) for d in range(10)}, "?": "؟", ",": "،", ";": "؛", "%": "٪"}
+
+
+def _fit_text(txt):
+    """(text, runs) for the chosen font. In Arabic text, characters the font lacks are swapped for their Arabic form
+    when the font has it (0-9 -> ٠-٩, ? -> ؟ …). runs is None when one font writes everything, else
+    [(segment, font path)]: only the characters the font still cannot write are drawn in Cairo."""
+    path = _state["font"]
+    if path == DEFAULT_FONT:
+        return txt, None
+    if not HAS_RAQM and is_rtl(txt):  # pre-shaped text: mixing fonts would break the joining; all or nothing
+        return txt, (None if _font_for(txt) == path else [(txt, DEFAULT_FONT)])
+    if is_rtl(txt):
+        txt = "".join(_SUBST[c] if c in _SUBST and not _covers(path, c) and _covers(path, _SUBST[c]) else c
+                      for c in txt)
+    flags = [ch in _SKIP or _covers(path, ch) for ch in txt]
+    if all(flags):
+        return txt, None
+    runs, cur, cur_ok = [], "", None
+    for ch, ok in zip(txt, flags):
+        if ch in _SKIP:  # spaces stay with the run they follow
+            cur += ch
+            continue
+        if cur_ok is None or ok == cur_ok:
+            cur, cur_ok = cur + ch, ok if cur_ok is None else cur_ok
+        else:
+            runs.append((cur, path if cur_ok else DEFAULT_FONT))
+            cur, cur_ok = ch, ok
+    if cur:
+        runs.append((cur, path if cur_ok in (True, None) else DEFAULT_FONT))
+    return txt, runs
+
+
+def text_img_in(path, txt, size, color, weight="Black", shadow=False, max_w=None):
+    """text_img() as it would look with font file `path` chosen (caches are per font, so nothing is reset)."""
+    old = _state["font"]
+    _state["font"] = path
+    try:
+        return text_img(txt, size, color, weight, shadow=shadow, max_w=max_w)
+    finally:
+        _state["font"] = old
+
+
+def missing_chars(path, txt):
+    """Characters of txt that font file `path` cannot write even after the Arabic swaps (they are drawn in Cairo)."""
+    old = _state["font"]
+    _state["font"] = path
+    try:
+        fixed, _ = _fit_text(txt)
+        return sorted({c for c in fixed if c not in _SKIP and not _covers(path, c)})
+    finally:
+        _state["font"] = old
+
+
+def _run_parts(runs, size, weight):
+    """[(shaped text or None for spaces, kw, font, width)] in reading order; spaces are their own pieces so they
+    land on the right side of each run in both directions."""
+    sp = get_font(size, weight, _state["font"])
+    sp_w = _measure.textlength(" ", font=sp)
+    parts = []
+    for seg, p in runs:
+        core_txt = seg.strip(" ")
+        lead, trail = len(seg) - len(seg.lstrip(" ")), len(seg) - len(seg.rstrip(" "))
+        if lead:
+            parts.append((None, {}, sp, sp_w * lead))
+        if core_txt:
+            t2, kw = _prep(core_txt)
+            f = get_font(size, weight, p)
+            parts.append((t2, kw, f, _measure.textlength(t2, font=f, **kw)))
+        if trail:
+            parts.append((None, {}, sp, sp_w * trail))
+    return parts
+
+
 def _font_for(txt):
     """The chosen font, or Cairo when the chosen font cannot write every character of txt (e.g. English words in an
     Arabic-only font, or Quran marks). Without RAQM the reshaped letter forms are what must exist in the font."""
@@ -322,8 +405,14 @@ _measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
 
 
 def text_bbox(txt, size, weight="Black"):
+    txt, runs = _fit_text(txt)
+    if runs:  # mixed fonts: the runs side by side
+        parts = _run_parts(runs, size, weight)
+        asc = max(p[2].getmetrics()[0] for p in parts)
+        desc = max(p[2].getmetrics()[1] for p in parts)
+        return 0, -asc, int(round(sum(p[3] for p in parts))), desc
     t2, kw = _prep(txt)
-    return _measure.textbbox((0, 0), t2, font=get_font(size, weight, _font_for(txt)), **kw)
+    return _measure.textbbox((0, 0), t2, font=get_font(size, weight, _state["font"]), **kw)
 
 
 def text_width(txt, size, weight="Black"):
@@ -341,12 +430,15 @@ def text_img(txt, size, color, weight="Black", shadow=True, max_w=None):
     """Render one line of text to a transparent RGBA image (cached)."""
     color = to_rgb(color)
     size = fit_size(txt, size, weight, max_w)
-    path = _font_for(txt)
-    k = (path, txt, size, color, weight, shadow)
+    k = (_state["font"], txt, size, color, weight, shadow)
     if k in _tcache:
         return _tcache[k]
-    t2, kw = _prep(txt)
-    f = get_font(size, weight, path)
+    txt2, runs = _fit_text(txt)
+    if runs:
+        _tcache[k] = _mixed_img(txt2, runs, size, color, weight, shadow)
+        return _tcache[k]
+    t2, kw = _prep(txt2)
+    f = get_font(size, weight, _state["font"])
     l, t_, r, b = _measure.textbbox((0, 0), t2, font=f, **kw)
     pad = 30
     im = Image.new("RGBA", (max(1, r - l) + pad * 2, max(1, b - t_) + pad * 2), (0, 0, 0, 0))
@@ -357,6 +449,36 @@ def text_img(txt, size, color, weight="Black", shadow=True, max_w=None):
     ImageDraw.Draw(im).text((pad - l, pad - t_), t2, font=f, fill=color + (255,), **kw)
     _tcache[k] = im
     return im
+
+
+def _mixed_img(txt, runs, size, color, weight, shadow):
+    """One line drawn in more than one font (runs side by side on a common baseline, in reading order)."""
+    parts = _run_parts(runs, size, weight)
+    asc = max(p[2].getmetrics()[0] for p in parts)
+    desc = max(p[2].getmetrics()[1] for p in parts)
+    total = sum(p[3] for p in parts)
+    pad = 30
+    im = Image.new("RGBA", (int(total) + 2 * pad + 4, asc + desc + 2 * pad), (0, 0, 0, 0))
+    lay = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(lay)
+    rtl = is_rtl(txt)
+    x = pad + total if rtl else pad
+    for t2, kw, f, w in parts:
+        if rtl:
+            x -= w
+        if t2:
+            d.text((x, pad + asc), t2, font=f, fill=color + (255,), anchor="ls", **kw)
+        if not rtl:
+            x += w
+    box = lay.getchannel("A").getbbox() or (0, 0, 1, 1)  # crop to the ink like a one-font line
+    lay = lay.crop((max(0, box[0] - pad), max(0, box[1] - pad), min(lay.width, box[2] + pad),
+                    min(lay.height, box[3] + pad)))
+    out = Image.new("RGBA", lay.size, (0, 0, 0, 0))
+    if shadow:
+        sh = Image.new("RGBA", lay.size, (0, 0, 0, 0))
+        sh.paste((0, 0, 0, 190), (0, 6), lay.getchannel("A"))
+        out = Image.alpha_composite(out, sh.filter(ImageFilter.GaussianBlur(8)))
+    return Image.alpha_composite(out, lay)
 
 
 def wrap(txt, size, weight, max_w):
