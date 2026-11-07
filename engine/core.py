@@ -288,6 +288,27 @@ def _fit_text(txt):
     return txt, runs
 
 
+def text_img_in(path, txt, size, color, weight="Black", shadow=False, max_w=None):
+    """text_img() as it would look with font file `path` chosen (caches are per font, so nothing is reset)."""
+    old = _state["font"]
+    _state["font"] = path
+    try:
+        return text_img(txt, size, color, weight, shadow=shadow, max_w=max_w)
+    finally:
+        _state["font"] = old
+
+
+def missing_chars(path, txt):
+    """Characters of txt that font file `path` cannot write even after the Arabic swaps (they are drawn in Cairo)."""
+    old = _state["font"]
+    _state["font"] = path
+    try:
+        fixed, _ = _fit_text(txt)
+        return sorted({c for c in fixed if c not in _SKIP and not _covers(path, c)})
+    finally:
+        _state["font"] = old
+
+
 def _run_parts(runs, size, weight):
     """[(shaped text or None for spaces, kw, font, width)] in reading order; spaces are their own pieces so they
     land on the right side of each run in both directions."""

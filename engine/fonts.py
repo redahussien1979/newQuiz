@@ -258,7 +258,7 @@ def choices():
 # ---------------------------------------------------------------- preview cards
 def card(fam, sample_ar, sample_en, selected=False):
     """A preview card: the family's name, then the samples written in it (its boldest weight)."""
-    from .core import _prep, get_font
+    from .core import _prep, get_font, is_rtl, missing_chars, text_img_in
     w, h = 900, 300
     im = Image.new("RGB", (w, h), (24, 26, 40) if not selected else (40, 34, 12))
     d = ImageDraw.Draw(im)
@@ -280,15 +280,17 @@ def card(fam, sample_ar, sample_en, selected=False):
                    anchor="ra" if (kw.get("direction") == "rtl" or t2 != msg) else "la", **kw)
             y += 100
             continue
-        size = 70
-        t2, kw = _prep(txt)
-        f = get_font(size, "Black", path)
-        while size > 30 and d.textlength(t2, font=f, **kw) > w - 60:
-            size -= 4
-            f = get_font(size, "Black", path)
-        rtl = kw.get("direction") == "rtl" or (t2 != txt)
-        d.text((w - 30, y) if rtl else (30, y), t2, font=f, fill=col, anchor="ra" if rtl else "la", **kw)
-        y += 104
+        # drawn exactly as the video draws it (Arabic digit swap, Cairo only for missing characters)
+        t = text_img_in(path, txt, 70, col, "Black", max_w=w - 60)
+        t = t.crop((30, 0, t.width - 30, t.height))
+        rtl = is_rtl(txt)
+        im.paste(t, (w - 30 - t.width if rtl else 30, y - 30), t)
+        y += 98
+    miss = sorted(set(missing_chars(path, sample_ar if fam["arabic"] else "") +
+                      missing_chars(path, sample_en if fam["latin"] else "")))
+    if miss:
+        note = "Not in this font (drawn in Cairo): " + "  ".join(miss)
+        d.text((30, h - 44), note, font=get_font(24, "SemiBold", DEFAULT), fill=(240, 150, 110))
     return im
 
 
