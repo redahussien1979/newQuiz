@@ -40,7 +40,8 @@ def _colorize(alpha, col, a=255):
 
 class TitleIntro:
     def __init__(self, lines, subtitle, sub_col, ink, accent, light=False, rtl=True, t_in=0.1, t_out=2.4,
-                 title_y=720):
+                 title_y=720, max_w=940):
+        self.max_w = max_w  # widest a title line may be (long lines shrink to fit)
         self.t_in, self.t_out = t_in, t_out
         self.accent = to_rgb(accent)
         self.light = light
@@ -71,7 +72,7 @@ class TitleIntro:
     # ------------------------------------------------------------ assets
     def _title_block(self, lines):
         """All title lines on one image: accent glow, 3D extrusion, gradient face."""
-        imgs = [text_img(txt, size, col, shadow=False, max_w=940) for txt, size, col, _ in lines]
+        imgs = [text_img(txt, size, col, shadow=False, max_w=self.max_w) for txt, size, col, _ in lines]
         if not imgs:
             return Image.new("RGBA", (1, 1), (0, 0, 0, 0))
         pitch = [int(size * 1.28) for _, size, _, _ in lines]
@@ -124,7 +125,7 @@ class TitleIntro:
         return im
 
     def _pill(self, txt, col):
-        t = text_img(txt, 52, col, shadow=False, max_w=880)
+        t = text_img(txt, 52, col, shadow=False, max_w=self.max_w - 60)
         w, h = t.width + 30, 108
         s = 2
         im = Image.new("RGBA", (w * s, h * s), (0, 0, 0, 0))

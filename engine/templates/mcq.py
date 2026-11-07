@@ -22,7 +22,7 @@ import re
 from PIL import Image, ImageDraw, ImageFilter
 
 from ..core import (GREY, WHITE, Stars, draw_ending, draw_scene, ease_out_back, fade, get_theme, global_fade,
-                    make_bg, parse_lines, paste, prog, shade, stack_lines, text_img, to_rgb, wrap)
+                    make_bg, parse_lines, paste, prog, shade, stack_lines, text_img, text_width, to_rgb, wrap)
 from ..audio import audio_length
 from ..header_fx import NUMBER_KEYS, QuestionHeader
 from ..layouts import LAYOUT_NAMES, make_layout
@@ -223,6 +223,10 @@ class MCQVideo:
         on_paper = self.layout_name == "Exam paper"  # the title sits on a cream sheet: dark ink
         title_ink = (28, 36, 78) if on_paper else self.ink
         title = parse_lines(fill(m.get("title", "")), [title_ink])
+        title_w = 720 if on_paper else 940  # on the exam sheet the title must stay inside the paper
+        # a line that would have to shrink below 3/4 of the big size is wrapped instead (sized for ~2 lines)
+        title = [(part, col) for txt, col in title
+                 for part in (wrap(txt, 96, "Black", title_w) if text_width(txt, 90) > title_w else [txt])]
         sub = fill(m.get("subtitle", ""))
         lines = stack_lines(title, 720, 120, 96)
         if sub:
@@ -231,11 +235,12 @@ class MCQVideo:
         self.title_style = m.get("title_style") if m.get("title_style") in TITLE_STYLES else "Fancy"
         if self.title_style == "Fancy":
             self.intro = TitleIntro(lines[:-1] if sub else lines, sub, lines[-1][2] if sub else self.accent,
-                                    title_ink, self.accent, light=bool(self.st.get("light")) or on_paper, rtl=self.rtl)
+                                    title_ink, self.accent, light=bool(self.st.get("light")) or on_paper, rtl=self.rtl,
+                                    max_w=title_w)
             self.scenes = []
         else:
             self.intro = None
-            self.scenes = [dict(t_in=0.1, t_out=2.4, lines=lines)]
+            self.scenes = [dict(t_in=0.1, t_out=2.4, lines=lines, max_w=title_w if on_paper else 960)]
         self.header_style = m.get("header_style") if m.get("header_style") in HEADER_STYLES else "Fancy"
         num_style = m.get("number_style") if m.get("number_style") in NUMBER_KEYS else "plain"
         self.header = (QuestionHeader(self.accent, self.ink, light=bool(self.st.get("light")), rtl=self.rtl,
