@@ -11,7 +11,8 @@ STR = {
                diff="الفرق {p}% فقط!",
                levels=dict(easy="سهل", medium="متوسط", hard="صعب"), final="السؤال الأخير!",
                score_q="كم نقطة حصلت؟", score_levels=["مبتدئ", "خبير", "عبقري!"],
-               subscribe="اشترك", subscribed="تم الاشتراك"),
+               subscribe="اشترك", subscribed="تم الاشتراك",
+               exam_title="اختبار المعلومات العامة", exam_name="الاسم:", excellent="ممتاز!"),
     "en": dict(bce="BC", ce="AD", years="years", years_few="years", now="Now",
                ago_short="{n} ago", ago_full="{n} years ago",
                frm="From {a}", to="to {b}", from_to="{a} to {b}",
@@ -22,7 +23,8 @@ STR = {
                diff="Only {p}% apart!",
                levels=dict(easy="Easy", medium="Medium", hard="Hard"), final="FINAL QUESTION!",
                score_q="What's your score?", score_levels=["Beginner", "Expert", "Genius!"],
-               subscribe="SUBSCRIBE", subscribed="SUBSCRIBED"),
+               subscribe="SUBSCRIBE", subscribed="SUBSCRIBED",
+               exam_title="General Knowledge Test", exam_name="Name:", excellent="Excellent!"),
 }
 
 

@@ -25,6 +25,7 @@ from ..core import (GREY, WHITE, Stars, draw_ending, draw_scene, ease_out_back, 
                     make_bg, parse_lines, paste, prog, shade, stack_lines, text_img, to_rgb, wrap)
 from ..audio import audio_length
 from ..header_fx import NUMBER_KEYS, QuestionHeader
+from ..layouts import LAYOUT_NAMES, make_layout
 from ..quiz_fx import FX_KEYS, LEVELS_END, FINAL_LEN, WIPE_HALF, QuizFX, shine
 from ..mcq_styles import STYLE_NAMES, Backdrop, build_box, get_style, letter_badge, with_theme_colors
 from ..strings import S, level_key
@@ -218,16 +219,19 @@ class MCQVideo:
 
         def fill(txt):  # {count} = number of questions in this video
             return str(txt or "").replace("{count}", str(len(self.qs)))
-        title = parse_lines(fill(m.get("title", "")), [self.ink])
+        self.layout_name = m.get("layout") if m.get("layout") in LAYOUT_NAMES else "Standard"
+        on_paper = self.layout_name == "Exam paper"  # the title sits on a cream sheet: dark ink
+        title_ink = (28, 36, 78) if on_paper else self.ink
+        title = parse_lines(fill(m.get("title", "")), [title_ink])
         sub = fill(m.get("subtitle", ""))
         lines = stack_lines(title, 720, 120, 96)
         if sub:
-            sub_col = shade(self.accent, 0.62) if self.st.get("light") else self.accent  # readable on light pages
+            sub_col = shade(self.accent, 0.62) if (self.st.get("light") or on_paper) else self.accent
             lines.append((sub, 54, sub_col, (lines[-1][3] if lines else 720) + 150))
         self.title_style = m.get("title_style") if m.get("title_style") in TITLE_STYLES else "Fancy"
         if self.title_style == "Fancy":
             self.intro = TitleIntro(lines[:-1] if sub else lines, sub, lines[-1][2] if sub else self.accent,
-                                    self.ink, self.accent, light=bool(self.st.get("light")), rtl=self.rtl)
+                                    title_ink, self.accent, light=bool(self.st.get("light")) or on_paper, rtl=self.rtl)
             self.scenes = []
         else:
             self.intro = None
@@ -237,6 +241,9 @@ class MCQVideo:
         self.header = (QuestionHeader(self.accent, self.ink, light=bool(self.st.get("light")), rtl=self.rtl,
                                       num_style=num_style) if self.header_style == "Fancy" else None)
         self.qfx = QuizFX(self.accent, self.ink, self.L, rtl=self.rtl, light=bool(self.st.get("light")))
+        # screen layout: Standard (cards, drawn here) or one from engine/layouts.py
+        self.exam_title = " ".join(txt for txt, _ in title).strip() or self.L["exam_title"]
+        self.layout = make_layout(self.layout_name, self)
         self.ending = (fill(e.get("intro", "")), parse_lines(fill(e.get("question", "")), ["white", "gold"]),
                        fill(e.get("cta", "")), s.get("handle", ""))
 
@@ -318,12 +325,15 @@ class MCQVideo:
 
     # ------------------------------------------------------------ render
     def render(self, t):
-        frame = self.backdrop.draw(t)
+        frame = self.layout.background(t) if self.layout else self.backdrop.draw(t)
         d = ImageDraw.Draw(frame)
         n = len(self.qs)
         i = bisect.bisect_right(self.starts, t) - 1 if self.q0 <= t < self.E else -1
         if 0 <= i < n:
-            self._question(frame, d, i, t - self.qs[i]["t0"])
+            if self.layout:
+                self._layout_question(frame, i, t - self.qs[i]["t0"])
+            else:
+                self._question(frame, d, i, t - self.qs[i]["t0"])
         if self.intro is not None:
             self.intro.draw(frame, t)
         for sc in self.scenes:
@@ -337,6 +347,19 @@ class MCQVideo:
             self.qfx.wipe(frame, t, self.starts[1:] + [self.E])
         global_fade(frame, t, self.dur)
         return frame.convert("RGB")
+
+    def _layout_question(self, frame, i, u_all):
+        """A question in an alternative layout, plus the overlays every layout shares."""
+        q = self.qs[i]
+        out = prog(u_all, q["D"] - 0.3, q["D"])
+        u = u_all - q["pre"]
+        self.layout.question(frame, i, u, out)
+        if q.get("level"):
+            self.qfx.difficulty(frame, q["level"], u, 1 - out, y0=self.layout.diff_y)
+        if "confetti" in self.fx and u >= q["r"]:
+            self.qfx.confetti(frame, self.layout.answer_pos(i)[1], u - q["r"], seed=i + 1)
+        if q["pre"]:
+            self.qfx.final_banner(frame, u_all)
 
     def _question(self, frame, d, i, u_all):
         q, n = self._assets(i), len(self.qs)
@@ -475,6 +498,8 @@ class MCQVideo:
                 mx.add(rv + 0.02, mx.sparkle(), 0.28)
             for off, path in q["voice"]:
                 mx.add_voice(path, t0 + off, self.narr_gain)
+            if self.layout:
+                self.layout.sound(mx, i, t0)
         if "wipe" in fx:
             s, pn = mx.whoosh(0.8)
             mx.add(self.E - WIPE_HALF, s, 0.5, pn[::-1] if self.rtl else pn)
