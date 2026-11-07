@@ -490,7 +490,9 @@ class ExamLayout(Layout):
         st = r + self.stamp_time(q)
         if i == len(self.v.qs) - 1 and u >= st:  # "Excellent!" stamp on the last sheet
             ps = prog(u, st, st + 0.2)
-            sx, sy = self._to_screen(PW * (0.3 if self.rtl else 0.7), PH - 230, dx, dy, ang)
+            note_end = info["expl_y"] + (len(self._note_lines(q["expl"], info["expl_y"])) - 1) * PITCH if q["expl"] else 0
+            sy_sheet = min(PH - 110, max(PH - 230, note_end + 150))  # under the note when it is long
+            sx, sy = self._to_screen(PW * (0.3 if self.rtl else 0.7), sy_sheet, dx, dy, ang)
             paste(frame, self._cache["stamp"], sx, sy, 2.0 - 1.0 * eo(ps), min(1, ps * 3) * (1 - out))
 
     # ------------------------------------------------------------ red-pen marks (anti-aliased, drawn on the sheet)
@@ -542,15 +544,22 @@ class ExamLayout(Layout):
                        fill=PEN + (235,), width=6 * SS)
         self._layer(sheet, cx - s, cy - s, cx + s, cy + s, draw)
 
+    def _note_lines(self, txt, y):
+        """The note's lines, one per ruled line, all the same size: 42 px, or smaller for every line together
+        when the text would not fit on the rest of the sheet."""
+        key = ("note", txt, y)
+        if key not in self._cache:
+            room = max(1, int((PH - 70 - y) // PITCH) + 1)  # ruled lines left below the options
+            for size in (42, 38, 34, 30, 27):
+                lines = wrap(txt, size, "Bold", PW - 270)
+                if len(lines) <= room:
+                    break
+            self._cache[key] = [T(l, size, PEN, "Bold", max_w=PW - 270) for l in lines[:room]]
+        return self._cache[key]
+
     def _ink_note(self, sheet, txt, y, p):
         """Red note on the next ruled lines, written in reading direction; returns the pen position."""
-        key = ("note", txt)
-        if key not in self._cache:
-            lines = wrap(txt, 42, "Bold", PW - 270)
-            if len(lines) > 3:  # very long: the rest shares the third line (shrinks to fit)
-                lines = lines[:2] + [" ".join(lines[2:])]
-            self._cache[key] = [T(l, 42, PEN, "Bold", max_w=PW - 270) for l in lines]
-        imgs = self._cache[key]
+        imgs = self._note_lines(txt, y)
         total = sum(im.width for im in imgs)
         done = total * p
         pen = None
@@ -589,7 +598,7 @@ class ExamLayout(Layout):
     @staticmethod
     def note_time(q):
         """When the explanation note starts and how long the pen takes: about 30 characters a second."""
-        return 0.95, min(3.2, max(1.3, len(q["expl"] or "") / 30))
+        return 0.95, min(4.5, max(1.3, len(q["expl"] or "") / 30))
 
     def stamp_time(self, q):
         n0, nd = self.note_time(q)
