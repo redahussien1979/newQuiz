@@ -229,6 +229,30 @@ class Mixer:
         t = _t(0.05)
         return _norm(self.rng.standard_normal(len(t)) * np.exp(-t * 180) + np.sin(2 * np.pi * 1800 * t) * np.exp(-t * 120))
 
+    def scribble(self, dur=0.5):
+        """Felt pen on paper: bright scratchy noise in quick strokes."""
+        n = int(dur * SR)
+        t = np.arange(n) / SR
+        nz = self.rng.standard_normal(n)
+        band = _lowpass(nz - _lowpass(nz, 1800), 7000)
+        strokes = np.clip(np.sin(2 * np.pi * (7 + 3 * self.rng.random()) * t + self.rng.uniform(0, 6)), 0, 1) ** 0.6
+        return _norm(_fade(band * (0.35 + 0.65 * strokes), 0.01, 0.04))
+
+    def paper(self):
+        """A sheet sliding onto the desk."""
+        n = int(0.45 * SR)
+        x = np.linspace(0, 1, n)
+        s = self._lp_sweep(self.rng.standard_normal(n), 900 + 4000 * np.sin(np.pi * x)) * np.sin(np.pi * x) ** 1.5
+        return _norm(s)
+
+    def stamp(self):
+        """Rubber stamp thud."""
+        t = _t(0.35)
+        f = 70 + 90 * np.exp(-t * 40)
+        body = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 18)
+        click = self.rng.standard_normal(len(t)) * np.exp(-t * 120)
+        return _norm(_fade(body + 0.5 * click, 0.001, 0.03))
+
     # -------------------------------------------------- beds
     def silence_env(self, silences):
         x = np.arange(self.n) / SR

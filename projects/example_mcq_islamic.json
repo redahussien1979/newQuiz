@@ -1,0 +1,50 @@
+{
+  "template": "mcq",
+  "settings": {
+    "theme": "Night Sky",
+    "language": "ar",
+    "fps": 30,
+    "music": "Quiz Show",
+    "music_gain": 1.0,
+    "music_file": "",
+    "voice_file": "",
+    "voice_offset": 0.5,
+    "voice_gain": 1.0,
+    "handle": "@Ma3loomaFast",
+    "font_file": "",
+    "intro_sound": "Swoosh + impact",
+    "tick_sound": "Classic",
+    "tick_gain": 1.0
+  },
+  "ending": {
+    "intro": "النتيجة؟",
+    "question": "كم إجابة صحيحة\n[gold]حصلت عليها من {count}؟",
+    "cta": "اكتب نتيجتك في التعليقات"
+  },
+  "mcq": {
+    "title": "اختبر معلوماتك الدينية",
+    "subtitle": "{count} أسئلة من القرآن الكريم",
+    "questions": "ما أطول سورة في القرآن الكريم؟\nآل عمران\nالبقرة *\nالنساء\nالمائدة\n! easy\n> سورة البقرة 286 آية\n\nكم عدد سور القرآن الكريم؟\n110\n114 *\n120\n112\n! easy\n> عدد سور القرآن الكريم 114 سورة\n\nما السورة التي لا تبدأ بالبسملة؟\nالأنفال\nالتوبة *\nيونس\nهود\n! medium\n> سورة التوبة وتسمى أيضاً سورة براءة\n\nتكررت آية «فَوَيْلٌ يَوْمَئِذٍ لِلْمُكَذِّبِينَ» في سورة:\nالقمر\nالمرسلات *\nالرحمن\n! hard\n> تكررت عشر مرات في سورة المرسلات\n\nما أقصر سورة في القرآن الكريم؟\nالإخلاص\nالكوثر *\nالعصر\nالنصر\n! medium\n> سورة الكوثر ثلاث آيات",
+    "think_seconds": 5,
+    "reveal_seconds": 2.8,
+    "accent": "gold",
+    "style": "Game Show",
+    "timer": "Ring",
+    "timer_fx": [
+      "pulse",
+      "glow",
+      "ripple",
+      "shake"
+    ],
+    "fx": [
+      "lockin",
+      "confetti",
+      "wipe",
+      "final",
+      "levels"
+    ],
+    "header_style": "Fancy",
+    "number_style": "coin",
+    "layout": "Islamic"
+  }
+}

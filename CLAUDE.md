@@ -13,6 +13,9 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
 - `engine/quiz_fx.py` — MCQ extra animations, `mcq.fx` list: `lockin`, `confetti`, `wipe`, `final` (last question
   starts `FINAL_LEN` later via `q["pre"]`), `levels` (score-levels ending, ending lasts `LEVELS_END`); plus the
   per-question difficulty badge (`! easy|medium|hard` line in the questions text / `Difficulty` column in Excel)
+- `engine/layouts.py` — MCQ screen layouts (`mcq.layout`): `Standard` (cards, drawn in mcq.py), `Exam paper`
+  (ruled sheet on a desk, red-pen marking), `Islamic` (emerald/gold, mihrab-arch card); a layout draws background +
+  question + timer, mcq.py `_layout_question` adds the shared overlays (difficulty, confetti, final ribbon)
 - `engine/icons.py` — icons + event card; `engine/strings.py` — Arabic/English wording
 - `engine/countries.py` — country names/flags/outlines (`data/`, built by `tools/build_countries.py`), true-size maps
 - Timeline modes: `calendar`, `ago`, `scale` (number line with `unit`); options `maps` (true-size map scene) and `guess`
