@@ -345,7 +345,7 @@ def draw_scene(frame, t, scene):
         dx = 0
         if scene.get("shake") and i == 0 and t < t_in + 0.5:
             dx = math.sin(t * 90) * 14 * (1 - prog(t, t_in + 0.05, t_in + 0.5))
-        img = text_img(txt, size, col, max_w=960)
+        img = text_img(txt, size, col, max_w=scene.get("max_w", 960))
         paste(frame, img, 540 + dx, y, 0.75 + 0.25 * ease_out_back(p), min(p * 1.4, 1) * out)
 
 
