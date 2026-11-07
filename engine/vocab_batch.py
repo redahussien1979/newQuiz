@@ -19,7 +19,7 @@ import os
 import re
 import shutil
 
-from .batch import AudioFinder, _norm, add_dropdowns, read_table
+from .batch import AudioFinder, _norm, add_dropdowns, pick, pick_problems, read_table
 from .templates.vocab import GROUPS, MAX_ITEMS, group_key, items_text, parse_items
 
 SPLIT_MODES = [("One group per video (recommended)", "group"), ("In sheet order (groups may mix)", "order")]
@@ -137,8 +137,11 @@ def parse_rows(rows, finder=None):
     return items, problems
 
 
-def load_sheet(path, uploads=(), folder=""):
-    return parse_rows(read_table(path), AudioFinder(uploads, folder))
+def load_sheet(path, uploads=(), folder="", sheet=None, start=1, count=0):
+    """Items of one tab; only items start..start+count-1 are kept (count 0 = all from start)."""
+    all_items, problems = parse_rows(read_table(path, sheet), AudioFinder(uploads, folder))
+    items = pick(all_items, start, count)
+    return items, pick_problems(problems, all_items, items)
 
 
 # ------------------------------------------------------------------ splitting

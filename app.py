@@ -31,6 +31,7 @@ from engine import batch
 from engine import countries
 from engine import tl_batch
 from engine import userdata
+from engine import fonts as fontlib
 from engine import vocab_batch
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -411,8 +412,10 @@ def make_actions(tpl):
 
     def save(*vals):
         p = values_to_project(tpl, vals)
-        for k in ("music_file", "voice_file", "font_file"):
+        for k in ("music_file", "voice_file"):
             p["settings"][k] = _keep_media(p["settings"].get(k))
+        font = p["settings"].get("font_file") or ""  # a font name from the library, or (older projects) a file
+        p["settings"]["font_file"] = _keep_media(font) if os.path.isfile(font) else font
         if tpl == "timeline":
             for ev in p["timeline"]["events"]:
                 ev["image"] = _keep_media(ev.get("image"))
@@ -466,6 +469,8 @@ button {user-select: none; -webkit-user-select: none;}
 .info-line {height: 24px; overflow: hidden;}
 .info-line p {margin: 0 !important; font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
 @media (max-width: 900px) { .pane {max-height: none;} .preview-col {position: static;} }
+.font-gal .thumbnail-item {aspect-ratio: 3 / 1 !important; height: auto !important;}  /* cards are 900 x 300 */
+.font-gal .grid-wrap {height: auto !important; max-height: 640px;}
 """
 PREVIEW_H = "calc(100vh - 404px)"
 
@@ -485,9 +490,9 @@ def style_tab():
                 theme = gr.Dropdown(THEME_NAMES, value="Night Sky", label="Theme")
                 lang = gr.Radio([("العربية", "ar"), ("English", "en")], value="ar", label="Language of auto texts")
                 fps = gr.Radio([30, 60], value=30, label="FPS")
-            with gr.Row():
-                handle = gr.Textbox(value="@Ma3loomaFast", label="Channel handle (ending)")
-                font_file = gr.File(type="filepath", file_types=[".ttf", ".otf"], label="Custom font (optional)")
+            handle = gr.Textbox(value="@Ma3loomaFast", label="Channel handle (ending)")
+            font = font_picker()
+            font_file = font["font"]
             with gr.Row():
                 music = gr.Dropdown(MOODS, value="Tension", label="Built-in music",
                                     info="Quiz Show, Bright Pop, Lo-fi Chill, Epic, Ambient = real chords and drums")
@@ -519,6 +524,74 @@ def style_tab():
     return dict(theme=theme, lang=lang, fps=fps, handle=handle, font_file=font_file, music=music,
                 music_gain=music_gain, music_file=music_file, voice_offset=voice_offset, voice_gain=voice_gain,
                 voice_file=voice_file, intro_sound=intro_sound, tick_sound=tick_sound, tick_gain=tick_gain)
+
+
+FONT_HELP = """**Pick a font by clicking its card** — the live preview switches to it. Each card shows the font
+writing your own sample text. ✓ عربي / English tell what a font can write; anything it can't (e.g. English words in an
+Arabic-only font, or Quran marks) is drawn in Cairo automatically. Add your own fonts: point to your fonts folder
+(sub-folders too) and press 🔄, or drop .ttf / .otf files below."""
+FONT_SHOW = [("All", "all"), ("Arabic", "arabic"), ("English", "english"), ("My fonts", "mine")]
+
+
+def font_picker():
+    """Font dropdown + a clickable gallery of every font (built-in, added and the user's own folder)."""
+    sample_ar0, sample_en0 = "اختبر معلوماتك! ١٢٣", "Test your knowledge 123"
+    with gr.Accordion("🔤 Font — preview and pick", open=False):
+        gr.Markdown(FONT_HELP)
+        font = gr.Dropdown(fontlib.choices(), value="", allow_custom_value=True, label="Font",
+                           info="Cairo is the default. Weights (Black, Bold…) come from the font family itself.")
+        with gr.Row():
+            ar = gr.Textbox(value=sample_ar0, label="Arabic sample", rtl=True)
+            en = gr.Textbox(value=sample_en0, label="English sample")
+        with gr.Row():
+            query = gr.Textbox(label="Search fonts", placeholder="Tajawal, Kufi…", scale=2)
+            only = gr.Radio(FONT_SHOW, value="all", label="Show", scale=3)
+        gal = gr.Gallery(fontlib.gallery(sample_ar0, sample_en0), columns=2, height=560, object_fit="contain",
+                         allow_preview=False, show_label=True, label="Click a font to use it", elem_classes="font-gal")
+        with gr.Row(equal_height=True):
+            folder = gr.Textbox(value=fontlib.get_folder(), label="My fonts folder (on this computer)",
+                                placeholder=r"C:\Users\me\Documents\Fonts", scale=3)
+            scan = gr.Button("🔄 Scan folder", scale=1, min_width=130)
+        add = gr.File(file_count="multiple", file_types=[".ttf", ".otf"], label="…or add font files (.ttf / .otf)",
+                      height=110)
+        info = gr.Markdown(f"{len(fontlib.families())} fonts available.")
+
+    def shown(q, only_):
+        return [name for _, name in fontlib.gallery("", "", q, only_, limit=60)]
+
+    def refresh(a, e, q, only_, sel):
+        return fontlib.gallery(a, e, q, only_, selected=sel or "")
+
+    def pick(q, only_, evt: gr.SelectData):
+        names = shown(q, only_)
+        name = names[evt.index] if 0 <= evt.index < len(names) else ""
+        return "" if name == fontlib.DEFAULT_NAME else name
+
+    def rescan(path, a, e, q, only_, sel):
+        path = fontlib.set_folder(path)
+        if path and not os.path.isdir(path):
+            msg = f"⚠️ Folder not found: `{path}`"
+        else:
+            fontlib.families(refresh=True)
+            mine = sum(1 for f in fontlib.families() if f["source"] == "folder")
+            msg = f"✅ {len(fontlib.families())} fonts available" + (f" — {mine} from your folder." if path else ".")
+        return gr.update(choices=fontlib.choices()), refresh(a, e, q, only_, sel), msg
+
+    def added(files, a, e, q, only_, sel):
+        n = fontlib.add_files(files)
+        fontlib.families(refresh=True)
+        return (gr.update(choices=fontlib.choices()), refresh(a, e, q, only_, sel),
+                f"✅ Added {n} font file{'s' if n != 1 else ''} — they stay in the app (Documents › Video Studio › fonts).",
+                None)
+
+    look = [ar, en, query, only, font]
+    gr.on(triggers=[ar.change, en.change, query.change, only.change, font.change], fn=refresh, inputs=look,
+          outputs=gal, trigger_mode="always_last", show_progress="hidden")
+    gal.select(pick, [query, only], font)
+    scan.click(rescan, [folder] + look, [font, gal, info])
+    folder.submit(rescan, [folder] + look, [font, gal, info])
+    add.upload(added, [add] + look, [font, gal, info, add])
+    return dict(font=font)
 
 
 def ending_tab(note=""):
@@ -660,6 +733,7 @@ def batch_tab():
                         label="Audio clips named in the sheet (optional)")
     folder = gr.Textbox(label="…or the folder on this computer that holds the clips (optional)",
                         placeholder=r"C:\quiz\audio")
+    tab, start, count = sheet_controls("questions")
     with gr.Row():
         per = gr.Slider(1, batch.MAX_PER_VIDEO, value=5, step=1, label="Questions per video")
         title = gr.Textbox(label="Title of each video (optional)", rtl=True,
@@ -674,24 +748,52 @@ def batch_tab():
         part = gr.Dropdown([], label="Preview one video in the editor", scale=2)
         load = gr.Button("📥 Load into editor", scale=1, min_width=120)
     return dict(sheet=sheet, clips=clips, folder=folder, per=per, title=title, info=info, part=part, load=load,
-                go=go, files=files, zip=zipb)
+                go=go, files=files, zip=zipb, tab=tab, start=start, count=count)
 
 
-def _read_batch(sheet, clips, folder):
+def sheet_controls(what="questions"):
+    """Which tab of the workbook, and which of its rows, a batch uses."""
+    one = what[:-1]
+    with gr.Row():
+        tab = gr.Dropdown([], label="Sheet (tab)", visible=False, scale=2,
+                          info="The workbook's tabs — pick the one that holds your " + what + ".")
+        start = gr.Number(value=1, precision=0, minimum=1, label=f"Start at {one} #", scale=1,
+                          info=f"1 = the first {one} in the tab")
+        count = gr.Number(value=0, precision=0, minimum=0, label=f"How many {what}", scale=1,
+                          info="0 = all of them (from the start one)")
+    return tab, start, count
+
+
+def fill_tabs(sheet):
+    """After an upload: list the workbook's tabs (hidden for a CSV file)."""
+    names = batch.sheet_names(sheet) if sheet else []
+    return gr.update(choices=names, value=names[0] if names else None, visible=len(names) > 1)
+
+
+def range_note(items, what, start, count):
+    s = max(1, int(start or 1))
+    if s == 1 and not int(count or 0):
+        return ""
+    if not items:
+        return f"_Nothing from {what[:-1]} #{s} on._\n\n"
+    return f"_Using {what} {s}–{s + len(items) - 1}._\n\n"
+
+
+def _read_batch(sheet, clips, folder, tab=None, start=1, count=0):
     if not sheet:
         raise ValueError("Upload a questions sheet first.")
-    return batch.load_sheet(sheet, clips or [], folder or "")
+    return batch.load_sheet(sheet, clips or [], folder or "", tab, start, count)
 
 
 def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
-    inputs = [xl["sheet"], xl["clips"], xl["folder"], xl["per"]]
+    inputs = [xl["sheet"], xl["clips"], xl["folder"], xl["per"], xl["tab"], xl["start"], xl["count"]]
 
-    def check(sheet, clips, folder, per):
+    def check(sheet, clips, folder, per, tab, start, count):
         off = gr.update(value="🎬 Render all videos", interactive=False)
         if not sheet:
             return "Upload a sheet to see how many videos it makes.", gr.update(choices=[], value=None), off
         try:
-            items, problems = _read_batch(sheet, clips, folder)
+            items, problems = _read_batch(sheet, clips, folder, tab, start, count)
         except Exception as e:
             return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
         parts = batch.split(items, per)
@@ -700,11 +802,12 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
         n = len(parts)
         go = gr.update(value=f"🎬 Render all {n} video{'s' if n != 1 else ''}" if n else "🎬 Render all videos",
                        interactive=bool(n))
-        return batch.summary(items, problems, per), gr.update(choices=choices, value=1 if choices else None), go
+        return (range_note(items, "questions", start, count) + batch.summary(items, problems, per),
+                gr.update(choices=choices, value=1 if choices else None), go)
 
-    def load_part(sheet, clips, folder, per, k, title_tpl, cur_title):
+    def load_part(sheet, clips, folder, per, tab, start, count, k, title_tpl, cur_title):
         try:
-            items, _ = _read_batch(sheet, clips, folder)
+            items, _ = _read_batch(sheet, clips, folder, tab, start, count)
             parts = batch.split(items, per)
             k = int(k or 1)
             if not 1 <= k <= len(parts):
@@ -725,9 +828,10 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
                 gr.update(interactive=False), "⏳ Rendering all videos… each one appears below as soon as it is done.",
                 gr.update(value=None, visible=False), gr.update(value=None, visible=False))
 
-    def render_all(request: gr.Request, sheet, clips, folder, per, title_tpl, *vals, progress=gr.Progress()):
+    def render_all(request: gr.Request, sheet, clips, folder, per, tab, start, count, title_tpl, *vals,
+                   progress=gr.Progress()):
         def plan():
-            items, problems = _read_batch(sheet, clips, folder)
+            items, problems = _read_batch(sheet, clips, folder, tab, start, count)
             parts = batch.split(items, per)
             if not parts:
                 raise ValueError("The sheet has no usable questions." + (f" First problem: {problems[0]}" if problems else ""))
@@ -746,6 +850,7 @@ def wire_batch(xl, pv, fields, m_qs, m_narr, m_title):
 
         yield from _stream_batch(request, plan, progress)
 
+    xl["sheet"].change(fill_tabs, xl["sheet"], xl["tab"], show_progress="hidden")
     gr.on(triggers=[c.change for c in inputs], fn=check, inputs=inputs, outputs=[xl["info"], xl["part"], xl["go"]],
           trigger_mode="always_last", show_progress="hidden")
     xl["load"].click(load_part, inputs + [xl["part"], xl["title"], m_title], [m_qs, m_narr, m_title])
@@ -781,6 +886,7 @@ def tl_batch_tab():
         gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), size="sm", min_width=130, scale=0)
     sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Videos sheet (.xlsx or .csv)",
                     height=120)
+    tab, start, count = sheet_controls("videos")
     with gr.Row(equal_height=True):
         info = gr.Markdown("Upload a sheet to see how many videos it makes.")
         go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, min_width=230, scale=0)
@@ -790,21 +896,24 @@ def tl_batch_tab():
     with gr.Row(equal_height=True):
         part = gr.Dropdown([], label="Preview one video in the editor", scale=2)
         load = gr.Button("📥 Load into editor", scale=1, min_width=120)
-    return dict(sheet=sheet, info=info, go=go, files=files, zip=zipb, part=part, load=load)
+    return dict(sheet=sheet, info=info, go=go, files=files, zip=zipb, part=part, load=load, tab=tab, start=start,
+                count=count)
 
 
 def wire_tl_batch(xl, pv, fields):
-    def read(sheet):
+    inputs = [xl["sheet"], xl["tab"], xl["start"], xl["count"]]
+
+    def read(sheet, tab, start, count):
         if not sheet:
             raise ValueError("Upload a videos sheet first.")
-        return tl_batch.load_sheet(sheet)
+        return tl_batch.load_sheet(sheet, tab, start, count)
 
-    def check(sheet):
+    def check(sheet, tab, start, count):
         off = gr.update(value="🎬 Render all videos", interactive=False)
         if not sheet:
             return "Upload a sheet to see how many videos it makes.", gr.update(choices=[], value=None), off
         try:
-            specs, problems = read(sheet)
+            specs, problems = read(sheet, tab, start, count)
         except Exception as e:
             return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
         choices = [(f"Video {k} — row {sp['row']}: {tl_batch.file_name(sp, k)[3:].replace('_', ' ')}", k)
@@ -812,11 +921,12 @@ def wire_tl_batch(xl, pv, fields):
         n = len(specs)
         go = gr.update(value=f"🎬 Render all {n} video{'s' if n != 1 else ''}" if n else "🎬 Render all videos",
                        interactive=bool(n))
-        return tl_batch.summary(specs, problems), gr.update(choices=choices, value=1 if choices else None), go
+        return (range_note(specs, "videos", start, count) + tl_batch.summary(specs, problems),
+                gr.update(choices=choices, value=1 if choices else None), go)
 
-    def load_part(sheet, k, *vals):
+    def load_part(sheet, tab, start, count, k, *vals):
         try:
-            specs, _ = read(sheet)
+            specs, _ = read(sheet, tab, start, count)
             k = int(k or 1)
             if not 1 <= k <= len(specs):
                 raise ValueError("Pick a video to preview.")
@@ -834,9 +944,9 @@ def wire_tl_batch(xl, pv, fields):
                 gr.update(interactive=False), "⏳ Rendering all videos… each one appears below as soon as it is done.",
                 gr.update(value=None, visible=False), gr.update(value=None, visible=False))
 
-    def render_all(request: gr.Request, sheet, *vals, progress=gr.Progress()):
+    def render_all(request: gr.Request, sheet, tab, start, count, *vals, progress=gr.Progress()):
         def plan():
-            specs, problems = read(sheet)
+            specs, problems = read(sheet, tab, start, count)
             if not specs:
                 raise ValueError("The sheet has no usable rows." + (f" First problem: {problems[0]}" if problems else ""))
             base = values_to_project("timeline", vals)
@@ -848,11 +958,13 @@ def wire_tl_batch(xl, pv, fields):
 
         yield from _stream_batch(request, plan, progress)
 
-    xl["sheet"].change(check, xl["sheet"], [xl["info"], xl["part"], xl["go"]], show_progress="hidden")
-    xl["load"].click(load_part, [xl["sheet"], xl["part"]] + fields, fields)
+    xl["sheet"].change(fill_tabs, xl["sheet"], xl["tab"], show_progress="hidden")
+    gr.on(triggers=[c.change for c in inputs], fn=check, inputs=inputs, outputs=[xl["info"], xl["part"], xl["go"]],
+          trigger_mode="always_last", show_progress="hidden")
+    xl["load"].click(load_part, inputs + [xl["part"]] + fields, fields)
     dep = xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"],
                                        xl["files"], xl["zip"]], queue=False)
-    dep.success(render_all, [xl["sheet"]] + fields,
+    dep.success(render_all, inputs + fields,
                 [pv["vid"], pv["info"], xl["files"], xl["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]],
                 **_progress_on(dep, pv["vid"]))
 
@@ -900,6 +1012,7 @@ def vc_batch_tab():
                         label="Audio clips named in the sheet (optional)")
     folder = gr.Textbox(label="…or the folder on this computer that holds the clips (optional)",
                         placeholder=r"C:\english\audio")
+    tab, start, count = sheet_controls("items")
     with gr.Row():
         per = gr.Slider(1, vocab_batch.MAX_ITEMS, value=5, step=1, label="Items per video")
         split = gr.Radio(vocab_batch.SPLIT_MODES, value="group", label="Split")
@@ -916,27 +1029,27 @@ def vc_batch_tab():
         part = gr.Dropdown([], label="Preview one video in the editor", scale=2)
         load = gr.Button("📥 Load into editor", scale=1, min_width=120)
     return dict(sheet=sheet, clips=clips, folder=folder, per=per, split=split, title=title, lesson0=lesson0, info=info,
-                go=go, files=files, zip=zipb, part=part, load=load)
+                go=go, files=files, zip=zipb, part=part, load=load, tab=tab, start=start, count=count)
 
 
 def wire_vc_batch(xl, pv, fields):
-    inputs = [xl["sheet"], xl["clips"], xl["folder"], xl["per"], xl["split"]]
+    inputs = [xl["sheet"], xl["clips"], xl["folder"], xl["per"], xl["split"], xl["tab"], xl["start"], xl["count"]]
 
-    def read(sheet, clips, folder, per, split, vals):
+    def read(sheet, clips, folder, per, split, tab, start, count, vals):
         if not sheet:
             raise ValueError("Upload a words sheet first.")
-        items, problems = vocab_batch.load_sheet(sheet, clips or [], folder or "")
+        items, problems = vocab_batch.load_sheet(sheet, clips or [], folder or "", tab, start, count)
         base = values_to_project("vocab", vals)
         g = base["vocab"].get("group") or "general"
         videos = vocab_batch.split(items, per, split or "group", g)
         return items, problems, videos, base
 
-    def check(sheet, clips, folder, per, split, *vals):
+    def check(sheet, clips, folder, per, split, tab, start, count, *vals):
         off = gr.update(value="🎬 Render all videos", interactive=False)
         if not sheet:
             return "Upload a sheet to see how many videos it makes.", gr.update(choices=[], value=None), off
         try:
-            items, problems, videos, base = read(sheet, clips, folder, per, split, vals)
+            items, problems, videos, base = read(sheet, clips, folder, per, split, tab, start, count, vals)
         except Exception as e:
             return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
         g, gname = base["vocab"].get("group") or "general", base["vocab"].get("group_name") or ""
@@ -945,12 +1058,12 @@ def wire_vc_batch(xl, pv, fields):
         n = len(videos)
         go = gr.update(value=f"🎬 Render all {n} video{'s' if n != 1 else ''}" if n else "🎬 Render all videos",
                        interactive=bool(n))
-        return (vocab_batch.summary(items, problems, videos, g, gname), gr.update(choices=choices, value=1 if choices else None),
-                go)
+        return (range_note(items, "items", start, count) + vocab_batch.summary(items, problems, videos, g, gname),
+                gr.update(choices=choices, value=1 if choices else None), go)
 
-    def load_part(sheet, clips, folder, per, split, k, title_tpl, lesson0, *vals):
+    def load_part(sheet, clips, folder, per, split, tab, start, count, k, title_tpl, lesson0, *vals):
         try:
-            items, problems, videos, base = read(sheet, clips, folder, per, split, vals)
+            items, problems, videos, base = read(sheet, clips, folder, per, split, tab, start, count, vals)
             k = int(k or 1)
             if not 1 <= k <= len(videos):
                 raise ValueError("Pick a video to preview.")
@@ -970,10 +1083,10 @@ def wire_vc_batch(xl, pv, fields):
                 gr.update(interactive=False), "⏳ Rendering all videos… each one appears below as soon as it is done.",
                 gr.update(value=None, visible=False), gr.update(value=None, visible=False))
 
-    def render_all(request: gr.Request, sheet, clips, folder, per, split, title_tpl, lesson0, *vals,
+    def render_all(request: gr.Request, sheet, clips, folder, per, split, tab, start, count, title_tpl, lesson0, *vals,
                    progress=gr.Progress()):
         def plan():
-            items, problems, videos, base = read(sheet, clips, folder, per, split, vals)
+            items, problems, videos, base = read(sheet, clips, folder, per, split, tab, start, count, vals)
             if not videos:
                 raise ValueError("The sheet has no usable rows." + (f" First problem: {problems[0]}" if problems else ""))
             g, gname = base["vocab"].get("group") or "general", base["vocab"].get("group_name") or ""
@@ -992,6 +1105,7 @@ def wire_vc_batch(xl, pv, fields):
 
         yield from _stream_batch(request, plan, progress)
 
+    xl["sheet"].change(fill_tabs, xl["sheet"], xl["tab"], show_progress="hidden")
     gr.on(triggers=[c.change for c in inputs], fn=check, inputs=inputs + fields,
           outputs=[xl["info"], xl["part"], xl["go"]], trigger_mode="always_last", show_progress="hidden")
     xl["load"].click(load_part, inputs + [xl["part"], xl["title"], xl["lesson0"]] + fields, fields)

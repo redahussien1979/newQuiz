@@ -67,8 +67,48 @@ def _cell(v):
     return " ".join(str(v).replace("\r", "\n").split())  # one line, single spaces
 
 
-def read_table(path):
-    """Rows of the first sheet (.xlsx) or of a CSV file, as lists of strings."""
+def sheet_names(path):
+    """The tabs of an Excel workbook ([] for a CSV file or anything unreadable)."""
+    if os.path.splitext(str(path))[1].lower() not in (".xlsx", ".xlsm"):
+        return []
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path, read_only=True)
+        try:  # hidden tabs (like the templates' dropdown lists) are left out
+            return [ws.title for ws in wb.worksheets if getattr(ws, "sheet_state", "visible") == "visible"]
+        finally:
+            wb.close()
+    except Exception:
+        return []
+
+
+def worksheet(wb, sheet=None):
+    """The tab called `sheet`, or the first one when it is empty or not in this workbook."""
+    return wb[sheet] if sheet and sheet in wb.sheetnames else wb.worksheets[0]
+
+
+def pick(items, start=1, count=0):
+    """Items start..start+count-1 (1-based); count 0 = all from start."""
+    s = max(1, int(start or 1)) - 1
+    n = max(0, int(count or 0))
+    return items[s:s + n] if n else items[s:]
+
+
+def pick_problems(problems, all_items, items):
+    """Only the problems of the rows the chosen range covers (rows between the first and last kept item)."""
+    if len(items) == len(all_items) or not items:
+        return problems
+    lo, hi = items[0]["row"], items[-1]["row"]
+    out = []
+    for p in problems:
+        m = re.match(r"Row (\d+)", p)
+        if not m or lo <= int(m.group(1)) <= hi:
+            out.append(p)
+    return out
+
+
+def read_table(path, sheet=None):
+    """Rows of one sheet of an .xlsx (the first, or the tab called `sheet`) or of a CSV file, as lists of strings."""
     ext = os.path.splitext(str(path))[1].lower()
     if ext in (".xlsx", ".xlsm"):
         try:
@@ -78,7 +118,7 @@ def read_table(path):
                                "(it installs it) or `pip install openpyxl`.") from e
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
         try:
-            ws = wb.worksheets[0]
+            ws = worksheet(wb, sheet)
             rows = [[_cell(v) for v in row] for row in ws.iter_rows(values_only=True)]
         finally:
             wb.close()
@@ -225,8 +265,11 @@ def parse_rows(rows, finder=None):
     return items, problems
 
 
-def load_sheet(path, uploads=(), folder=""):
-    return parse_rows(read_table(path), AudioFinder(uploads, folder))
+def load_sheet(path, uploads=(), folder="", sheet=None, start=1, count=0):
+    """Questions of one tab; only questions start..start+count-1 are kept (count 0 = all from start)."""
+    all_items, problems = parse_rows(read_table(path, sheet), AudioFinder(uploads, folder))
+    items = pick(all_items, start, count)
+    return items, pick_problems(problems, all_items, items)
 
 
 # ------------------------------------------------------------------ splitting

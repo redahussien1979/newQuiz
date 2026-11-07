@@ -162,25 +162,116 @@ _fonts, _tcache = {}, {}
 ARABIC_RE = re.compile(r"[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]")
 
 
-def set_font(path):
-    path = path if path and os.path.isfile(path) else DEFAULT_FONT
+def set_font(value):
+    """value = a font family name from the library (engine/fonts.py), a .ttf/.otf path, or empty for Cairo."""
+    if value and os.path.isfile(str(value)):
+        path = str(value)
+    elif value:
+        from .fonts import resolve
+        path = resolve(value)
+    else:
+        path = DEFAULT_FONT
     if path != _state["font"]:
         _state["font"] = path
         _fonts.clear()
         _tcache.clear()
 
 
-def get_font(size, weight="Black"):
-    k = (_state["font"], size, weight)
+# for each weight the app asks for: the styles / variable instances that can stand in, best first
+_WEIGHT_PREF = {"Black": ["Black", "Heavy", "ExtraBold", "UltraBold", "Bold"],
+                "Bold": ["Bold", "SemiBold", "DemiBold", "ExtraBold", "Black", "Medium"],
+                "SemiBold": ["SemiBold", "DemiBold", "Medium", "Bold", "Regular"],
+                "Medium": ["Medium", "Regular", "SemiBold", "Book"],
+                "Regular": ["Regular", "Book", "Normal", "Medium"]}
+_WEIGHT_NUM = {"Black": 900, "Bold": 700, "SemiBold": 600, "Medium": 500, "Regular": 400}
+
+
+def _weight_file(path, weight):
+    """The file of path's family that best matches a weight (static families ship one file per weight)."""
+    if path == DEFAULT_FONT:
+        return path
+    try:
+        from .fonts import family_files
+        files = family_files(path)
+    except Exception:
+        files = {}
+    if len(files) > 1:
+        for w in _WEIGHT_PREF.get(weight, [weight]):
+            hit = files.get(w.lower())
+            if hit:
+                return hit
+    return path
+
+
+def _set_weight(f, weight):
+    """Variable fonts: the named instance closest to the weight, else the weight axis itself."""
+    try:
+        names = [n.decode() if isinstance(n, bytes) else n for n in f.get_variation_names()]
+    except Exception:
+        return  # static font
+    for w in _WEIGHT_PREF.get(weight, [weight]):
+        if w in names:
+            try:
+                f.set_variation_by_name(w)
+                return
+            except Exception:
+                break
+    try:
+        axes = f.get_variation_axes()
+        vals = []
+        for a in axes:
+            nm = a.get("name", b"")
+            nm = nm.decode() if isinstance(nm, bytes) else str(nm)
+            if nm.lower().startswith("weight") or nm == "wght":
+                vals.append(max(a["minimum"], min(a["maximum"], _WEIGHT_NUM.get(weight, a["default"]))))
+            else:
+                vals.append(a["default"])
+        f.set_variation_by_axes(vals)
+    except Exception:
+        pass
+
+
+def get_font(size, weight="Black", path=None):
+    path = path or _state["font"]
+    k = (path, size, weight)
     if k not in _fonts:
         eng = ImageFont.Layout.RAQM if HAS_RAQM else ImageFont.Layout.BASIC
-        f = ImageFont.truetype(_state["font"], size, layout_engine=eng)
-        try:
-            f.set_variation_by_name(weight)
-        except Exception:
-            pass  # static (non-variable) font
+        f = ImageFont.truetype(_weight_file(path, weight), size, layout_engine=eng)
+        _set_weight(f, weight)
         _fonts[k] = f
     return _fonts[k]
+
+
+_SKIP = set(" \t\n\r\u200b\u200c\u200d\u200e\u200f\u061c\u2066\u2067\u2068\u2069\ufeff")
+_covered = {}
+
+
+def _font_for(txt):
+    """The chosen font, or Cairo when the chosen font cannot write every character of txt (e.g. English words in an
+    Arabic-only font, or Quran marks). Without RAQM the reshaped letter forms are what must exist in the font."""
+    path = _state["font"]
+    if path == DEFAULT_FONT:
+        return path
+    chk = _prep(txt)[0] if not HAS_RAQM and is_rtl(txt) else txt
+    cmap = _font_cmap(path)
+    for ch in set(chk):
+        if ch in _SKIP:
+            continue
+        key = (path, ch)
+        if key not in _covered:
+            _covered[key] = (ord(ch) in cmap) if cmap is not None else _pil_has(path, ch)
+        if not _covered[key]:
+            return DEFAULT_FONT
+    return path
+
+
+def _pil_has(path, ch):
+    """Without fontTools: a missing letter draws the same box as a character no font has."""
+    try:
+        f = ImageFont.truetype(path, 32, layout_engine=ImageFont.Layout.BASIC)
+        return f.getmask(ch).tobytes() != f.getmask("\uffff").tobytes()
+    except Exception:
+        return True
 
 
 def is_rtl(txt):
@@ -190,8 +281,8 @@ def is_rtl(txt):
 _cmaps = {}
 
 
-def _font_cmap():
-    path = _state["font"]
+def _font_cmap(path=None):
+    path = path or _state["font"]
     if path not in _cmaps:
         try:
             from fontTools.ttLib import TTFont
@@ -232,7 +323,7 @@ _measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
 
 def text_bbox(txt, size, weight="Black"):
     t2, kw = _prep(txt)
-    return _measure.textbbox((0, 0), t2, font=get_font(size, weight), **kw)
+    return _measure.textbbox((0, 0), t2, font=get_font(size, weight, _font_for(txt)), **kw)
 
 
 def text_width(txt, size, weight="Black"):
@@ -250,11 +341,12 @@ def text_img(txt, size, color, weight="Black", shadow=True, max_w=None):
     """Render one line of text to a transparent RGBA image (cached)."""
     color = to_rgb(color)
     size = fit_size(txt, size, weight, max_w)
-    k = (_state["font"], txt, size, color, weight, shadow)
+    path = _font_for(txt)
+    k = (path, txt, size, color, weight, shadow)
     if k in _tcache:
         return _tcache[k]
     t2, kw = _prep(txt)
-    f = get_font(size, weight)
+    f = get_font(size, weight, path)
     l, t_, r, b = _measure.textbbox((0, 0), t2, font=f, **kw)
     pad = 30
     im = Image.new("RGBA", (max(1, r - l) + pad * 2, max(1, b - t_) + pad * 2), (0, 0, 0, 0))
