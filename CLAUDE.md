@@ -16,6 +16,13 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
 - `engine/layouts.py` — MCQ screen layouts (`mcq.layout`): `Standard` (cards, drawn in mcq.py), `Exam paper`
   (ruled sheet on a desk, red-pen marking), `Islamic` (emerald/gold, mihrab-arch card); a layout draws background +
   question + timer, mcq.py `_layout_question` adds the shared overlays (difficulty, confetti, final ribbon)
+- `engine/fonts.py` — font library: bundled `fonts/library/<Family>/` (OFL, Arabic+Latin and Latin display fonts),
+  fonts added in the app (`DATA_DIR/fonts`) and the user's own folder (`DATA_DIR/fonts.json`); scan cached in
+  `DATA_DIR/fonts_index.json`. `settings.font_file` = a family name (older projects: a file path; empty = Cairo).
+  `core.get_font(size, weight, path)` picks the family file / variable instance per weight; `core._font_for(txt)`
+  falls back to Cairo for text the font can't write. App: "🔤 Font" gallery in Style & sound (click a card)
+- Excel batches: `batch.sheet_names` / `read_table(path, sheet)` / `pick(items, start, count)` — every batch tab has
+  Sheet (tab) + Start at # + How many
 - `engine/icons.py` — icons + event card; `engine/strings.py` — Arabic/English wording
 - `engine/countries.py` — country names/flags/outlines (`data/`, built by `tools/build_countries.py`), true-size maps
 - Timeline modes: `calendar`, `ago`, `scale` (number line with `unit`); options `maps` (true-size map scene) and `guess`

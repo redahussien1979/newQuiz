@@ -17,7 +17,7 @@ import re
 
 from . import countries as CT
 from .audio import MOODS
-from .batch import _norm, add_dropdowns
+from .batch import _norm, add_dropdowns, pick, pick_problems, worksheet
 from .core import COLORS, THEME_NAMES
 from .strings import ratio_str
 
@@ -82,8 +82,9 @@ def _text(v):
     return "\n".join(" ".join(line.split()) for line in s.split("\n")).strip()
 
 
-def read_rows(path):
-    """Rows of the first sheet (.xlsx) or of a CSV file, as lists of strings (line breaks kept)."""
+def read_rows(path, sheet=None):
+    """Rows of one sheet of an .xlsx (the first, or the tab called `sheet`) or of a CSV file, as lists of strings
+    (line breaks kept)."""
     ext = os.path.splitext(str(path))[1].lower()
     if ext in (".xlsx", ".xlsm"):
         try:
@@ -93,7 +94,7 @@ def read_rows(path):
                                "(it installs it) or `pip install openpyxl`.") from e
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
         try:
-            return [[_text(v) for v in row] for row in wb.worksheets[0].iter_rows(values_only=True)]
+            return [[_text(v) for v in row] for row in worksheet(wb, sheet).iter_rows(values_only=True)]
         finally:
             wb.close()
     if ext in (".csv", ".txt", ".tsv"):
@@ -230,8 +231,11 @@ def parse(rows):
     return specs, problems
 
 
-def load_sheet(path):
-    return parse(read_rows(path))
+def load_sheet(path, sheet=None, start=1, count=0):
+    """Videos of one tab; only rows start..start+count-1 of the usable ones are kept (count 0 = all from start)."""
+    all_specs, problems = parse(read_rows(path, sheet))
+    specs = pick(all_specs, start, count)
+    return specs, pick_problems(problems, all_specs, specs)
 
 
 # ------------------------------------------------------------------ building projects
