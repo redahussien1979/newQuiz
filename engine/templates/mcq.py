@@ -201,9 +201,15 @@ class MCQVideo:
         self.q0 = 2.6
         self.narr_gain = float(m.get("narration_gain") if m.get("narration_gain") is not None else 1.0)
         narr, _ = match_narration(m.get("narration") or [], self.qs)
+        # screen layout: Standard (cards, drawn here) or one from engine/layouts.py (needed now: it can ask for a
+        # longer reveal)
+        self.layout_name = m.get("layout") if m.get("layout") in LAYOUT_NAMES else "Standard"
+        self.layout = make_layout(self.layout_name, self)
         t = self.q0
         for i, q in enumerate(self.qs):
             self._plan(i, q, narr)
+            if self.layout:
+                q["D"] = max(q["D"], q["r"] + self.layout.min_reveal(q))
             # "Final question" ribbon: the last question's content starts FINAL_LEN later
             q["pre"] = FINAL_LEN if ("final" in self.fx and i == len(self.qs) - 1 and len(self.qs) > 1) else 0.0
             q["D"] += q["pre"]
@@ -219,7 +225,6 @@ class MCQVideo:
 
         def fill(txt):  # {count} = number of questions in this video
             return str(txt or "").replace("{count}", str(len(self.qs)))
-        self.layout_name = m.get("layout") if m.get("layout") in LAYOUT_NAMES else "Standard"
         on_paper = self.layout_name == "Exam paper"  # the title sits on a cream sheet: dark ink
         title_ink = (28, 36, 78) if on_paper else self.ink
         title = parse_lines(fill(m.get("title", "")), [title_ink])
@@ -246,9 +251,7 @@ class MCQVideo:
         self.header = (QuestionHeader(self.accent, self.ink, light=bool(self.st.get("light")), rtl=self.rtl,
                                       num_style=num_style) if self.header_style == "Fancy" else None)
         self.qfx = QuizFX(self.accent, self.ink, self.L, rtl=self.rtl, light=bool(self.st.get("light")))
-        # screen layout: Standard (cards, drawn here) or one from engine/layouts.py
         self.exam_title = " ".join(txt for txt, _ in title).strip() or self.L["exam_title"]
-        self.layout = make_layout(self.layout_name, self)
         self.ending = (fill(e.get("intro", "")), parse_lines(fill(e.get("question", "")), ["white", "gold"]),
                        fill(e.get("cta", "")), s.get("handle", ""))
 

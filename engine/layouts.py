@@ -149,6 +149,10 @@ class Layout:
     def answer_pos(self, i):
         return 540, 900
 
+    def min_reveal(self, q):
+        """Shortest time (s) the answer must stay on screen for this layout's reveal animation."""
+        return 0.0
+
     def sound(self, mx, i, t0):
         """Extra sounds for question i (t0 = its question time 0)."""
 
@@ -322,18 +326,14 @@ class ExamLayout(Layout):
         for y in (330, PH // 2, PH - 330):
             d.ellipse([hx - 20, y - 20, hx + 20, y + 20], fill=(150, 104, 66))
             d.ellipse([hx - 20, y - 20, hx + 20, y - 8], fill=(120, 80, 50))
-        # header: exam title, name line, question i of n
+        # header: exam title, question i of n
         title = T(self.v.exam_title, 56, INK, max_w=PW - 230)
         im.alpha_composite(title, (self._x(130, title.width), 50))
-        name = T(self.L.get("exam_name", "Name:") + " ......................", 36, (100, 104, 128), "Bold")
-        im.alpha_composite(name, (self._x(130, name.width), 150))
         tag_txt = T(self.L["question"].format(i=i + 1, n=n), 34, (100, 104, 128), "Bold")
         tag = Image.new("RGBA", (tag_txt.width + 40, 58), (0, 0, 0, 0))
         ImageDraw.Draw(tag).rounded_rectangle([0, 0, tag.width - 1, 57], 14, outline=(150, 154, 175), width=3)
         tag.alpha_composite(tag_txt, (20, (58 - tag_txt.height) // 2))
         im.alpha_composite(tag, (PW - 90 - tag.width if not self.rtl else 90, 144))
-        d.line([(60, 222), (PW - 60, 222)], fill=INK, width=3)
-        d.line([(60, 230), (PW - 60, 230)], fill=INK, width=1)
         # question number in a hand-drawn red circle in the margin, then the question on the ruled lines
         badge_x = PW - 55 if self.rtl else 55
         lines = wrap(q["q"], 52, "Black", PW - 290)[:3]
@@ -355,13 +355,14 @@ class ExamLayout(Layout):
         opts = []
         for k, o in enumerate(q["opts"]):
             y = RULE0 + rule * PITCH  # the option sits on this ruled line
-            row = self._option_row(k, o)
+            row, n_lines = self._option_row(k, o)
             bx = PW - 170 if self.rtl else 170  # answer bubble
             x0 = bx - 42 if self.rtl else bx + 42
             ox = x0 - row.width if self.rtl else x0
-            opts.append(dict(img=row, pos=(int(ox), y - row.height + 16), bubble=(bx, y - 34),
-                             text_x0=ox, text_x1=ox + row.width, y=y - 34))
-            rule += 2
+            extra = (n_lines - 1) * PITCH  # a wrapped option takes one more ruled line
+            opts.append(dict(img=row, pos=(int(ox), y + extra - row.height + 16), bubble=(bx, y - 34),
+                             text_x0=ox, text_x1=ox + row.width, y=y - 34 + extra / 2, ry=54 + extra / 2))
+            rule += 2 + (n_lines - 1)
         expl_y = RULE0 + rule * PITCH
         info = dict(img=im, opts=opts, badge=(badge_x, first_y - 22), expl_y=expl_y,
                     timer_y=min(PH - 200, expl_y + 210),
@@ -370,20 +371,25 @@ class ExamLayout(Layout):
         return info
 
     def _option_row(self, k, txt):
-        """'أ)  text' printed, followed by the answer bubble on the margin side (bubble drawn separately)."""
+        """'أ)  text' printed (the answer bubble is drawn separately). Every option uses the same font size: a long
+        one wraps onto a second ruled line (only text too long even for two lines is made smaller).
+        Returns (image, number of lines)."""
         let = T(self.L["letters"][k] + ")", 50, INK)
-        t = T(txt, 50, INK, "Bold", max_w=PW - 420)
         gap = 22
-        w = let.width + gap + t.width
-        h = max(let.height, t.height)
+        avail = PW - 300 - let.width - gap  # from the letter to the far side of the sheet
+        lines = wrap(txt, 50, "Bold", avail)
+        if len(lines) > 2:
+            lines = [lines[0], " ".join(lines[1:])]  # the rest shares the second line (shrinks to fit)
+        imgs = [T(l, 50, INK, "Bold", max_w=avail) for l in lines]
+        lh = max([let.height] + [im.height for im in imgs])
+        w = let.width + gap + max(im.width for im in imgs)
+        h = lh + (len(imgs) - 1) * PITCH
         row = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        if self.rtl:
-            row.alpha_composite(let, (w - let.width, h - let.height))
-            row.alpha_composite(t, (0, h - t.height))
-        else:
-            row.alpha_composite(let, (0, h - let.height))
-            row.alpha_composite(t, (let.width + gap, h - t.height))
-        return row
+        for j, im in enumerate(imgs):  # each line sits on its own ruled line
+            y = j * PITCH + lh - im.height
+            row.alpha_composite(im, (w - let.width - gap - im.width, y) if self.rtl else (let.width + gap, y))
+        row.alpha_composite(let, (w - let.width, lh - let.height) if self.rtl else (0, lh - let.height))
+        return row, len(imgs)
 
     # ------------------------------------------------------------ frame
     def background(self, t):
@@ -443,24 +449,22 @@ class ExamLayout(Layout):
             if pc > 0:
                 cx = (min(o["text_x0"], bx - 22) + max(o["text_x1"], bx + 22)) / 2
                 rx = (max(o["text_x1"], bx + 22) - min(o["text_x0"], bx - 22)) / 2 + 34
-                pen_at = self._ink_ellipse(sheet, cx, o["y"], rx, 54, eo(pc))
+                pen_at = self._ink_ellipse(sheet, cx, o["y"], rx, o["ry"], eo(pc))
             for k, ok in enumerate(info["opts"]):  # small crosses on the wrong bubbles
                 if k == c:
                     continue
                 pk = prog(u, r + 0.55 + 0.1 * k, r + 0.65 + 0.1 * k)
                 if pk > 0:
                     xb, yb = ok["bubble"]
-                    at = self._ink_cross(sheet, xb, yb, 20, pk)
-                    if pk < 1:
-                        pen_at = at
+                    pen_at = self._ink_cross(sheet, xb, yb, 20, pk)  # the pen rests where its last stroke ended
             pt = prog(u, r + 0.25, r + 0.5)  # tick next to the question number
             if pt > 0:
                 bxq, byq = info["badge"]
                 self._ink_tick(sheet, bxq, byq + 52, 30, pt)
-            pn = prog(u, r + 0.95, r + 1.9)  # the explanation, hand-written in red
+            n0, nd = self.note_time(q)
+            pn = prog(u, r + n0, r + n0 + nd)  # the explanation, hand-written in red
             if pn > 0 and q["expl"]:
-                p_at = self._ink_note(sheet, q["expl"], info["expl_y"], pn)
-                pen_at = p_at if pn < 1 else pen_at
+                pen_at = self._ink_note(sheet, q["expl"], info["expl_y"], pn) or pen_at
         dx, dy, ang = self._pose(i, u, out)
         rot = sheet.rotate(ang, expand=True, resample=Image.BICUBIC)
         sh_key = ("shadow", i)
@@ -475,12 +479,17 @@ class ExamLayout(Layout):
         self.timer(frame, tx, ty, q, u, (205, 60, 50), (40, 40, 60), 1 - out)
         pencil = self._cache["pencil"]
         frame.alpha_composite(pencil, (int(-60), int(H - pencil.height + 40)))
-        if pen_at is not None and out < 0.5:
-            sx, sy = self._to_screen(pen_at[0], pen_at[1], dx, dy, ang)
-            pen, tip = self._cache["pen"], self._cache["pen_tip"]
-            frame.alpha_composite(pen, (int(sx - tip[0]), int(sy - tip[1])))
-        if i == len(self.v.qs) - 1 and u >= r + 1.1:  # "Excellent!" stamp on the last sheet
-            ps = prog(u, r + 1.1, r + 1.3)
+        if pen_at is not None and out < 0.5:  # the red pen; lifts off the sheet when the marking is done
+            n0, nd = self.note_time(q)
+            lift = prog(u, r + (n0 + nd if q["expl"] else 1.0) + 0.1, r + (n0 + nd if q["expl"] else 1.0) + 0.45)
+            if lift < 1:
+                sx, sy = self._to_screen(pen_at[0], pen_at[1], dx, dy, ang)
+                pen, tip = self._cache["pen"], self._cache["pen_tip"]
+                e = eo(lift)
+                paste(frame, pen, sx - tip[0] + pen.width / 2 + 160 * e, sy - tip[1] + pen.height / 2 - 220 * e, 1, 1 - e)
+        st = r + self.stamp_time(q)
+        if i == len(self.v.qs) - 1 and u >= st:  # "Excellent!" stamp on the last sheet
+            ps = prog(u, st, st + 0.2)
             sx, sy = self._to_screen(PW * (0.3 if self.rtl else 0.7), PH - 230, dx, dy, ang)
             paste(frame, self._cache["stamp"], sx, sy, 2.0 - 1.0 * eo(ps), min(1, ps * 3) * (1 - out))
 
@@ -537,8 +546,10 @@ class ExamLayout(Layout):
         """Red note on the next ruled lines, written in reading direction; returns the pen position."""
         key = ("note", txt)
         if key not in self._cache:
-            lines = wrap(txt, 42, "Bold", PW - 300)[:2]
-            self._cache[key] = [T(l, 42, PEN, "Bold", max_w=PW - 300) for l in lines]
+            lines = wrap(txt, 42, "Bold", PW - 270)
+            if len(lines) > 3:  # very long: the rest shares the third line (shrinks to fit)
+                lines = lines[:2] + [" ".join(lines[2:])]
+            self._cache[key] = [T(l, 42, PEN, "Bold", max_w=PW - 270) for l in lines]
         imgs = self._cache[key]
         total = sum(im.width for im in imgs)
         done = total * p
@@ -569,9 +580,24 @@ class ExamLayout(Layout):
         for k in range(n_wrong):
             mx.add(r + 0.6 + 0.1 * k, mx.scribble(0.1), 0.18)
         if q["expl"]:
-            mx.add(r + 0.95, mx.scribble(0.95), 0.12)
+            n0, nd = self.note_time(q)
+            mx.add(r + n0, mx.scribble(nd), 0.12)
         if i == len(self.v.qs) - 1:
-            mx.add(r + 1.25, mx.stamp(), 0.55)
+            mx.add(r + self.stamp_time(q) + 0.15, mx.stamp(), 0.55)
+
+    # ------------------------------------------------------------ timing (seconds after the reveal)
+    @staticmethod
+    def note_time(q):
+        """When the explanation note starts and how long the pen takes: about 30 characters a second."""
+        return 0.95, min(3.2, max(1.3, len(q["expl"] or "") / 30))
+
+    def stamp_time(self, q):
+        n0, nd = self.note_time(q)
+        return n0 + nd + 0.1 if q["expl"] else 1.1
+
+    def min_reveal(self, q):
+        """The answer stays on screen until the pen has finished (and the last sheet's stamp has landed)."""
+        return self.stamp_time(q) + 1.0
 
 
 def _paper_texture():
