@@ -4,7 +4,9 @@
 A project's `settings.font_file` holds a font FAMILY NAME from this library (e.g. "Tajawal"), or — in projects saved
 by older versions — a path to a .ttf/.otf file; empty = Cairo. core.set_font() resolves it with resolve(), and
 core.get_font() picks the family's file / variable-font instance for each weight (Black, Bold, SemiBold…).
-Text a font cannot write (English in an Arabic-only font, Quran marks…) is drawn in Cairo instead (core._font_for).
+Characters a font cannot write (English in an Arabic-only font, Quran marks…) are drawn in Cairo — only those
+characters, not the whole line (core._fit_text); in Arabic text 0-9 ? , ; % first become their Arabic forms
+(٠-٩ ؟ ، ؛ ٪) when the font has those.
 
 The scan is cached in Documents/Video Studio/fonts_index.json (by file size + date), so render processes and
 large font folders stay fast."""

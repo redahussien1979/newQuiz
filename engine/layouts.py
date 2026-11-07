@@ -374,8 +374,9 @@ class ExamLayout(Layout):
         """'أ)  text' printed (the answer bubble is drawn separately). Every option uses the same font size: a long
         one wraps onto a second ruled line (only text too long even for two lines is made smaller).
         Returns (image, number of lines)."""
-        let = T(self.L["letters"][k] + ")", 50, INK)
-        gap = 22
+        show = self.v.show_letters
+        let = T(self.L["letters"][k] + ")", 50, INK, "Bold") if show else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+        gap = 22 if show else 0
         avail = PW - 300 - let.width - gap  # from the letter to the far side of the sheet
         lines = wrap(txt, 50, "Bold", avail)
         if len(lines) > 2:
@@ -388,7 +389,8 @@ class ExamLayout(Layout):
         for j, im in enumerate(imgs):  # each line sits on its own ruled line
             y = j * PITCH + lh - im.height
             row.alpha_composite(im, (w - let.width - gap - im.width, y) if self.rtl else (let.width + gap, y))
-        row.alpha_composite(let, (w - let.width, lh - let.height) if self.rtl else (0, lh - let.height))
+        if show:
+            row.alpha_composite(let, (w - let.width, lh - let.height) if self.rtl else (0, lh - let.height))
         return row, len(imgs)
 
     # ------------------------------------------------------------ frame
@@ -827,7 +829,8 @@ class IslamicLayout(Layout):
         im = paint(outer, GOLD_HI, GOLD_LO)
         body = paint(inner, (246, 216, 140) if ok else EM_HI, (196, 150, 66) if ok else EM_LO)
         im.alpha_composite(body, (3, 3))
-        star = _gold_star(40, filled=not ok, letter=self.L["letters"][k], dark_letter=not ok)
+        star = _gold_star(40, filled=not ok, letter=self.L["letters"][k] if self.v.show_letters else None,
+                          dark_letter=not ok)
         sx = w - 30 - star.width if self.rtl else 30
         im.alpha_composite(star, (sx, (h - star.height) // 2))
         t = T(q["opts"][k], 50, (46, 32, 8) if ok else CREAM, "Bold", max_w=w - 220)

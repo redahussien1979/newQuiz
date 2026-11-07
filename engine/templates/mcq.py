@@ -196,6 +196,7 @@ class MCQVideo:
         self.card_ink = self.st["card_text"]
         self.qs = parse_questions(m.get("questions", ""))
         self.fx = {k for k in (m.get("fx") or []) if k in FX_KEYS}
+        self.show_letters = m.get("letters", True) is not False  # أ ب ج د / A B C D before the options
         self.T = max(2.0, float(m.get("think_seconds") or 5))
         self.R = max(1.5, float(m.get("reveal_seconds") or 2.8))
         self.q0 = 2.6
@@ -317,11 +318,15 @@ class MCQVideo:
         im = build_box(w, h, m, self.st, col, correct=correct)
         cx = (m + w - 70) if self.rtl else (m + 70)
         cy = m + h / 2
-        letter_badge(im, cx, cy, lambda t_, sz, c: text_img(t_, sz, c, "Black", shadow=False),
-                     self.L["letters"][k], col, self.st, correct)
+        if self.show_letters:
+            letter_badge(im, cx, cy, lambda t_, sz, c: text_img(t_, sz, c, "Black", shadow=False),
+                         self.L["letters"][k], col, self.st, correct)
         tc = (30, 60, 40) if correct and (self.st.get("light") or self.st.get("light_cards")) else self.card_ink
         t = text_img(txt, 50, tc, "Bold", shadow=False, max_w=w - 190)
-        x = (m + w - 130 - t.width) if self.rtl else (m + 130)
+        if self.show_letters:
+            x = (m + w - 130 - t.width) if self.rtl else (m + 130)
+        else:  # no letter badge: the option text is centred
+            x = m + (w - t.width) / 2
         im.alpha_composite(t, (int(x), int(cy - t.height / 2)))
         return im
 
