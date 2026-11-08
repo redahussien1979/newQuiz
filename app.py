@@ -29,6 +29,7 @@ from engine.templates.vocab import GROUP_CHOICES, GROUPS, PACES, TYPE_CHOICES, a
 from engine.templates.vocab import LIST_STYLES as VC_LIST_STYLES
 from engine.templates.vocab import TITLE_STYLES as VC_TITLE_STYLES
 from engine.templates.text import BAND_CHOICES as TX_BANDS, MARKER_CHOICES as TX_MARKERS, words_report
+from engine.templates.text import LEVEL_CHOICES as TX_LEVELS, STYLE_CHOICES as TX_STYLES
 from engine import batch
 from engine import countries
 from engine import tl_batch
@@ -66,7 +67,8 @@ MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", 
 VC_KEYS = ["group", "group_name", "title", "subtitle", "lesson", "lesson_n", "items", "accent", "background",
            "title_style", "hook", "pace", "guess_seconds", "timer", "timer_fx", "recap", "audio", "audio_gain",
            "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color"]
-TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "lead", "band", "marker"]
+TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "lead", "band", "marker", "style",
+           "level", "translation"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio"}
 MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
@@ -76,7 +78,8 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "group_name": "", "lesson": "", "lesson_n": 1, "accent": "group", "background": "group", "hook": False,
             "pace": "normal", "guess_seconds": 5, "timer": "Bar", "recap": True, "audio_gain": 1.0,
             "list_style": "Editorial", "list_highlight": "cream", "chalk_board": "green", "chalk_mark": "circle",
-            "chalk_color": "pink", "tag": "", "lead": 1.0, "band": "teal", "marker": "yellow"}  # for projects saved before these options existed
+            "chalk_color": "pink", "tag": "", "lead": 1.0, "band": "teal", "marker": "yellow",
+            "style": "textbook", "level": "", "translation": ""}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -165,6 +168,9 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 - Upload the recordings (ElevenLabs names are fine: each goes to the tab whose reading length it matches; a file
   named like a tab, e.g. `paragraph1.mp3`, always goes to that tab), then 🎬 Render all — or 📥 load one tab to check it.
 - A phrase: write the same text (e.g. `chase away`) in E on each of its rows; it flies as one piece.
+- Four designs (⏱️ Design): Textbook page, Night studio, Exam passage (line numbers, red pen, LEARNED stamp), Notebook
+  (handwriting, sticky notes). Lines are justified like a book (long words are hyphenated when it helps).
+- Optional per tab: `level` (A1–C2 badge) and `paragraph translation` (Arabic translation shown after the reading).
 - The text is sized to fill the Shorts safe area; long paragraphs turn into pages (the voice waits for the page
   turn) and end with a Word Bank recap. Each render also saves a cover picture.
 
@@ -1686,25 +1692,39 @@ def build_ui():
                                     t_sub = gr.Textbox(label="Small line above the title", placeholder="UNIT 3 · READING")
                                     t_tag = gr.Textbox(label="Arabic tag (top right, optional)", rtl=True,
                                                        placeholder="اقرأ واستمع")
-                                t_title = gr.Textbox(label="Title", placeholder="Move Your Body, Lift Your Mood")
+                                with gr.Row():
+                                    t_title = gr.Textbox(label="Title", placeholder="Move Your Body, Lift Your Mood",
+                                                         scale=4)
+                                    t_level = gr.Dropdown(TX_LEVELS, value="", label="Level badge", scale=1,
+                                                          info="A1 … C2 (optional)")
                                 t_words = gr.Textbox(lines=16, max_lines=60, label="Words", info=TX_WORDS_HELP)
                                 t_info = gr.Markdown()
                                 t_audio = gr.Audio(type="filepath", label="Recording of the paragraph (mp3 / wav…)")
                                 t_gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Recording volume")
+                                t_trans = gr.Textbox(lines=3, max_lines=8, rtl=True,
+                                                     label="Arabic translation of the whole paragraph (optional)",
+                                                     info="Shown on a card after the reading (Excel: a "
+                                                          "'paragraph translation' column)")
                         with gr.Tab("⏱️ Design"):
                             with gr.Column(elem_classes="pane"):
-                                gr.Markdown("**Textbook page** — the text inks in as it is read; highlighted words get "
-                                            "a marker swipe, fly into the Word Bank and their Arabic writes in.")
+                                t_style = gr.Radio(TX_STYLES, value="textbook", label="Design",
+                                                   info="Textbook = colour band + highlighter · Night studio = dark, "
+                                                        "gold glow, glass cards · Exam passage = line numbers, red pen, "
+                                                        "LEARNED stamp · Notebook = handwriting, pen circles, sticky "
+                                                        "notes")
+                                gr.Markdown("Every design: the text inks in as it is read; highlighted words are "
+                                            "marked, fly into the word bank and their Arabic writes in.")
                                 with gr.Row():
-                                    t_band = gr.Dropdown(TX_BANDS, value="teal", label="Page colour",
+                                    t_band = gr.Dropdown(TX_BANDS, value="teal", label="Textbook: page colour",
                                                          info="The title band, Word Bank and ticks")
-                                    t_marker = gr.Dropdown(TX_MARKERS, value="yellow", label="Highlighter colour")
+                                    t_marker = gr.Dropdown(TX_MARKERS, value="yellow",
+                                                           label="Textbook: highlighter colour")
                                 t_lead = gr.Slider(0.3, 3, value=1.0, step=0.1, label="Reading starts at (seconds)",
                                                    info="Time for the page to appear before the voice starts")
                         tx_st = style_tab()
                         tx_end = ending_tab()
                     tx_fields = shared_fields(tx_st, tx_end) + [t_title, t_sub, t_tag, t_words, t_audio, t_gain,
-                                                                 t_lead, t_band, t_marker]
+                                                                 t_lead, t_band, t_marker, t_style, t_level, t_trans]
                 tx_pv = preview_panel("text")
             wire(tx_proj, tx_pv, tx_fields)
             wire_tx_batch(txl, tx_pv, tx_fields)

@@ -8,8 +8,9 @@ Tab layout (row 1 = headers, any order; without headers the columns are read as 
 - E: write the word (or anything, e.g. *) on the row of a word that should fly into the word bank. Neighbouring rows
   with the same several-word text in E (e.g. "ten-minute walk" on both rows) fly together as one phrase.
 - F: the Arabic meaning, on the row of the highlighted word (any row of a phrase).
-- title / subtitle / audio (optional columns): the cell under the header (row 2). title = the big title of the
-  video, subtitle = the small line above it, audio = the file name of the recording.
+- title / subtitle / level / paragraph translation / audio (optional columns): the cell under the header (row 2).
+  title = the big title (else the tab name), subtitle = the small line above it, level = A1-C2 badge, paragraph
+  translation = the Arabic translation of the whole paragraph (shown after the reading), audio = the recording's name.
 - The recording: upload it with the sheet. A file named like the tab (`paragraph1.mp3`) or named in the audio column
   goes to that tab; any other file (e.g. ElevenLabs_2026-….mp3) goes to the tab whose reading length it matches.
 """
@@ -31,11 +32,15 @@ _ALIASES = {
     "title": ["title", "videotitle", "العنوان", "عنوان"],
     "subtitle": ["subtitle", "unit", "topline", "lesson", "العنوانالفرعي", "الوحده", "الدرس"],
     "audio": ["audio", "audiofile", "sound", "recording", "voice", "mp3", "الصوت", "صوت", "التسجيل"],
+    "level": ["level", "cefr", "cefrlevel", "المستوي", "مستوي"],
+    "translation": ["paragraphtranslation", "fulltranslation", "translationofparagraph", "translationparagraph",
+                    "paragraphtranslationarabic", "ترجمهالفقره", "ترجمهالنص", "الترجمهالكامله"],
 }
 _LOOKUP = {_norm(a): k for k, names in _ALIASES.items() for a in names}
 _POSITIONAL = ["index", "word", "start", "end", "mark", "arabic"]  # columns A..F when there is no header row
 AUDIO_EXT = (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".wma")
-HEADERS = ["index", "word", "start", "end", "highlighted words", "arabic translation", "title", "subtitle"]
+HEADERS = ["index", "word", "start", "end", "highlighted words", "arabic translation", "title", "subtitle", "level",
+           "paragraph translation"]
 
 
 def _columns(header):
@@ -85,6 +90,7 @@ def read_tab(path, tab=None):
         raise ValueError(f"Tab '{tab or 'first'}' has no words in the word column.")
     return dict(tab=tab or "", title=_first_below(body, cols.get("title")),
                 subtitle=_first_below(body, cols.get("subtitle")), audio_name=_first_below(body, cols.get("audio")),
+                level=_first_below(body, cols.get("level")), translation=_first_below(body, cols.get("translation")),
                 rows=rows, problems=problems)
 
 
@@ -262,10 +268,12 @@ def part_project(base, par):
     p = copy.deepcopy(base)
     d = p.setdefault("text", {})
     d["words"] = rows_text(par["rows"])
-    if par.get("title"):
-        d["title"] = par["title"]
+    d["title"] = par.get("title") or par.get("tab") or d.get("title", "")  # never another tab's title
     if par.get("subtitle"):
         d["subtitle"] = par["subtitle"]
+    if par.get("level"):
+        d["level"] = par["level"].strip().upper()
+    d["translation"] = par.get("translation") or ""  # per tab: never another paragraph's translation
     d["reading_audio"] = par.get("audio") or ""
     return p
 
@@ -288,8 +296,10 @@ def write_template(path):
         for i, w in enumerate(words, 1):
             ws.append([i, w["w"], w["s"], w["e"], w["mark"] or None, w["ar"] or None,
                        (EXAMPLE["text"]["title"] if k == 0 else "Paragraph two title") if i == 1 else None,
-                       EXAMPLE["text"]["subtitle"] if i == 1 else None])
-        for col, width in zip("ABCDEFGH", [7, 18, 8, 8, 22, 26, 30, 22]):
+                       EXAMPLE["text"]["subtitle"] if i == 1 else None,
+                       EXAMPLE["text"]["level"] if i == 1 else None,
+                       (EXAMPLE["text"]["translation"] if k == 0 else None) if i == 1 else None])
+        for col, width in zip("ABCDEFGHIJ", [7, 18, 8, 8, 22, 26, 30, 22, 8, 60]):
             ws.column_dimensions[col].width = width
     wb.save(path)
     return path

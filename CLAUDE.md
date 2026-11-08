@@ -51,6 +51,11 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   into the Word Bank, Arabic writes in right-to-left. `text.words` = lines `word | start | end | highlighted | arabic`
   (same as Excel columns B-F); neighbouring rows with the same multi-word highlight = one phrase. Long text → pages
   (sentence breaks, per-page size, recording cut and delayed for the page turn: `shifts` / `cuts`) + recap page.
+  Designs `text.style`: `textbook` (TextVideo = the shared engine) / `studio` / `exam` / `notebook` (subclasses only
+  override look hooks: `_style`, `_background`, `_header`, `_band_layer`, `_make_mark`/`_draw_mark`, `_bank_rows`/
+  `_draw_slot`, `_fly_back`, `_draw_final`); `make_video(project)` picks the class. Lines: `_break` = DP over word
+  pieces (pyphen hyphenation, optional) for even justified lines, `_justify` adds a little letter-spacing;
+  `_page_size` trades size against word-gap width. Optional `level` badge and `translation` card after the reading.
   Font `fonts/library/Literata`. `engine/text_batch.py` — workbook: every tab = one video (title / subtitle columns,
   recording named like the tab); template `projects/texts_template.xlsx`
 - `engine/know_country/` — 🌍 Know a Country tab (not a template class: its own renderer). `video.py` = one Excel

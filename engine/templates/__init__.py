@@ -8,5 +8,5 @@ TEMPLATES = {
     "quiz": (quiz.NAME, quiz.QuizVideo, quiz.EXAMPLE),
     "mcq": (mcq.NAME, mcq.MCQVideo, mcq.EXAMPLE),
     "vocab": (vocab.NAME, vocab.VocabVideo, vocab.EXAMPLE),
-    "text": (text.NAME, text.TextVideo, text.EXAMPLE),
+    "text": (text.NAME, text.make_video, text.EXAMPLE),
 }
