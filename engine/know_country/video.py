@@ -611,6 +611,10 @@ def region_layer(n, cam, color):
         ys, xs = np.nonzero(last)
         j = int(np.argmin((xs - xs.mean()) ** 2 + (ys - ys.mean()) ** 2))
         pin_xy = (int(xs[j]) * 4 + 2, int(ys[j]) * 4 + 2)
+    if pin_xy is None and n["rings_v"]:   # too small to fill (e.g. Vatican City): pin its centre
+        x, y, vis = proj_vec(np.concatenate(n["rings_v"]), cam)
+        if (vis > 0).any():
+            pin_xy = (int(x.mean()), int(y.mean()))
     return lay, pin_xy
 
 NB_FONT = 32
