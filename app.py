@@ -26,6 +26,7 @@ from engine.layouts import LAYOUT_NAMES
 from engine.quiz_fx import FX_KEYS, FX_OPTIONS
 from engine.templates.mcq import HEADER_STYLES, TITLE_STYLES, narration_report, parse_questions
 from engine.templates.vocab import GROUP_CHOICES, GROUPS, PACES, TYPE_CHOICES, add_item, clips_report, to_word_cards
+from engine.templates.vocab import LIST_STYLES as VC_LIST_STYLES
 from engine.templates.vocab import TITLE_STYLES as VC_TITLE_STYLES
 from engine import batch
 from engine import countries
@@ -33,6 +34,7 @@ from engine import tl_batch
 from engine import userdata
 from engine import fonts as fontlib
 from engine import vocab_batch
+from engine.word_list import BOARD_CHOICES, CHALK_COLOR_CHOICES, HIGHLIGHTS, MARKS
 from engine.know_country import video as kc_video
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -60,7 +62,8 @@ MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", 
            "colors", "narration", "narration_gain", "timer_fx", "title_style", "header_style", "fx", "number_style",
            "layout", "letters"]
 VC_KEYS = ["group", "group_name", "title", "subtitle", "lesson", "lesson_n", "items", "accent", "background",
-           "title_style", "hook", "pace", "guess_seconds", "timer", "timer_fx", "recap", "audio", "audio_gain"]
+           "title_style", "hook", "pace", "guess_seconds", "timer", "timer_fx", "recap", "audio", "audio_gain",
+           "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline"}
 MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
@@ -68,7 +71,9 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "guess_q": "", "intro": "hook", "map_style": "auto", "polish": False, "finish": False,
             "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0, "title_style": "Fancy", "header_style": "Fancy", "fx": [], "number_style": "plain", "layout": "Standard", "letters": True,
             "group_name": "", "lesson": "", "lesson_n": 1, "accent": "group", "background": "group", "hook": False,
-            "pace": "normal", "guess_seconds": 5, "timer": "Bar", "recap": True, "audio_gain": 1.0}  # for projects saved before these options existed
+            "pace": "normal", "guess_seconds": 5, "timer": "Bar", "recap": True, "audio_gain": 1.0,
+            "list_style": "Editorial", "list_highlight": "cream", "chalk_board": "green", "chalk_mark": "circle",
+            "chalk_color": "pink"}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -146,6 +151,10 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 - Every render also saves a **cover picture** next to the video. 5 items ≈ 60 s at Normal pace; the preview warns
   above 60 s (Facebook Reels).
 - **📊 Excel batch:** one item per row, one video per group (or in sheet order), lesson numbers count up.
+- **Word list page** (`type: list`): up to 6 words with their Arabic meanings on one page, read one after another
+  with clips `w1_1`, `w1_2` … — the word being read lights up. Two designs in ⏱️ Design & timing: **Editorial**
+  (magazine page, 6 highlight colours) and **Chalkboard** (hand-written chalk; board, mark and chalk colour).
+  In Excel: Type = list, one word per row with its Audio; "Words per list page" sets how many go on one page.
 
 ### Sound
 - Built-in music moods are generated, so there are no copyright issues. You can also upload your own music file.
@@ -972,20 +981,24 @@ def wire_tl_batch(xl, pv, fields):
 
 # ------------------------------------------------------------------ English Words
 VC_ITEMS_HELP = """**One item per block, an empty line between items** (max 10). Start each line with a key:
-`type:` word / guess / reverse / mistake / proverb / idiom (optional — worked out from the lines) ·
+`type:` word / guess / reverse / mistake / proverb / idiom / list (optional — worked out from the lines) ·
 `word:` the word, phrase, proverb or idiom (`right:` the correct sentence of a mistake) · `ipa:` /prəˈnʌnsiˈeɪʃn/ ·
 `pos:` noun • اسم · `meaning:` · `example:` (put \\*stars\\* around words to choose what is highlighted) ·
 `example_ar:` · `also:` similar words, comma separated · `wrong:` the wrong sentence · `literal:` the literal meaning ·
 `equivalent:` the Arabic proverb · `note:` · `question:` your own question · `recap:` short meaning for the recap ·
 `group:` an item from another group (mixed videos).
-Guess options are lines starting with `-`; put `*` after the correct one."""
+Guess options are lines starting with `-`; put `*` after the correct one.
+**Word list** (several words on one page, read one after another): `type: list`, optional `title:` / `subtitle:`,
+then one line per word (up to 6): `- Airport = مطار` or `- Airport = /ˈeəpɔːt/ = مطار`."""
 VC_AUDIO_HELP = """**Your own audio per item.** Name each clip after its item: `w1` = item 1 (the word, proverb or
-correct sentence — it plays when it appears and the 🔊 icon animates) · `w1e` = item 1's example sentence.
+correct sentence — it plays when it appears and the 🔊 icon animates) · `w1e` = item 1's example sentence ·
+`w1_1`, `w1_2` … = word 1, word 2 … of a word list in item 1 (each word lights up while its clip plays).
 Any audio type works (mp3, wav, m4a…). The item waits for its clips, and the music gets quieter while they play.
 A voiceover for the whole video is in 🎨 Style & sound."""
 VC_BATCH_HELP = """**Make many videos from one spreadsheet.** One item per row: `Group · Type · Word / Phrase · IPA ·
 Part of speech · Meaning · Example · Example (Arabic) · Similar words · Option A–D · Correct · Wrong sentence ·
-Literal meaning · Arabic equivalent · Note · Question · Recap · Audio · Example audio` (English or Arabic headers — get
+Literal meaning · Arabic equivalent · Note · Question · Recap · Audio · Example audio · Page title · Page subtitle`
+(English or Arabic headers — get
 the **template** on the right, it has an example of every group and type). Every video uses the design, timing,
 music and ending you set in the other tabs, and the colour and theme of its own group. In the title, `{n}` becomes the
 video number and `{total}` the number of videos (empty = automatic title per group)."""
@@ -1015,8 +1028,11 @@ def vc_batch_tab():
                         placeholder=r"C:\english\audio")
     tab, start, count = sheet_controls("items")
     with gr.Row():
-        per = gr.Slider(1, vocab_batch.MAX_ITEMS, value=5, step=1, label="Items per video")
-        split = gr.Radio(vocab_batch.SPLIT_MODES, value="group", label="Split")
+        per = gr.Slider(1, vocab_batch.MAX_ITEMS, value=5, step=1, label="Items per video",
+                        info="A word-list page counts as one item")
+        lsize = gr.Slider(1, vocab_batch.LIST_MAX, value=4, step=1, label="Words per list page",
+                          info="Type = list rows: one word per row, this many words on one page")
+    split = gr.Radio(vocab_batch.SPLIT_MODES, value="group", label="Split")
     with gr.Row():
         title = gr.Textbox(label="Title of each video (optional)", placeholder="5 Political Words — Part {n}")
         lesson0 = gr.Number(value=1, precision=0, label="First lesson number (English Lesson #{n})")
@@ -1029,42 +1045,45 @@ def vc_batch_tab():
     with gr.Row(equal_height=True):
         part = gr.Dropdown([], label="Preview one video in the editor", scale=2)
         load = gr.Button("📥 Load into editor", scale=1, min_width=120)
-    return dict(sheet=sheet, clips=clips, folder=folder, per=per, split=split, title=title, lesson0=lesson0, info=info,
+    return dict(sheet=sheet, clips=clips, folder=folder, per=per, lsize=lsize, split=split, title=title, lesson0=lesson0,
+                info=info,
                 go=go, files=files, zip=zipb, part=part, load=load, tab=tab, start=start, count=count)
 
 
 def wire_vc_batch(xl, pv, fields):
-    inputs = [xl["sheet"], xl["clips"], xl["folder"], xl["per"], xl["split"], xl["tab"], xl["start"], xl["count"]]
+    inputs = [xl["sheet"], xl["clips"], xl["folder"], xl["per"], xl["split"], xl["tab"], xl["start"], xl["count"],
+              xl["lsize"]]
 
-    def read(sheet, clips, folder, per, split, tab, start, count, vals):
+    def read(sheet, clips, folder, per, split, tab, start, count, lsize, vals):
         if not sheet:
             raise ValueError("Upload a words sheet first.")
-        items, problems = vocab_batch.load_sheet(sheet, clips or [], folder or "", tab, start, count)
+        items, problems = vocab_batch.load_sheet(sheet, clips or [], folder or "", tab, start, count, lsize or 4)
         base = values_to_project("vocab", vals)
         g = base["vocab"].get("group") or "general"
         videos = vocab_batch.split(items, per, split or "group", g)
         return items, problems, videos, base
 
-    def check(sheet, clips, folder, per, split, tab, start, count, *vals):
+    def check(sheet, clips, folder, per, split, tab, start, count, lsize, *vals):
         off = gr.update(value="🎬 Render all videos", interactive=False)
         if not sheet:
             return "Upload a sheet to see how many videos it makes.", gr.update(choices=[], value=None), off
         try:
-            items, problems, videos, base = read(sheet, clips, folder, per, split, tab, start, count, vals)
+            items, problems, videos, base = read(sheet, clips, folder, per, split, tab, start, count, lsize, vals)
         except Exception as e:
             return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
         g, gname = base["vocab"].get("group") or "general", base["vocab"].get("group_name") or ""
         choices = [(f"Video {k} — {vocab_batch.group_label(v, g, gname)}, {len(v['items'])} items "
-                    f"(rows {v['items'][0]['row']}–{v['items'][-1]['row']})", k) for k, v in enumerate(videos, 1)]
+                    f"(rows {v['items'][0]['row']}–{v['items'][-1].get('row_end', v['items'][-1]['row'])})", k)
+                   for k, v in enumerate(videos, 1)]
         n = len(videos)
         go = gr.update(value=f"🎬 Render all {n} video{'s' if n != 1 else ''}" if n else "🎬 Render all videos",
                        interactive=bool(n))
         return (range_note(items, "items", start, count) + vocab_batch.summary(items, problems, videos, g, gname),
                 gr.update(choices=choices, value=1 if choices else None), go)
 
-    def load_part(sheet, clips, folder, per, split, tab, start, count, k, title_tpl, lesson0, *vals):
+    def load_part(sheet, clips, folder, per, split, tab, start, count, lsize, k, title_tpl, lesson0, *vals):
         try:
-            items, problems, videos, base = read(sheet, clips, folder, per, split, tab, start, count, vals)
+            items, problems, videos, base = read(sheet, clips, folder, per, split, tab, start, count, lsize, vals)
             k = int(k or 1)
             if not 1 <= k <= len(videos):
                 raise ValueError("Pick a video to preview.")
@@ -1084,10 +1103,10 @@ def wire_vc_batch(xl, pv, fields):
                 gr.update(interactive=False), "⏳ Rendering all videos… each one appears below as soon as it is done.",
                 gr.update(value=None, visible=False), gr.update(value=None, visible=False))
 
-    def render_all(request: gr.Request, sheet, clips, folder, per, split, tab, start, count, title_tpl, lesson0, *vals,
-                   progress=gr.Progress()):
+    def render_all(request: gr.Request, sheet, clips, folder, per, split, tab, start, count, lsize, title_tpl, lesson0,
+                   *vals, progress=gr.Progress()):
         def plan():
-            items, problems, videos, base = read(sheet, clips, folder, per, split, tab, start, count, vals)
+            items, problems, videos, base = read(sheet, clips, folder, per, split, tab, start, count, lsize, vals)
             if not videos:
                 raise ValueError("The sheet has no usable rows." + (f" First problem: {problems[0]}" if problems else ""))
             g, gname = base["vocab"].get("group") or "general", base["vocab"].get("group_name") or ""
@@ -1460,6 +1479,19 @@ def build_ui():
                                     v_secs = gr.Slider(2, 15, value=5, step=1, label="Guess countdown (seconds)")
                                     v_timer = gr.Dropdown(TIMER_NAMES, value="Bar", label="Guess timer")
                                 v_tfx = gr.CheckboxGroup(TIMER_FX, value=["pulse", "glow"], label="Timer effects")
+                                gr.Markdown("**Word-list page** (`type: list` items) — the word being read lights up")
+                                with gr.Row():
+                                    v_lstyle = gr.Radio(VC_LIST_STYLES, value="Editorial", label="Page design",
+                                                        info="Editorial = magazine page · Chalkboard = hand-written "
+                                                             "chalk")
+                                    v_lhl = gr.Dropdown(HIGHLIGHTS, value="cream", label="Editorial: highlight",
+                                                        info="How the row being read is marked")
+                                with gr.Row():
+                                    v_cboard = gr.Dropdown(BOARD_CHOICES, value="green", label="Chalkboard: board")
+                                    v_cmark = gr.Dropdown(MARKS, value="circle", label="Chalkboard: mark",
+                                                          info="Drawn live around the word being read")
+                                    v_ccol = gr.Dropdown(CHALK_COLOR_CHOICES, value="pink",
+                                                         label="Chalkboard: chalk colour")
                         with gr.Tab("🎙️ Audio"):
                             with gr.Column(elem_classes="pane"):
                                 gr.Markdown(VC_AUDIO_HELP)
@@ -1474,7 +1506,8 @@ def build_ui():
                         vc_end = ending_tab()
                     vc_fields = shared_fields(vc_st, vc_end) + [v_group, v_gname, v_title, v_sub, v_lesson, v_lesson_n,
                                                                  v_items, v_acc, v_bg, v_tstyle, v_hook, v_pace, v_secs,
-                                                                 v_timer, v_tfx, v_recap, v_audio, v_again]
+                                                                 v_timer, v_tfx, v_recap, v_audio, v_again,
+                                                                 v_lstyle, v_lhl, v_cboard, v_cmark, v_ccol]
                 vc_pv = preview_panel("vocab")
             wire(vc_proj, vc_pv, vc_fields)
             wire_vc_batch(vxl, vc_pv, vc_fields)

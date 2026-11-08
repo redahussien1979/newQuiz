@@ -11,6 +11,9 @@ type, and types can be mixed:
     mistake  wrong sentence (struck out with a buzz) -> correct sentence -> rule -> example
     proverb  English proverb word by word -> literal translation -> the Arabic equivalent proverb -> example
     idiom    the idiom -> literal meaning (crossed out) -> the real meaning -> example
+    list     one page of 1-6 words with their Arabic meanings ("- English = /ipa/ = Arabic" lines), read one after
+             another (clips w1_1, w1_2 …): the word being read is highlighted. Two page designs (LIST_STYLES):
+             Editorial (magazine page) and Chalkboard (hand-written chalk)
 
 Items are written in a small "key: value" format (see EXAMPLE and parse_items()); the Excel batch
 (engine/vocab_batch.py) builds the same text. Audio clips named w1 / w1e (word 1 / its example) are played on
@@ -84,15 +87,17 @@ def custom_color(name):
 
 
 # ------------------------------------------------------------------ item text format
-TYPES = ["word", "guess", "reverse", "mistake", "proverb", "idiom"]
+TYPES = ["word", "guess", "reverse", "mistake", "proverb", "idiom", "list"]
 TYPE_CHOICES = [("Word card", "word"), ("Guess the meaning", "guess"), ("Reverse guess (Arabic → English)", "reverse"),
-                ("Common mistake", "mistake"), ("Proverb", "proverb"), ("Idiom", "idiom")]
+                ("Common mistake", "mistake"), ("Proverb", "proverb"), ("Idiom", "idiom"),
+                ("Word list (several words on one page)", "list")]
 _TYPE_WORDS = {"word": ["word", "card", "wordcard", "learn", "كلمه", "بطاقه"],
                "guess": ["guess", "quiz", "question", "mcq", "guessthemeaning", "تخمين", "خمن", "سؤال", "اختبار"],
                "reverse": ["reverse", "reverseguess", "arabictoenglish", "عكسي", "عكس"],
                "mistake": ["mistake", "commonmistake", "error", "wrong", "خطا", "خطاشائع"],
                "proverb": ["proverb", "saying", "مثل", "حكمه"],
-               "idiom": ["idiom", "expression", "phrase", "تعبير", "اصطلاح", "عباره"]}
+               "idiom": ["idiom", "expression", "phrase", "تعبير", "اصطلاح", "عباره"],
+               "list": ["list", "wordlist", "words", "page", "listpage", "قائمه", "قائمهكلمات", "صفحه"]}
 TYPE_LOOKUP = {norm_key(w): k for k, ws in _TYPE_WORDS.items() for w in ws}
 _KEYS = {
     "type": ["type", "kind", "نوع", "النوع"],
@@ -113,12 +118,17 @@ _KEYS = {
     "answer": ["answer", "correct", "correctoption", "الاجابه", "الجواب"],
     "recap": ["recap", "summary", "ملخص"],
     "group": ["group", "category", "مجموعه", "المجموعه", "فئه", "الفئه", "تصنيف"],
+    "title": ["title", "heading", "pagetitle", "عنوان", "العنوان"],
+    "subtitle": ["subtitle", "titlear", "arabictitle", "pagesubtitle", "عنوانفرعي", "العنوانالفرعي"],
 }
 KEY_LOOKUP = {norm_key(a): k for k, names in _KEYS.items() for a in names}
 _KEY_LINE = re.compile(r"^\s*([^:：]{1,32}?)\s*[:：]\s?(.*)$")
 _OPT_LINE = re.compile(r"^\s*[-•–]\s*(.*)$")
 _ANSWER = {"a": 0, "b": 1, "c": 2, "d": 3, "ا": 0, "ب": 1, "ج": 2, "د": 3, "1": 0, "2": 1, "3": 2, "4": 3}
 MAX_ITEMS = 10
+LIST_MAX = 6  # words on one word-list page
+_LIST_SEP = re.compile(r"\s*[=|]\s*")
+_LIST_SEP2 = re.compile(r"\s*[:：\t]\s*")
 
 
 def clean_ipa(txt):
@@ -157,7 +167,7 @@ def parse_items(text):
         opts, stars = [], []
         for n, line in block:
             mo = _OPT_LINE.match(line)
-            mk = _KEY_LINE.match(line)
+            mk = None if mo else _KEY_LINE.match(line)
             key = KEY_LOOKUP.get(norm_key(mk.group(1))) if mk else None
             if key:
                 val = " ".join(mk.group(2).split())
@@ -191,8 +201,10 @@ def _finish(b, it, opts, stars):
     if it["type"]:
         typ = TYPE_LOOKUP.get(norm_key(it["type"]))
         if not typ:
-            raise ValueError(f"{where}: unknown type “{it['type']}” — use word, guess, reverse, mistake, proverb "
-                             f"or idiom")
+            raise ValueError(f"{where}: unknown type “{it['type']}” — use word, guess, reverse, mistake, proverb, "
+                             f"idiom or list")
+    elif opts and all(_LIST_SEP.search(o) for o in opts) and not it["word"] and not it["question"]:
+        typ = "list"
     elif opts:
         typ = "reverse" if is_rtl(it["word"]) and not any(is_rtl(o) for o in opts) else "guess"
     elif it["wrong"]:
@@ -203,10 +215,18 @@ def _finish(b, it, opts, stars):
         typ = "idiom"
     else:
         typ = "word"
+    if typ == "list":
+        if not opts:
+            raise ValueError(f"{where} (list): add the words as lines like “- Airport = مطار”")
+        if len(opts) > LIST_MAX:
+            raise ValueError(f"{where} (list): at most {LIST_MAX} words on one page (there are {len(opts)}) — "
+                             f"start another list item for the rest")
+        words = [list_word(o, f"{where} (list), word {k}") for k, o in enumerate(opts, 1)]
+        return list_item(words, it["title"], it["subtitle"], it["group"])
     out = dict(type=typ, word=it["word"], ipa=clean_ipa(it["ipa"]), pos=it["pos"], meaning=it["meaning"],
                example=it["example"], example_ar=it["example_ar"], also=_split_list(it["also"]), wrong=it["wrong"],
                literal=it["literal"], equivalent=it["equivalent"], note=it["note"], question=it["question"],
-               recap=it["recap"], group=it["group"], options=[], correct=None)
+               recap=it["recap"], group=it["group"], options=[], correct=None, words=[], title="", subtitle="")
     if typ in ("guess", "reverse"):
         if not 2 <= len(opts) <= 4:
             raise ValueError(f"{where}: a guess needs 2 to 4 options (lines starting with -), it has {len(opts)}")
@@ -242,11 +262,38 @@ def _finish(b, it, opts, stars):
     return out
 
 
+def list_word(line, where="Word"):
+    """'Airport = /ˈeəpɔːt/ = مطار' (or with | between the parts) -> dict(en, ipa, ar)."""
+    raw = " ".join(str(line or "").split())
+    parts = [p.strip() for p in _LIST_SEP.split(raw) if p.strip()]
+    if len(parts) < 2:
+        parts = [p.strip() for p in _LIST_SEP2.split(raw, maxsplit=2) if p.strip()]
+    ipa = next((p for p in parts if p[0] in "/[" and p[-1] in "/]"), "")
+    rest = [p for p in parts if p is not ipa]
+    if len(rest) < 2:
+        raise ValueError(f"{where}: write it as “English = Arabic” (got “{raw[:40]}”)")
+    return dict(en=rest[0], ipa=clean_ipa(ipa), ar=" ".join(rest[1:]))
+
+
+def list_item(words, title="", subtitle="", group=""):
+    """A word-list item (the same keys as every other item, so the rest of the code can read it)."""
+    out = {k: "" for k in ("word", "ipa", "pos", "meaning", "example", "example_ar", "wrong", "literal", "equivalent",
+                           "note", "question", "recap")}
+    out.update(type="list", also=[], options=[], correct=None, group=group or "", words=list(words),
+               title=" ".join(str(title or "").split()), subtitle=" ".join(str(subtitle or "").split()))
+    return out
+
+
 def items_text(items):
     """The editor's text for a list of item dicts (inverse of parse_items, used by the Excel batch)."""
     blocks = []
     for it in items:
         lines = ([f"group: {it['group']}"] if it.get("group") else []) + [f"type: {it['type']}"]
+        if it["type"] == "list":
+            lines += [f"{k}: {it[k]}" for k in ("title", "subtitle") if it.get(k)]
+            lines += ["- " + " = ".join(x for x in (w["en"], w["ipa"], w["ar"]) if x) for w in it["words"]]
+            blocks.append("\n".join(lines))
+            continue
         for k in ("word", "ipa", "pos", "question", "wrong", "meaning", "literal", "equivalent", "note"):
             if it.get(k):
                 lines.append(f"{k}: {it[k]}")
@@ -265,20 +312,24 @@ def items_text(items):
 
 # ------------------------------------------------------------------ audio clips
 AUDIO_EXT = (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".wma")
-_CLIP_RE = re.compile(r"^(?:w|word|item)?[\s_.\-]*0*(\d{1,2})(?:[\s_.\-]*(e|ex|example))?$", re.I)
+_CLIP_RE = re.compile(r"^(?:w|word|item)?[\s_.\-]*0*(\d{1,2})"
+                      r"(?:[\s_.\-]*(e|ex|example)|[\s_.\-]+0*(\d{1,2}))?$", re.I)
 
 
 def clip_key(path):
-    """'w3' / 'word3' / '3' -> (3, 'w'); 'w3e' / 'w3_example' -> (3, 'e'); None if the name does not match."""
+    """'w3' / 'word3' / '3' -> (3, 'w'); 'w3e' / 'w3_example' -> (3, 'e'); 'w3_2' / 'w3-2' -> (3, 'l2')
+    (word 2 of the word list in item 3); None if the name does not match."""
     stem, ext = os.path.splitext(os.path.basename(str(path)))
     m = _CLIP_RE.match(stem.strip())
     if not m or ext.lower() not in AUDIO_EXT:
         return None
+    if m.group(3):
+        return int(m.group(1)), f"l{int(m.group(3))}"
     return int(m.group(1)), ("e" if m.group(2) else "w")
 
 
 def match_clips(paths, items):
-    """Map uploaded clips to items. Returns ({(item_index, 'w'|'e'): path}, [problems])."""
+    """Map uploaded clips to items. Returns ({(item_index, 'w'|'e'|'l<k>'): path}, [problems])."""
     found, problems = {}, []
     for path in paths or []:
         if not path or not os.path.isfile(str(path)):
@@ -291,6 +342,18 @@ def match_clips(paths, items):
         n, slot = key
         if not 1 <= n <= len(items):
             problems.append(f"`{name}`: there is no item {n}")
+            continue
+        it = items[n - 1]
+        if it["type"] == "list":
+            if slot[0] != "l":
+                problems.append(f"`{name}`: item {n} is a word list — name its clips w{n}_1, w{n}_2 … "
+                                f"(one per word)")
+                continue
+            if not 1 <= int(slot[1:]) <= len(it["words"]):
+                problems.append(f"`{name}`: the word list in item {n} has no word {slot[1:]}")
+                continue
+        elif slot[0] == "l":
+            problems.append(f"`{name}`: item {n} is not a word list (use w{n} for it, w{n}e for its example)")
             continue
         if slot == "e" and not items[n - 1]["example"]:
             problems.append(f"`{name}`: item {n} has no example, the clip is not played")
@@ -313,6 +376,11 @@ def clips_report(paths, text):
     found, problems = match_clips(paths, items)
     rows = []
     for i, it in enumerate(items):
+        if it["type"] == "list":
+            got = [str(k) for k in range(1, len(it["words"]) + 1) if (i, f"l{k}") in found]
+            label = it["title"] or ", ".join(w["en"] for w in it["words"][:2]) + ("…" if len(it["words"]) > 2 else "")
+            rows.append(f"**{i + 1}. {label}:** " + (f"words {', '.join(got)} of {len(it['words'])}" if got else "—"))
+            continue
         parts = (["word"] if (i, "w") in found else []) + (["example"] if (i, "e") in found else [])
         rows.append(f"**{i + 1}. {it['word'] or it['question'] or it['type']}:** " + (" + ".join(parts) if parts else "—"))
     out = " · ".join(rows)
@@ -368,6 +436,8 @@ EXAMPLE = {
 PACES = [("Slow", "slow"), ("Normal", "normal"), ("Fast", "fast")]
 PACE_K = {"slow": 1.25, "normal": 1.0, "fast": 0.82}
 TITLE_STYLES = ["Fancy", "Simple"]
+RECAP_MAX = 14  # recap rows on one screen (a word list adds one row per word)
+LIST_STYLES = ["Editorial", "Chalkboard"]
 
 IPA_FONT = os.path.join(ROOT, "fonts", "NotoSans-Bold.ttf")
 INK = (20, 20, 30)
@@ -721,7 +791,7 @@ class VocabVideo:
         self.L = S(self.lang)
         self.fps = int(s.get("fps", 30))
         self.items = parse_items(v.get("items", ""))
-        n = len(self.items)
+        n = sum(len(it["words"]) if it["type"] == "list" else 1 for it in self.items)  # {count}: every listed word
         g = v.get("group") if v.get("group") in GROUP_KEYS else "general"
         self.group = g
         name = " ".join(str(v.get("group_name") or "").split())
@@ -740,11 +810,16 @@ class VocabVideo:
             gk = group_key(it["group"]) if it["group"] else None
             if not it["group"] or gk == g:
                 it["acc"], it["badge"], it["news"] = self.accent, gd["badge"], self.news
+                it["label"] = name if g == "custom" else gd["label"].title()
+                it["gsub"] = gd["title"][1]
             elif gk:
                 it["acc"], it["badge"], it["news"] = to_rgb(GROUPS[gk]["color"]), GROUPS[gk]["badge"], GROUPS[gk]["news"]
+                it["label"], it["gsub"] = GROUPS[gk]["label"].title(), GROUPS[gk]["title"][1]
             else:
                 name_i = " ".join(it["group"].split())
                 it["acc"], it["badge"], it["news"] = custom_color(name_i), name_i.upper(), False
+                it["label"], it["gsub"] = name_i, "كلمات إنجليزية يجب أن تعرفها!"
+            it["label"] = it["label"] or "English Words"
         theme_name = gd["theme"] if (v.get("background") or "group") == "group" else s.get("theme")
         self.theme = get_theme(theme_name)
         self.bg = make_bg(self.theme)
@@ -757,6 +832,10 @@ class VocabVideo:
         valid_fx = {k for _, k in TIMER_FX}
         self.timer_fx = [k for k in (v.get("timer_fx") or []) if k in valid_fx]
         self.recap_on = bool(v.get("recap", True))
+        ls = str(v.get("list_style") or "Editorial")
+        self.list_style = ls if ls in LIST_STYLES else "Editorial"
+        self.list_opts = dict(highlight=v.get("list_highlight") or "cream", board=v.get("chalk_board") or "green",
+                              mark=v.get("chalk_mark") or "circle", color=v.get("chalk_color") or "pink")
         self.audio_gain = float(v.get("audio_gain") if v.get("audio_gain") is not None else 1.0)
         clips, _ = match_clips(v.get("audio") or [], self.items)
 
@@ -771,7 +850,9 @@ class VocabVideo:
         sub = fill(v.get("subtitle") or (auto[1] if self.lang == "ar" else auto[2]))
         self.lesson = fill(v.get("lesson") or "")
         self.title_style = v.get("title_style") if v.get("title_style") in TITLE_STYLES else "Fancy"
-        self.hook = bool(v.get("hook")) and bool(self.items[0]["word"])
+        first = self.items[0]
+        self.hook_word = first["words"][0]["en"] if first["type"] == "list" else first["word"]
+        self.hook = bool(v.get("hook")) and bool(self.hook_word)
         self._intro_assets(title, sub)
 
         # items
@@ -783,6 +864,9 @@ class VocabVideo:
             it["i"] = i
             it["clip_w"] = clips.get((i, "w"))
             it["clip_e"] = clips.get((i, "e"))
+            for k in range(1, len(it["words"]) + 1):
+                it[f"clip_l{k}"] = clips.get((i, f"l{k}"))
+            it["lesson"] = self.lesson
             getattr(self, "_build_" + ("guess" if it["type"] == "reverse" else
                                        "phrase" if it["type"] in ("proverb", "idiom") else it["type"]))(it)
             it["t0"] = t
@@ -793,8 +877,10 @@ class VocabVideo:
                 self.silences.append((t + it["reveal"] - 0.5, t + it["reveal"]))
             t += it["D"]
         self.R0 = t
+        rows = self._recap_rows() if self.recap_on else []
+        self.recap_on = 0 < len(rows) <= RECAP_MAX  # a longer recap would not fit on one screen
         if self.recap_on:
-            self._build_recap()
+            self._build_recap(rows)
             t += self.recap_len
         self.E = t
         self.base_duration = self.dur = self.E + 4.0
@@ -812,7 +898,7 @@ class VocabVideo:
         self.lesson_img = text_img(self.lesson, 44, GREY, "Bold", shadow=False, max_w=WIDE) if self.lesson else None
         self.ghost = None
         if self.hook:
-            self.ghost = text_img(self.items[0]["word"], 260, acc, "Black", shadow=False, max_w=1000)
+            self.ghost = text_img(self.hook_word, 260, acc, "Black", shadow=False, max_w=1000)
         if self.title_style == "Fancy":
             sz = lines[1]
             tl = [(txt, sz, WHITE, 760 + k * int(sz * 1.28)) for k, txt in enumerate(lines[0])]
@@ -1026,6 +1112,35 @@ class VocabVideo:
         rich_xy = (w // 2, top_h + body_h // 2)
         im.alpha_composite(rich.img, (rich_xy[0] - rich.img.width // 2, rich_xy[1] - rich.img.height // 2))
         return im, rich, rich_xy
+
+    # ============================================================ word list (one page, words read in turn)
+    def _build_list(self, it):
+        from ..word_list import ListPage
+        it["voice"], it["els"], it["fx"] = [], [], []
+        P, n = self.P, len(it["words"])
+        rows = [0.55 + 0.16 * j for j in range(n)]  # when each row appears
+        t = rows[-1] + 0.6 + 0.25 * P
+        starts, ends, speak = [], [], []
+        for k in range(1, n + 1):
+            path, length = it.get(f"clip_l{k}"), 0.0
+            if path:
+                try:
+                    length = audio_length(path)
+                    it["voice"].append((t, path))
+                except Exception:
+                    length = 0.0
+            hold = max(0.6, length) if length else 1.4 * P  # no clip: the word stays lit for a moment
+            starts.append(t)
+            ends.append(t + hold)
+            speak.append((t, t + length) if length else None)
+            t += hold + 0.45 * P
+        it["D"] = ends[-1] + 1.6 * P + EXIT
+        it["reveal"] = None
+        it["snd"] = [("tap", r, 0.14) for r in rows] + [("click", s - 0.08, 0.16) for s in starts]
+        title = it["title"] or it["label"]
+        sub = it["subtitle"] or it["gsub"].replace("{count}", str(n))
+        it["page"] = ListPage(self.list_style, self.list_opts, it["words"], title, sub, it["lesson"],
+                              rows, starts, ends, speak, it["D"], EXIT)
 
     # ============================================================ guess / reverse
     def _build_guess(self, it):
@@ -1386,9 +1501,13 @@ class VocabVideo:
 
     # ============================================================ recap
     def _recap_rows(self):
+        """[(English, Arabic, struck-out mistake or None, accent)] — a word list gives one row per word."""
         rows = []
         for it in self.items:
             typ = it["type"]
+            if typ == "list":
+                rows += [(w["en"], _short(w["ar"]), None, it["acc"]) for w in it["words"]]
+                continue
             en, ar, struck = it["word"], it["recap"], None
             if typ in ("guess", "reverse"):
                 right = it["options"][it["correct"]]
@@ -1404,28 +1523,28 @@ class VocabVideo:
                 ar = it["recap"] or it["equivalent"] or _short(it["meaning"])
             else:
                 ar = it["recap"] or _short(it["meaning"])
-            rows.append((en, ar, struck))
+            rows.append((en, ar, struck, it["acc"]))
         return rows
 
-    def _build_recap(self):
-        rows = self._recap_rows()
+    def _build_recap(self, rows):
         n = len(rows)
         self.recap_title = text_img(self.L["vw_recap"], 72, WHITE, "Black", shadow=True, max_w=WIDE)
         avail = BOTTOM - TOP - 120
         self.recap_imgs, heights = [], []
         two = n <= 6
         if two:  # English on top (up to 2 lines), Arabic meaning (or the struck-out mistake) under it
-            for k, (en, ar, struck) in enumerate(rows):
-                im, h = self._recap_row2(k, en, ar, struck)
+            for k, (en, ar, struck, acc) in enumerate(rows):
+                im, h = self._recap_row2(k, en, ar, struck, acc)
                 self.recap_imgs.append(im)
                 heights.append(h)
             gap = 18
             if sum(heights) + gap * (n - 1) > avail:
                 two = False
                 self.recap_imgs, heights = [], []
-        if not two:  # one line per row: English on the left, Arabic on the right
-            for k, (en, ar, struck) in enumerate(rows):
-                im, h = self._recap_row1(k, en, ar, struck)
+        if not two:  # one line per row: English on the left, Arabic on the right (lower rows when there are many)
+            h1 = min(84, int((avail - 6 * (n - 1)) / n))
+            for k, (en, ar, struck, acc) in enumerate(rows):
+                im, h = self._recap_row1(k, en, ar, struck, acc, h1)
                 self.recap_imgs.append(im)
                 heights.append(h)
             gap = max(6, min(16, int((avail - sum(heights)) / max(1, n - 1))))
@@ -1440,11 +1559,11 @@ class VocabVideo:
         self.recap_step = 0.38 if n <= 6 else 0.25
         self.recap_len = 0.7 + self.recap_step * n + 2.2 * self.P
 
-    def _recap_num(self, im, k, cy):
+    def _recap_num(self, im, k, cy, acc, r=28):
         d = ImageDraw.Draw(im)
         cx = 40 + 52
-        d.ellipse([cx - 28, cy - 28, cx + 28, cy + 28], fill=self.items[k]["acc"] + (255,))
-        num = text_img(str(k + 1), 32, INK, "Black", shadow=False)
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=tuple(acc) + (255,))
+        num = text_img(str(k + 1), int(32 * r / 28), INK, "Black", shadow=False)
         im.alpha_composite(num, (cx - num.width // 2, int(cy - num.height // 2 - 2)))
 
     def _recap_line(self, im, cy, en, esz, side, ssz, struck, acc, right):
@@ -1461,13 +1580,12 @@ class VocabVideo:
                 y = base - 0.3 * ssz
                 ImageDraw.Draw(im).line([(ax + 14, y + 2), (ax + a.width - 14, y - 2)], fill=RED + (255,), width=4)
 
-    def _recap_row2(self, k, en, ar, struck):
-        acc = self.items[k]["acc"]
+    def _recap_row2(self, k, en, ar, struck, acc):
         side = struck or ar
         if text_width(en, 48, "Black") + (text_width(side, 42, "Bold") + 60 if side else 0) <= 730:
             h = 100  # short enough: one line, English left, meaning right
             im = card(880, h, shade(acc, 0.85), self.card_fill, alpha=236, r=34, width=3).copy()
-            self._recap_num(im, k, 40 + h / 2)
+            self._recap_num(im, k, 40 + h / 2, acc)
             self._recap_line(im, 40 + h / 2, en, 48, side, 42, struck, acc, 40 + 880 - 40)
             return im, h
         el, esz = fit_lines(en, 48, "Black", 720, 2, 34)
@@ -1481,7 +1599,7 @@ class VocabVideo:
         sh = (simg.height - 60) if simg is not None else 0
         h = int(30 + eh + (14 + sh if simg is not None else 0) + 30)
         im = card(880, h, shade(acc, 0.85), self.card_fill, alpha=236, r=34, width=3).copy()
-        self._recap_num(im, k, 40 + h / 2)
+        self._recap_num(im, k, 40 + h / 2, acc)
         im.alpha_composite(eimg, (40 + 104 - 30, 40 + 30 - 30))
         if simg is not None:
             sy = 40 + 30 + eh + 14 - 30
@@ -1495,19 +1613,18 @@ class VocabVideo:
                 ImageDraw.Draw(im).line([(sx + 22, my + 2), (sx + simg.width - 22, my - 2)], fill=RED + (255,), width=5)
         return im, h
 
-    def _recap_row1(self, k, en, ar, struck):
-        acc = self.items[k]["acc"]
-        h = 84
+    def _recap_row1(self, k, en, ar, struck, acc, h=84):
         im = card(880, h, shade(acc, 0.85), self.card_fill, alpha=236, r=30, width=3).copy()
         cy = 40 + h // 2
-        self._recap_num(im, k, cy)
-        en = ellipsize(en, 40, "Black", 400)
-        esz = fit_lines(en, 40, "Black", 400, 1, 22)[1]
+        self._recap_num(im, k, cy, acc, min(28, int(h * 0.33)))
+        e0, s0 = int(40 * min(1.0, h / 84)), int(36 * min(1.0, h / 84))
+        en = ellipsize(en, e0, "Black", 400)
+        esz = fit_lines(en, e0, "Black", 400, 1, 20)[1]
         side = struck or ar
-        ssz = 36
+        ssz = s0
         if side:
-            side = ellipsize(side, 36, "Bold", 320)
-            ssz = fit_lines(side, 36, "Bold", 320, 1, 20)[1]
+            side = ellipsize(side, s0, "Bold", 320)
+            ssz = fit_lines(side, s0, "Bold", 320, 1, 18)[1]
         self._recap_line(im, cy, en, esz, side, ssz, struck, acc, 40 + 880 - 36)
         return im, h
 
@@ -1587,6 +1704,9 @@ class VocabVideo:
             d.ellipse([x - r, 372 - r, x + r, 372 + r], fill=tuple(col) + (a,))
 
     def _draw_item(self, frame, it, u):
+        if it["type"] == "list":  # a full page of its own (background, title and rows)
+            it["page"].draw(frame, u)
+            return
         self._draw_header(frame, it, u)
         D = it["D"]
         out = ease_io(prog(u, D - EXIT, D))
@@ -1810,6 +1930,8 @@ SKELETONS = {
     "mistake": "type: mistake\nwrong: \nright: \nmeaning: \nexample: \nexample_ar: ",
     "proverb": "type: proverb\nword: \nipa: \nliteral: \nequivalent: \nmeaning: \nexample: \nexample_ar: ",
     "idiom": "type: idiom\nword: \nipa: \nliteral: \nmeaning: \nnote: \nexample: \nexample_ar: ",
+    "list": "type: list\ntitle: \nsubtitle: \n- English = العربية\n- English = العربية\n- English = العربية\n"
+            "- English = العربية",
 }
 
 
