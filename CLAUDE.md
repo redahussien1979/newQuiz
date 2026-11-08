@@ -41,6 +41,11 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   is a list of elements laid out by `_stack` at the biggest of `SCALES` that fits between `TOP` and `BOTTOM` (Shorts
   safe area); IPA uses `fonts/NotoSans-Bold.ttf`. `engine/vocab_batch.py` — Excel rows -> items, split per group
   (template `projects/words_template.xlsx`)
+- Vocab item type `list` = one page of 1-6 words (`- English = /ipa/ = Arabic` lines, optional `title:` /
+  `subtitle:`), read in turn with clips `w<i>_<k>`; drawn by `engine/word_list.py` (`ListPage`): designs
+  `list_style` Editorial (`list_highlight`) / Chalkboard (`chalk_board`, `chalk_mark`, `chalk_color`;
+  font `fonts/library/PatrickHand`). Excel: Type = list, one word per row with its Audio;
+  `vocab_batch.merge_lists` joins rows into pages (`list_size` words, a new Page title starts a page)
 - `engine/know_country/` — 🌍 Know a Country tab (not a template class: its own renderer). `video.py` = one Excel
   row -> one MP4 (scenes = list of (name, dur, cam_fn, draw_fn, sound cues); `render()` draws scenes on a spawn
   Pool, the main process only reads the row), `globe.py` = orthographic globe + vector borders (world raster cached

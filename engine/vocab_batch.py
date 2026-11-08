@@ -1,9 +1,11 @@
 """English Words from a spreadsheet: one row = one item (word, guess, mistake, proverb, idiom), split into videos.
+Word lists (Type = list): one row = one word of the list; consecutive list rows make one page (load_sheet's
+list_size words per page; a new Page title starts a new page), and each row's Audio is that word's clip.
 
 Sheet layout (first row = headers, English or Arabic, any order; see write_template()):
     Group | Type | Word / Phrase | IPA | Part of speech | Meaning | Example | Example (Arabic) | Similar words |
     Option A | Option B | Option C | Option D | Correct | Wrong sentence | Literal meaning | Arabic equivalent |
-    Note | Question | Recap | Audio | Example audio
+    Note | Question | Recap | Audio | Example audio | Page title | Page subtitle
 
 - Group: General / Political / Proverbs / Idioms / Mistakes (or سياسة، أمثال …) or any name of your own;
   empty = the group chosen in the app.
@@ -20,7 +22,8 @@ import re
 import shutil
 
 from .batch import AudioFinder, _norm, add_dropdowns, pick, pick_problems, read_table
-from .templates.vocab import GROUPS, MAX_ITEMS, group_key, items_text, parse_items
+from .templates.vocab import (GROUPS, LIST_MAX, MAX_ITEMS, TYPE_LOOKUP, clean_ipa, group_key, items_text, list_item,
+                              parse_items)
 
 SPLIT_MODES = [("One group per video (recommended)", "group"), ("In sheet order (groups may mix)", "order")]
 
@@ -48,12 +51,15 @@ _ALIASES = {
     "recap": ["recap", "summary", "الملخص", "ملخص"],
     "aud_w": ["audio", "wordaudio", "sound", "voice", "الصوت", "صوت", "صوتالكلمه"],
     "aud_e": ["exampleaudio", "audioexample", "examplesound", "صوتالمثال"],
+    "title": ["pagetitle", "listtitle", "title", "heading", "عنوانالصفحه", "العنوان"],
+    "subtitle": ["pagesubtitle", "listsubtitle", "subtitle", "العنوانالفرعي", "عنوانفرعي"],
 }
 _LOOKUP = {_norm(a): k for k, names in _ALIASES.items() for a in names}
 HEADERS = ["Group", "Type", "Word / Phrase", "IPA", "Part of speech", "Meaning", "Example", "Example (Arabic)",
            "Similar words", "Option A", "Option B", "Option C", "Option D", "Correct", "Wrong sentence",
-           "Literal meaning", "Arabic equivalent", "Note", "Question", "Recap", "Audio", "Example audio"]
-WIDTHS = [12, 10, 30, 22, 16, 30, 44, 44, 22, 22, 22, 22, 22, 9, 26, 30, 30, 26, 26, 22, 14, 14]
+           "Literal meaning", "Arabic equivalent", "Note", "Question", "Recap", "Audio", "Example audio",
+           "Page title", "Page subtitle"]
+WIDTHS = [12, 10, 30, 22, 16, 30, 44, 44, 22, 22, 22, 22, 22, 9, 26, 30, 30, 26, 26, 22, 14, 14, 22, 26]
 _TEXT_KEYS = ["word", "ipa", "pos", "meaning", "example", "example_ar", "also", "wrong", "literal", "equivalent",
               "note", "question", "recap"]
 
@@ -82,9 +88,33 @@ def parse_rows(rows, finder=None):
         i = cols.get(key)
         return " ".join(str(row[i]).split()) if i is not None and i < len(row) else ""
 
+    def audio(row, n, colkey):
+        cell = get(row, colkey)
+        if not cell:
+            return None
+        path = finder.find(cell)
+        if not path:
+            problems.append(f"Row {n}: audio not found: {cell} — kept without it")
+        return path
+
     for n, row in enumerate(rows[1:], 2):
         lines = []
         typ = get(row, "type")
+        if typ and TYPE_LOOKUP.get(_norm(typ)) == "list":  # one word of a word-list page
+            en, ar = get(row, "word"), get(row, "meaning")
+            if not (en and ar):
+                problems.append(f"Row {n}: a list row needs Word / Phrase and Meaning (Arabic) — skipped")
+                continue
+            it = list_item([dict(en=en, ipa=clean_ipa(get(row, "ipa")), ar=ar)], get(row, "title"),
+                           get(row, "subtitle"))
+            g_cell = get(row, "group")
+            gk = group_key(g_cell) if g_cell else ""
+            it.update(row=n, gkey=gk if gk is not None else "custom", gname="" if gk else g_cell, audio={})
+            path = audio(row, n, "aud_w")
+            if path:
+                it["audio"]["l1"] = path
+            items.append(it)
+            continue
         if typ:
             lines.append(f"type: {typ}")
         for key in _TEXT_KEYS:
@@ -137,11 +167,39 @@ def parse_rows(rows, finder=None):
     return items, problems
 
 
-def load_sheet(path, uploads=(), folder="", sheet=None, start=1, count=0):
-    """Items of one tab; only items start..start+count-1 are kept (count 0 = all from start)."""
+def load_sheet(path, uploads=(), folder="", sheet=None, start=1, count=0, list_size=4):
+    """Items of one tab; only rows start..start+count-1 are kept (count 0 = all from start). Word-list rows are then
+    joined into pages of list_size words."""
     all_items, problems = parse_rows(read_table(path, sheet), AudioFinder(uploads, folder))
     items = pick(all_items, start, count)
-    return items, pick_problems(problems, all_items, items)
+    return merge_lists(items, list_size), pick_problems(problems, all_items, items)
+
+
+def merge_lists(items, per_page=4):
+    """Join consecutive word-list rows (one word each) into pages of per_page words. A page also ends where the
+    group changes or a row names another Page title / subtitle. Audio is renumbered l1, l2 … within the page."""
+    per = max(1, min(LIST_MAX, int(per_page or 4)))
+    out, page = [], None
+    for it in items:
+        if it["type"] != "list":
+            out.append(it)
+            page = None
+            continue
+        new = (page is None or len(page["words"]) >= per or page["gkey"] != it["gkey"]
+               or _norm(page["gname"]) != _norm(it["gname"])
+               or (it["title"] and it["title"] != page["title"])
+               or (it["subtitle"] and it["subtitle"] != page["subtitle"]))
+        if new:
+            prev, page = page, dict(it, words=[], audio={})
+            if prev is not None and prev["gkey"] == it["gkey"] and not it["title"]:  # a full page goes on: same title
+                page["title"], page["subtitle"] = prev["title"], it["subtitle"] or prev["subtitle"]
+            out.append(page)
+        page["words"] += it["words"]
+        k = len(page["words"])
+        if it["audio"].get("l1"):
+            page["audio"][f"l{k}"] = it["audio"]["l1"]
+        page["row_end"] = it["row"]
+    return out
 
 
 # ------------------------------------------------------------------ splitting
@@ -196,7 +254,8 @@ def clip_files(items, folder):
     for n, it in enumerate(items, 1):
         for slot, src in it["audio"].items():
             os.makedirs(folder, exist_ok=True)
-            dst = os.path.join(folder, f"w{n}{'' if slot == 'w' else 'e'}{os.path.splitext(src)[1].lower()}")
+            tag = "" if slot == "w" else "e" if slot == "e" else "_" + slot[1:]  # l3 -> w{n}_3 (word 3 of a list)
+            dst = os.path.join(folder, f"w{n}{tag}{os.path.splitext(src)[1].lower()}")
             shutil.copy2(src, dst)
             out.append(dst)
     return out
@@ -231,6 +290,9 @@ def video_name(video, k, default_group="general", default_name="", taken=None):
     label = group_label(video, default_group, default_name)
     words = []
     for it in video["items"]:
+        if it["type"] == "list":
+            words += [w["en"] for w in it["words"]]
+            continue
         w = it["word"] or it["question"] or it["wrong"]
         if w:
             words.append(w)
@@ -257,7 +319,10 @@ def summary(items, problems, videos, default_group="general", default_name=""):
         lab = group_label(v, default_group, default_name)
         by[lab] = by.get(lab, 0) + 1
     parts = ", ".join(f"{lab}: {c}" for lab, c in by.items())
-    txt = (f"**{len(items)} items → {len(videos)} video{'s' if len(videos) != 1 else ''}** ({parts}) · "
+    pages = [it for it in items if it["type"] == "list"]
+    lists = (f" — {len(pages)} word-list page{'s' if len(pages) != 1 else ''} "
+             f"({sum(len(p['words']) for p in pages)} words)") if pages else ""
+    txt = (f"**{len(items)} items{lists} → {len(videos)} video{'s' if len(videos) != 1 else ''}** ({parts}) · "
            f"{clips} audio clip{'s' if clips != 1 else ''} found")
     if problems:
         more = f"  \n…and {len(problems) - 30} more" if len(problems) > 30 else ""
@@ -311,6 +376,12 @@ EXAMPLE_ROWS = [
     dict(Group="Mistakes", Type="guess", **{"Question": "Which sentence is correct?", "Option A": "I have 25 years",
          "Option B": "I am 25 years old", "Option C": "I have 25 years old", "Correct": "B",
          "Example": "I am 25 years old."}),
+    dict(Group="Political", Type="list", **{"Word / Phrase": "Hold the line on policy", "Meaning": "الثبات على السياسة",
+         "Page title": "Political Words", "Page subtitle": "كلمات سياسية مهمة"}),
+    dict(Group="Political", Type="list", **{"Word / Phrase": "Strike a compromise", "Meaning": "التوصل إلى حل وسط"}),
+    dict(Group="Political", Type="list", **{"Word / Phrase": "Cut off funding", "Meaning": "قطع التمويل"}),
+    dict(Group="Political", Type="list", **{"Word / Phrase": "Reactionary", "IPA": "/riˈækʃəneri/",
+         "Meaning": "رجعي"}),
     dict(Group="General", Type="word", **{"Word / Phrase": "Resilient", "IPA": "/rɪˈzɪliənt/",
          "Part of speech": "adjective • صفة", "Meaning": "صامد • يتعافى بسرعة", "Example": "Children are very resilient.",
          "Example (Arabic)": "الأطفال قادرون جدًا على التعافي.", "Similar words": "tough, strong, flexible"}),
@@ -332,6 +403,10 @@ HOW_TO = [
     "mistake  : Word / Phrase = the correct sentence, Wrong sentence, Meaning = the rule (+ Example).",
     "proverb  : Word / Phrase = the English proverb, Arabic equivalent and/or Meaning (+ Literal meaning, IPA, Example).",
     "idiom    : Word / Phrase = the idiom, Literal meaning, Meaning = the real meaning (+ Note, IPA, Example).",
+    "list     : ONE WORD PER ROW: Word / Phrase = the English word, Meaning = its Arabic meaning (+ IPA), Audio = the",
+    "           clip that reads this word. Consecutive list rows make one page ('Words per list page' in the app,",
+    "           up to 6). Page title / Page subtitle (optional, on the first row of a page) name the page; a row",
+    "           with a new Page title starts a new page. The words are read one after another, each one lit up.",
     "",
     "IPA: write it with or without the slashes (/rɪˈzɪliənt/). It shows next to a speaker icon.",
     "Example: the word is highlighted automatically; put *stars* around other words to choose what is highlighted.",
@@ -339,6 +414,7 @@ HOW_TO = [
     "Audio / Example audio: optional clip file names (sanctions.mp3). Upload the clips in the app, or write a path",
     "relative to the 'Audio folder' you set in the app, or a full path (C:\\english\\audio\\sanctions.mp3).",
     "The item waits for its clip: the word clip plays when the word appears, the example clip with the example.",
+    "In a list page each word waits for its own clip, then the next word lights up.",
     "",
     "In the app choose how many items go in each video and how to split: one group per video (recommended) or in",
     "sheet order. 15 political rows + 10 proverb rows at 5 per video = 3 political videos + 2 proverb videos.",
@@ -370,8 +446,8 @@ def write_template(path):
     add_dropdowns(wb, ws, [(["Group"], ["General", "Political", "Proverbs", "Idioms", "Mistakes",
                                         "عام", "سياسة", "أمثال", "تعابير", "أخطاء شائعة"], False,
                             "Pick a group, or type a name of your own"),
-                           (["Type"], ["word", "guess", "reverse", "mistake", "proverb", "idiom"], True,
-                            "word, guess, reverse, mistake, proverb or idiom (empty = word card)"),
+                           (["Type"], ["word", "guess", "reverse", "mistake", "proverb", "idiom", "list"], True,
+                            "word, guess, reverse, mistake, proverb, idiom or list (empty = word card)"),
                            (["Correct"], ["A", "B", "C", "D", "أ", "ب", "ج", "د"], True,
                             "For guess rows: the right option, A, B, C or D")])
     wb.save(path)
