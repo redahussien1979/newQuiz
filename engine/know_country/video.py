@@ -1003,11 +1003,21 @@ def render(country, out, xlsx, cache_dir=None, workers=2, progress=None):
     done = 0.0
     if progress:
         progress(0.02, f"{name}: preparing the map…")
-    with mp.get_context("spawn").Pool(max(1, workers), initializer=_init, initargs=(country, xlsx, cache_dir)) as pool:
-        for nm in pool.imap_unordered(render_scene, order):
-            done += next(sc[1] for sc in scenes if sc[0] == nm)
-            if progress:
-                progress(0.02 + 0.9 * done / total, f"{name}: rendered {nm}")
+    env = os.environ.get("VS_WORKERS")
+    workers = int(env) if env and env.isdigit() else workers
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from concurrent.futures.process import BrokenProcessPool
+    try:
+        with ProcessPoolExecutor(max(1, min(workers, len(order))), mp_context=mp.get_context("spawn"),
+                                 initializer=_init, initargs=(country, xlsx, cache_dir)) as pool:
+            for fut in as_completed([pool.submit(render_scene, job) for job in order]):
+                nm = fut.result()
+                done += next(sc[1] for sc in scenes if sc[0] == nm)
+                if progress:
+                    progress(0.02 + 0.9 * done / total, f"{name}: rendered {nm}")
+    except BrokenProcessPool:
+        raise RuntimeError("A drawing process stopped unexpectedly (usually not enough free memory). Close other "
+                           "programs and try again, or set the environment variable VS_WORKERS=1 to draw on one process.")
     lst = os.path.join(work, "list.txt")
     with open(lst, "w") as fh:
         fh.writelines(f"file '{os.path.abspath(p).replace(os.sep, '/')}'\n" for _, p in jobs)

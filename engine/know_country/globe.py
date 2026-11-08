@@ -63,21 +63,22 @@ def dilate(mask, size):
 
 
 class Texture:
-    """Colour image + masks (target, neighbours, land, target outline), sampled bilinearly."""
+    """Country-ID raster sampled bilinearly. Colours and masks (target, neighbours, land, compared country) are
+    derived from the IDs on the fly, so only 3 bytes per pixel are kept (IDs + the target's outline ring)."""
 
-    def __init__(self, ids, lon0, lat1, res, target_idx, neigh_idx, wrap, fine):
+    def __init__(self, ids, lon0, lat1, res, target_idx, neigh_idx, wrap, fine, n_ids=None):
         self.lon0, self.lat1, self.res, self.wrap = lon0, lat1, res, wrap
-        land = ids > 0
-        e = edges(ids)
-        if fine:
-            e = dilate(e, 3)
-        lut = PALETTE[(np.arange(int(ids.max()) + 1) * 5 + 3) % len(PALETTE)]
+        n = int(n_ids or ids.max()) + 1
+        lut = PALETTE[(np.arange(n) * 5 + 3) % len(PALETTE)].astype(np.float32)
         lut[0] = OCEAN
-        self.base = lut[ids]  # flat fills; borders are drawn as vectors (Globe.borders)
+        self.lut = lut
+        self.nlut = np.zeros(n, np.float32)
+        for i in neigh_idx or ():
+            if i < n:
+                self.nlut[i] = 1.0
+        self.target = target_idx
         tgt = ids == target_idx
-        ring = dilate(tgt, 7 if fine else 3) & ~tgt
-        ngh = np.isin(ids, list(neigh_idx)) if neigh_idx else np.zeros_like(tgt)
-        self.masks = np.stack([tgt, ngh, land, ring], -1).astype(np.uint8) * 255
+        self.ring = (dilate(tgt, 7 if fine else 3) & ~tgt).astype(np.uint8)
         self.ids = ids
         self.h, self.w = ids.shape
 
@@ -91,26 +92,26 @@ class Texture:
     def sample(self, lon, lat, active=None):
         x, y = self.coords(lon, lat)
         x0 = np.floor(x).astype(np.int64); y0 = np.floor(y).astype(np.int64)
-        fx = (x - x0)[..., None].astype(np.float32); fy = (y - y0)[..., None].astype(np.float32)
+        fx = (x - x0).astype(np.float32); fy = (y - y0).astype(np.float32)
         y0 = np.clip(y0, 0, self.h - 2); y1 = y0 + 1
         if self.wrap:
             x0 %= self.w; x1 = (x0 + 1) % self.w
         else:
             x0 = np.clip(x0, 0, self.w - 2); x1 = x0 + 1
-        out = []
-        for arr in (self.base, self.masks):
-            a = arr[y0, x0].astype(np.float32); b = arr[y0, x1].astype(np.float32)
-            c = arr[y1, x0].astype(np.float32); d = arr[y1, x1].astype(np.float32)
-            out.append((a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy)
+        w = ((1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy)
+        corners = (self.ids[y0, x0], self.ids[y0, x1], self.ids[y1, x0], self.ids[y1, x1])
+        rings = (self.ring[y0, x0], self.ring[y0, x1], self.ring[y1, x0], self.ring[y1, x1])
+        col = sum(self.lut[c] * wi[:, None] for c, wi in zip(corners, w))
+        tg = sum((c == self.target) * wi for c, wi in zip(corners, w))
+        ng = sum(self.nlut[c] * wi for c, wi in zip(corners, w))
+        land = sum((c > 0) * wi for c, wi in zip(corners, w))
+        ring = sum(r * wi for r, wi in zip(rings, w))
+        masks = np.stack([tg, ng, land, ring], 1).astype(np.float32)
         if active:
-            ids = self.ids
-            a = (ids[y0, x0] == active).astype(np.float32); b = (ids[y0, x1] == active).astype(np.float32)
-            c = (ids[y1, x0] == active).astype(np.float32); d = (ids[y1, x1] == active).astype(np.float32)
-            fx1, fy1 = fx[..., 0], fy[..., 0]
-            sec = (a * (1 - fx1) + b * fx1) * (1 - fy1) + (c * (1 - fx1) + d * fx1) * fy1
+            sec = sum((c == active) * wi for c, wi in zip(corners, w)).astype(np.float32)
         else:
             sec = np.zeros(lon.shape, np.float32)
-        return out[0], out[1] / 255.0, sec
+        return col, masks, sec
 
 
 def ring_bbox(r):
