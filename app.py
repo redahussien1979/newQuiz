@@ -1469,7 +1469,8 @@ def build_ui():
                                     v_tstyle = gr.Radio(VC_TITLE_STYLES, value="Fancy", label="Opening title",
                                                         info="Fancy = Aa badge, 3D title slam, shockwave and sparks "
                                                              "(best with the 'Swoosh + impact' opening sound). "
-                                                             "Simple = clean pop-in.")
+                                                             "Simple = clean pop-in. None = no title page: the "
+                                                             "video starts with the first item.")
                                     v_hook = gr.Checkbox(value=True, label="Show the first word faintly behind the title")
                                 with gr.Row():
                                     v_pace = gr.Radio(PACES, value="normal", label="Pace",

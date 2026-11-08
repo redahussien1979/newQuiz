@@ -435,7 +435,7 @@ EXAMPLE = {
 }
 PACES = [("Slow", "slow"), ("Normal", "normal"), ("Fast", "fast")]
 PACE_K = {"slow": 1.25, "normal": 1.0, "fast": 0.82}
-TITLE_STYLES = ["Fancy", "Simple"]
+TITLE_STYLES = ["Fancy", "Simple", "None"]  # None = no title page: the first item starts at 0
 RECAP_MAX = 14  # recap rows on one screen (a word list adds one row per word)
 LIST_STYLES = ["Editorial", "Chalkboard"]
 
@@ -856,7 +856,8 @@ class VocabVideo:
         self._intro_assets(title, sub)
 
         # items
-        t = INTRO
+        self.intro = 0.0 if self.title_style == "None" else INTRO
+        t = self.intro
         self.starts = []
         self.silences = []
         self.voices = []
@@ -884,7 +885,8 @@ class VocabVideo:
             t += self.recap_len
         self.E = t
         self.base_duration = self.dur = self.E + 4.0
-        self.cover_time = 1.6
+        # the cover picture: the title, or (no title page) the first item once its main lines are on screen
+        self.cover_time = 1.6 if self.intro else min(2.4, self.items[0]["D"] - EXIT - 0.1)
         self.ending = (fill(e.get("intro", "")), parse_lines(fill(e.get("question", "")), ["white", "gold"]),
                        fill(e.get("cta", "")), s.get("handle", ""))
 
@@ -1634,7 +1636,7 @@ class VocabVideo:
         d = ImageDraw.Draw(frame)
         if self.stars:
             self.stars.draw(d, t, t * 25)
-        if t < INTRO + 0.05:
+        if self.intro and t < self.intro + 0.05:
             self._draw_intro(frame, t)
         for it in self.items:
             if it["t0"] - 0.01 <= t < it["t0"] + it["D"]:
@@ -1856,18 +1858,19 @@ class VocabVideo:
 
     # ============================================================ sound
     def sound(self, mx):
-        mx.intro(0.05)
         if self.title_style == "Simple":
+            mx.intro(0.05)
             mx.add(0.3, mx.pop(), 0.3)
-        else:
+        elif self.title_style == "Fancy":
+            mx.intro(0.05)
             mx.add(0.25, mx.pop(), 0.22)
-        if self.lesson_img is not None:
+        if self.lesson_img is not None and self.intro:
             mx.add(1.0, mx.click(), 0.18)
         tap = None
         for it in self.items:
             T = it["t0"]
             s, pn = mx.whoosh(0.7)
-            mx.add(T - 0.25, s, 0.38, pn)
+            mx.add(max(0.0, T - 0.25), s, 0.38, pn)
             mx.add(T + 0.05, mx.click(), 0.25)
             for kind, at, gain in it["snd"]:
                 if kind == "pop":
