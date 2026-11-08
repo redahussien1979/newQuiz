@@ -603,8 +603,8 @@ def draw_ending(frame, t, t0, intro, qlines, cta, handle, accent):
         d.polygon([(502, ay + 15), (578, ay + 15), (540, ay + 62)], fill=c)
 
 
-def global_fade(frame, t, dur):
-    if t < 0.12 or t > dur - 0.25:
+def global_fade(frame, t, dur, fade_in=True):
+    if (fade_in and t < 0.12) or t > dur - 0.25:
         k = prog(t, 0, 0.12) if t < 0.12 else 1 - prog(t, dur - 0.25, dur)
         frame.alpha_composite(Image.new("RGBA", (W, H), (0, 0, 0, int(255 * (1 - k)))))
 

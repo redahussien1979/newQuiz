@@ -400,7 +400,7 @@ class ExamLayout(Layout):
     def _pose(self, i, u, out):
         """Sheet offset (dx, dy) and angle: slides in from below, is tossed away at the end."""
         info = self._sheet(i)
-        p = eo(prog(u, 0.0, 0.5))
+        p = 1.0 if (self.v.hook_start and i == 0) else eo(prog(u, 0.0, 0.5))  # no title: already on the desk
         dx, dy = 0.0, (1 - p) * 1400
         ang = info["angle"] + (1 - p) * 7 * (1 if i % 2 else -1)
         if out > 0:
@@ -876,8 +876,13 @@ class IslamicLayout(Layout):
             paste(frame, st, x, 278 + lift, ease_out_back(ps), vis)
         # arch card
         card = self._card(i)
-        pc = prog(u, 0.08, 0.55)
-        paste(frame, card["img"], 540, lay["card_cy"] + lift + 30 * (1 - eo(pc)), 0.94 + 0.06 * eo(pc), min(1, pc * 1.6) * vis)
+        if self.v.hook_start and i == 0:  # no title: the arch stamps in on the first frames
+            pc = prog(u, 0.0, 0.22)
+            paste(frame, card["img"], 540, lay["card_cy"] + lift, 1.4 - 0.4 * pc * pc, (0.35 + 0.65 * pc) * vis)
+        else:
+            pc = prog(u, 0.08, 0.55)
+            paste(frame, card["img"], 540, lay["card_cy"] + lift + 30 * (1 - eo(pc)), 0.94 + 0.06 * eo(pc),
+                  min(1, pc * 1.6) * vis)
         # options
         lock = prog(u, r - 0.55, r) if "lockin" in self.v.fx else 0
         for k, y in enumerate(lay["ys"]):
