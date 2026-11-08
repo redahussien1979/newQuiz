@@ -1265,7 +1265,8 @@ def build_ui():
                                 m_tstyle = gr.Radio(TITLE_STYLES, value="Fancy", label="Opening title",
                                                     info="Fancy = animated badge, 3D title slam, shockwave, sparks and "
                                                          "a light sweep (best with the 'Swoosh + impact' opening "
-                                                         "sound). Simple = the classic pop-in.")
+                                                         "sound). Simple = the classic pop-in. None = no title: the "
+                                                         "first question stamps in on the first frame (best hook).")
                                 m_hstyle = gr.Radio(HEADER_STYLES, value="Fancy", label="Question header",
                                                     info="Fancy = glass pill with a light sweep and ornaments, plus a "
                                                          "progress bar that fills during each question. Simple = flat "

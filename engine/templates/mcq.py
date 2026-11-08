@@ -171,7 +171,9 @@ def parse_questions(text):
     return qs[:10]
 
 
-TITLE_STYLES = ["Fancy", "Simple"]  # opening title: animated (engine/title_fx.py) or the classic pop-in
+# opening title: animated (engine/title_fx.py), the classic pop-in, or none (the first question is the hook)
+TITLE_STYLES = ["Fancy", "Simple", "None"]
+SLAM = 0.22  # without a title: the first question card lands ("stamp") at this time
 HEADER_STYLES = ["Fancy", "Simple"]  # "Question i of n" header: glass pill + progress bar (engine/header_fx.py) or pill + dots
 
 
@@ -199,7 +201,9 @@ class MCQVideo:
         self.show_letters = m.get("letters", True) is not False  # أ ب ج د / A B C D before the options
         self.T = max(2.0, float(m.get("think_seconds") or 5))
         self.R = max(1.5, float(m.get("reveal_seconds") or 2.8))
-        self.q0 = 2.6
+        self.title_style = m.get("title_style") if m.get("title_style") in TITLE_STYLES else "Fancy"
+        self.hook_start = self.title_style == "None"  # no title: the first question starts on the first frame
+        self.q0 = 0.0 if self.hook_start else 2.6
         self.narr_gain = float(m.get("narration_gain") if m.get("narration_gain") is not None else 1.0)
         narr, _ = match_narration(m.get("narration") or [], self.qs)
         # screen layout: Standard (cards, drawn here) or one from engine/layouts.py (needed now: it can ask for a
@@ -238,8 +242,9 @@ class MCQVideo:
         if sub:
             sub_col = shade(self.accent, 0.62) if (self.st.get("light") or on_paper) else self.accent
             lines.append((sub, 54, sub_col, (lines[-1][3] if lines else 720) + 150))
-        self.title_style = m.get("title_style") if m.get("title_style") in TITLE_STYLES else "Fancy"
-        if self.title_style == "Fancy":
+        if self.title_style == "None":
+            self.intro, self.scenes = None, []
+        elif self.title_style == "Fancy":
             self.intro = TitleIntro(lines[:-1] if sub else lines, sub, lines[-1][2] if sub else self.accent,
                                     title_ink, self.accent, light=bool(self.st.get("light")) or on_paper, rtl=self.rtl,
                                     max_w=title_w)
@@ -358,7 +363,11 @@ class MCQVideo:
             draw_ending(frame, t, self.E, *self.ending, self.accent)
         if "wipe" in self.fx:
             self.qfx.wipe(frame, t, self.starts[1:] + [self.E])
-        global_fade(frame, t, self.dur)
+        if self.hook_start and t < SLAM + 0.3 and self.layout_name != "Exam paper":  # flash as the first card lands
+            fl = 1 - prog(t, SLAM, SLAM + 0.3)
+            if t >= SLAM and fl > 0:
+                frame.alpha_composite(Image.new("RGBA", frame.size, (255, 255, 255, int(110 * fl))))
+        global_fade(frame, t, self.dur, fade_in=not self.hook_start)
         return frame.convert("RGB")
 
     def _layout_question(self, frame, i, u_all):
@@ -393,8 +402,12 @@ class MCQVideo:
             qfx.difficulty(frame, q["level"], u, 1 - out)
 
         # question card
-        p = prog(u, 0.05, 0.45)
-        paste(frame, q["card"], 540, 560 - out * 60, 0.85 + 0.15 * ease_out_back(p), min(1, p * 1.5) * (1 - out))
+        if self.hook_start and i == 0:  # stamp: drops in big and lands hard on the first frames
+            p = prog(u, 0.0, SLAM)
+            paste(frame, q["card"], 540, 560 - out * 60, 1.45 - 0.45 * p * p, (0.35 + 0.65 * p) * (1 - out))
+        else:
+            p = prog(u, 0.05, 0.45)
+            paste(frame, q["card"], 540, 560 - out * 60, 0.85 + 0.15 * ease_out_back(p), min(1, p * 1.5) * (1 - out))
 
         # options
         lock = prog(u, r - 0.55, r) if "lockin" in fx else 0
@@ -476,7 +489,10 @@ class MCQVideo:
 
     # ------------------------------------------------------------ sound
     def sound(self, mx):
-        mx.intro(0.05)
+        if self.hook_start:  # no title: a hard thud as the first question lands
+            mx.add(SLAM - 0.04, mx.hit(1.4), 0.5)
+        else:
+            mx.intro(0.05)
         fx = self.fx
         for i, q in enumerate(self.qs):
             t0 = q["t0"] + q["pre"]  # question time 0 (after the "Final question" ribbon, if any)
