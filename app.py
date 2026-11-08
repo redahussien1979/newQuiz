@@ -162,7 +162,8 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 ### English Texts tips
 - Every tab of the workbook is one paragraph = one video. One spoken word per row: **B** word, **C** start, **D** end
   (the word timings from ElevenLabs), **E** highlighted words, **F** Arabic translation, and a **title** column.
-- Upload the recordings named like the tabs (`paragraph1.mp3`), then 🎬 Render all — or 📥 load one tab to check it.
+- Upload the recordings (ElevenLabs names are fine: each goes to the tab whose reading length it matches; a file
+  named like a tab, e.g. `paragraph1.mp3`, always goes to that tab), then 🎬 Render all — or 📥 load one tab to check it.
 - A phrase: write the same text (e.g. `chase away`) in E on each of its rows; it flies as one piece.
 - The text is sized to fill the Shorts safe area; long paragraphs turn into pages (the voice waits for the page
   turn) and end with a Word Bank recap. Each render also saves a cover picture.
@@ -1155,8 +1156,8 @@ TX_WORDS_HELP = ("One spoken word per line, like columns B–F of the sheet: `wo
                  "several-word text on neighbouring lines (e.g. `chase away`) flies as one phrase.")
 TX_BATCH_HELP = """**Every tab of the workbook = one video.** One spoken word per row:
 `B word · C start · D end · E highlighted words · F arabic translation` (the word timings from ElevenLabs), plus a
-**title** column (and optionally **subtitle**) with the text in its first cell. Upload the recordings named like
-the tabs (`paragraph1.mp3` for tab *paragraph1*). The design, music and ending come from the other tabs."""
+**title** column (and optionally **subtitle**) with the text in its first cell. Upload the recordings: each goes to the tab
+whose reading length it matches (or name it like the tab, `paragraph1.mp3`); the list below shows the match. The design, music and ending come from the other tabs."""
 
 
 def _tx_template_path():
@@ -1178,7 +1179,7 @@ def tx_batch_tab():
         sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Paragraphs workbook (.xlsx)",
                         height=120)
         clips = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=120,
-                        label="Recordings — one per tab, named like the tab")
+                        label="Recordings — one per tab (any names)")
     folder = gr.Textbox(label="…or the folder on this computer that holds the recordings (optional)",
                         placeholder=r"C:\english\readings")
     with gr.Row(equal_height=True):
@@ -1210,7 +1211,7 @@ def wire_tx_batch(xl, pv, fields):
         except Exception as e:
             return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
         choices = [(f"{p['tab'] or 'Sheet'} — {p['title'] or '(no title)'}", k) for k, p in enumerate(pars) if p["rows"]]
-        n = len(choices)
+        n = sum(1 for p in pars if p["rows"] and p["audio"])  # tabs without a recording are skipped
         go = gr.update(value=f"🎬 Render all {n} video{'s' if n != 1 else ''}" if n else "🎬 Render all videos",
                        interactive=bool(n))
         return text_batch.summary(pars), gr.update(choices=choices, value=choices[0][1] if choices else None), go
@@ -1240,9 +1241,11 @@ def wire_tx_batch(xl, pv, fields):
             if not pars:
                 raise ValueError("The workbook has no tabs with words.")
             silent = [p["tab"] for p in pars if not p["audio"]]
+            pars = [p for p in pars if p["audio"]]
+            if not pars:
+                raise ValueError("No recordings found — upload the MP3s in 📊 Excel sheet (one per tab).")
             if silent:
-                raise ValueError("No recording found for tab " + ", ".join(f"'{t}'" for t in silent[:5]) +
-                                 " — upload it named like the tab (e.g. " + f"{silent[0]}.mp3).")
+                gr.Warning("Skipped (no recording): " + ", ".join(f"'{t}'" for t in silent[:6]), duration=8)
             base = values_to_project("text", vals)
             out_dir = os.path.join(OUT_DIR, f"batch_texts_{_stamp()}")
             os.makedirs(out_dir, exist_ok=True)

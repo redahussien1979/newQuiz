@@ -10,8 +10,8 @@ Tab layout (row 1 = headers, any order; without headers the columns are read as 
 - F: the Arabic meaning, on the row of the highlighted word (any row of a phrase).
 - title / subtitle / audio (optional columns): the cell under the header (row 2). title = the big title of the
   video, subtitle = the small line above it, audio = the file name of the recording.
-- The recording: upload it with the sheet, named like the tab (tab `paragraph1` -> `paragraph1.mp3`), or name it
-  in the audio column.
+- The recording: upload it with the sheet. A file named like the tab (`paragraph1.mp3`) or named in the audio column
+  goes to that tab; any other file (e.g. ElevenLabs_2026-….mp3) goes to the tab whose reading length it matches.
 """
 import copy
 import os
@@ -134,14 +134,55 @@ def find_audio(par, uploads, folder="", n_tabs=1):
             for f in sorted(os.listdir(folder)):
                 if f.lower().endswith(AUDIO_EXT) and _stem(f) == tab:
                     return os.path.join(folder, f)
-    if n_tabs == 1 and len(uploads) == 1:
-        return uploads[0]
     return ""
+
+
+def _length(path):
+    try:
+        from .audio import audio_length
+        return audio_length(path)
+    except Exception:
+        return None
+
+
+def _reading_len(par):
+    ends = [float(str(r[2]).replace(",", ".")) for r in par["rows"] if _is_num(r[2])]
+    return max(ends) if ends else None
+
+
+def _match_by_length(pars, uploads):
+    """Recordings whose names say nothing (ElevenLabs_2026-…mp3) go to the tabs still without one: each to the tab
+    whose last word ends closest to the recording's length. Pairs are taken best first; a recording more than 40 %
+    longer / shorter than every remaining tab is left out (it is probably not one of these paragraphs)."""
+    used = {p["audio"] for p in pars if p.get("audio")}
+    files = [u for u in uploads if u not in used]
+    tabs = [p for p in pars if p["rows"] and not p.get("audio")]
+    if not files or not tabs:
+        return
+    lens = {u: _length(u) for u in files}
+    pairs = []
+    for u in files:
+        for p in tabs:
+            r, a = _reading_len(p), lens[u]
+            if r and a:
+                pairs.append((abs(a - r) / max(r, 0.1), u, p))
+    pairs.sort(key=lambda x: x[0])
+    for diff, u, p in pairs:
+        if diff > 0.4 or u in used or p.get("audio"):
+            continue
+        p["audio"], p["audio_by"] = u, "length"
+        used.add(u)
+    left = [u for u in files if u not in used]
+    still = [p for p in tabs if not p.get("audio")]
+    if len(left) == 1 and len(still) == 1:  # one recording and one tab left: they belong together
+        still[0]["audio"], still[0]["audio_by"] = left[0], "only"
 
 
 def load_book(path, uploads=(), folder=""):
     """Every visible tab of the workbook (or the CSV file) -> list of paragraphs (see read_tab), each with its
-    `audio` path ('' when no recording was found) and `problems`."""
+    `audio` path ('' when no recording was found) and `problems`. A recording named like a tab (or named in its
+    audio column) goes to that tab; the other recordings are matched by length (_match_by_length)."""
+    uploads = [u for u in (uploads or []) if u and os.path.isfile(u)]
     tabs = sheet_names(path) or [None]
     out = []
     for tab in tabs:
@@ -152,6 +193,7 @@ def load_book(path, uploads=(), folder=""):
             continue
         par["audio"] = find_audio(par, uploads, folder, len(tabs))
         out.append(par)
+    _match_by_length(out, uploads)
     return out
 
 
@@ -159,7 +201,10 @@ def summary(pars):
     usable = [p for p in pars if p["rows"]]
     if not pars:
         return "The workbook has no tabs."
-    lines = [f"**{len(usable)} video{'s' if len(usable) != 1 else ''}** — one per tab:"]
+    ready = [p for p in usable if p.get("audio")]
+    skip = len(usable) - len(ready)
+    lines = [f"**{len(ready)} video{'s' if len(ready) != 1 else ''}** to render — one per tab"
+             + (f" ({skip} tab{'s' if skip != 1 else ''} without a recording will be skipped)" if skip else "") + ":"]
     for k, p in enumerate(pars, 1):
         if not p["rows"]:
             lines.append(f"- ⚠️ tab **{p['tab']}**: {p['problems'][0] if p['problems'] else 'no words'}")
@@ -167,8 +212,13 @@ def summary(pars):
         keys = count_keys(p["rows"])
         no_ar = missing_arabic(p["rows"])
         bits = [f"{len(p['rows'])} words", f"{keys} highlighted"]
-        bits.append("🎙️ " + os.path.basename(p["audio"]) if p["audio"] else "⚠️ no recording (upload "
-                    f"`{p['tab'] or 'the audio'}.mp3`)")
+        if p["audio"]:
+            ln = _length(p["audio"])
+            how = " (matched by length)" if p.get("audio_by") == "length" else ""
+            bits.append(f"🎙️ `{os.path.basename(p['audio'])}`" + (f" {ln:.1f} s" if ln else "") + how)
+        else:
+            bits.append("⚠️ no recording — upload one about "
+                        f"{_reading_len(p) or 0:.0f} s long, or name it `{p['tab'] or 'paragraph'}.mp3`")
         if not p["title"]:
             bits.append("⚠️ no title")
         if no_ar:
