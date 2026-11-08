@@ -28,11 +28,13 @@ from engine.templates.mcq import HEADER_STYLES, TITLE_STYLES, narration_report, 
 from engine.templates.vocab import GROUP_CHOICES, GROUPS, PACES, TYPE_CHOICES, add_item, clips_report, to_word_cards
 from engine.templates.vocab import LIST_STYLES as VC_LIST_STYLES
 from engine.templates.vocab import TITLE_STYLES as VC_TITLE_STYLES
+from engine.templates.text import BAND_CHOICES as TX_BANDS, MARKER_CHOICES as TX_MARKERS, words_report
 from engine import batch
 from engine import countries
 from engine import tl_batch
 from engine import userdata
 from engine import fonts as fontlib
+from engine import text_batch
 from engine import vocab_batch
 from engine.word_list import BOARD_CHOICES, CHALK_COLOR_CHOICES, HIGHLIGHTS, MARKS
 from engine.know_country import video as kc_video
@@ -64,8 +66,9 @@ MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", 
 VC_KEYS = ["group", "group_name", "title", "subtitle", "lesson", "lesson_n", "items", "accent", "background",
            "title_style", "hook", "pace", "guess_seconds", "timer", "timer_fx", "recap", "audio", "audio_gain",
            "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color"]
-KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS}
-MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline"}
+TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "lead", "band", "marker"]
+KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS}
+MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio"}
 MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
 DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": "", "maps": False, "guess": False,
             "guess_q": "", "intro": "hook", "map_style": "auto", "polish": False, "finish": False,
@@ -73,7 +76,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "group_name": "", "lesson": "", "lesson_n": 1, "accent": "group", "background": "group", "hook": False,
             "pace": "normal", "guess_seconds": 5, "timer": "Bar", "recap": True, "audio_gain": 1.0,
             "list_style": "Editorial", "list_highlight": "cream", "chalk_board": "green", "chalk_mark": "circle",
-            "chalk_color": "pink"}  # for projects saved before these options existed
+            "chalk_color": "pink", "tag": "", "lead": 1.0, "band": "teal", "marker": "yellow"}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -155,6 +158,14 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   with clips `w1_1`, `w1_2` … — the word being read lights up. Two designs in ⏱️ Design & timing: **Editorial**
   (magazine page, 6 highlight colours) and **Chalkboard** (hand-written chalk; board, mark and chalk colour).
   In Excel: Type = list, one word per row with its Audio; "Words per list page" sets how many go on one page.
+
+### English Texts tips
+- Every tab of the workbook is one paragraph = one video. One spoken word per row: **B** word, **C** start, **D** end
+  (the word timings from ElevenLabs), **E** highlighted words, **F** Arabic translation, and a **title** column.
+- Upload the recordings named like the tabs (`paragraph1.mp3`), then 🎬 Render all — or 📥 load one tab to check it.
+- A phrase: write the same text (e.g. `chase away`) in E on each of its rows; it flies as one piece.
+- The text is sized to fill the Shorts safe area; long paragraphs turn into pages (the voice waits for the page
+  turn) and end with a Word Bank recap. Each render also saves a cover picture.
 
 ### Sound
 - Built-in music moods are generated, so there are no copyright issues. You can also upload your own music file.
@@ -391,7 +402,7 @@ def make_actions(tpl):
         except Exception as e:
             raise gr.Error(str(e))
         msg = f"Video length: **{dur:.1f} s**"
-        if tpl == "vocab" and dur > 60:
+        if tpl in ("vocab", "text") and dur > 60:
             msg += " — ⚠️ over 60 s: fine for YouTube Shorts and Instagram Reels, but keep Facebook Reels under 60 s"
         return img, msg, gr.update(maximum=max(1.0, round(dur, 1)))
 
@@ -432,6 +443,8 @@ def make_actions(tpl):
                 ev["outline"] = _keep_media(ev.get("outline"))
         elif tpl == "quiz":
             p["quiz"]["answer_image"] = _keep_media(p["quiz"].get("answer_image"))
+        elif tpl == "text":
+            p["text"]["reading_audio"] = _keep_media(p["text"].get("reading_audio"))
         stamp = _stamp()
         if tpl == "vocab":
             p["vocab"]["audio"] = _keep_media_list(p["vocab"].get("audio"), os.path.join(MEDIA_DIR, f"words_audio_{stamp}"))
@@ -1136,6 +1149,122 @@ def wire_vc_batch(xl, pv, fields):
                 **_progress_on(dep, pv["vid"]))
 
 
+# ------------------------------------------------------------------ English Texts
+TX_WORDS_HELP = ("One spoken word per line, like columns B–F of the sheet: `word | start | end | highlighted | arabic` "
+                 "(times in seconds). Something in *highlighted* makes the word fly into the Word Bank; the same "
+                 "several-word text on neighbouring lines (e.g. `chase away`) flies as one phrase.")
+TX_BATCH_HELP = """**Every tab of the workbook = one video.** One spoken word per row:
+`B word · C start · D end · E highlighted words · F arabic translation` (the word timings from ElevenLabs), plus a
+**title** column (and optionally **subtitle**) with the text in its first cell. Upload the recordings named like
+the tabs (`paragraph1.mp3` for tab *paragraph1*). The design, music and ending come from the other tabs."""
+
+
+def _tx_template_path():
+    path = os.path.join(APP_PROJ_DIR, "texts_template.xlsx")
+    if not os.path.isfile(path):
+        try:
+            text_batch.write_template(path)
+        except Exception:  # openpyxl missing: no template button
+            return None
+    return path
+
+
+def tx_batch_tab():
+    with gr.Row(equal_height=True):
+        gr.Markdown(TX_BATCH_HELP)
+        tpl = _tx_template_path()
+        gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), size="sm", min_width=130, scale=0)
+    with gr.Row():
+        sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Paragraphs workbook (.xlsx)",
+                        height=120)
+        clips = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=120,
+                        label="Recordings — one per tab, named like the tab")
+    folder = gr.Textbox(label="…or the folder on this computer that holds the recordings (optional)",
+                        placeholder=r"C:\english\readings")
+    with gr.Row(equal_height=True):
+        part = gr.Dropdown([], label="Tab to preview in the editor", scale=2)
+        load = gr.Button("📥 Load into editor", scale=1, min_width=120)
+    with gr.Row(equal_height=True):
+        info = gr.Markdown("Upload a workbook to see its paragraphs.")
+        go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, min_width=230, scale=0)
+    zipb = gr.DownloadButton("📦 Download all (.zip)", visible=False, variant="primary")
+    files = gr.File(label="Rendered videos — each one appears here as soon as it finishes (a cover picture is saved "
+                          "next to each)", file_count="multiple", visible=False, height=320)
+    return dict(sheet=sheet, clips=clips, folder=folder, part=part, load=load, info=info, go=go, zip=zipb, files=files)
+
+
+def wire_tx_batch(xl, pv, fields):
+    inputs = [xl["sheet"], xl["clips"], xl["folder"]]
+
+    def read(sheet, clips, folder):
+        if not sheet:
+            raise ValueError("Upload the paragraphs workbook first.")
+        return text_batch.load_book(sheet, clips or [], folder or "")
+
+    def check(sheet, clips, folder):
+        off = gr.update(value="🎬 Render all videos", interactive=False)
+        if not sheet:
+            return "Upload a workbook to see its paragraphs.", gr.update(choices=[], value=None), off
+        try:
+            pars = read(sheet, clips, folder)
+        except Exception as e:
+            return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
+        choices = [(f"{p['tab'] or 'Sheet'} — {p['title'] or '(no title)'}", k) for k, p in enumerate(pars) if p["rows"]]
+        n = len(choices)
+        go = gr.update(value=f"🎬 Render all {n} video{'s' if n != 1 else ''}" if n else "🎬 Render all videos",
+                       interactive=bool(n))
+        return text_batch.summary(pars), gr.update(choices=choices, value=choices[0][1] if choices else None), go
+
+    def load_part(sheet, clips, folder, k, *vals):
+        try:
+            pars = read(sheet, clips, folder)
+            if k is None or not 0 <= int(k) < len(pars) or not pars[int(k)]["rows"]:
+                raise ValueError("Pick a tab to preview.")
+            proj = text_batch.part_project(values_to_project("text", vals), pars[int(k)])
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        gr.Info("The paragraph is in the editor (📝 Text). 🎬 Render video makes only this one — "
+                "🎬 Render all makes every tab.", duration=6)
+        return project_to_values(proj, "text")
+
+    def start(request: gr.Request):
+        if not _claim(request):
+            raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+        return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
+                gr.update(interactive=False), "⏳ Rendering all videos… each one appears below as soon as it is done.",
+                gr.update(value=None, visible=False), gr.update(value=None, visible=False))
+
+    def render_all(request: gr.Request, sheet, clips, folder, *vals, progress=gr.Progress()):
+        def plan():
+            pars = [p for p in read(sheet, clips, folder) if p["rows"]]
+            if not pars:
+                raise ValueError("The workbook has no tabs with words.")
+            silent = [p["tab"] for p in pars if not p["audio"]]
+            if silent:
+                raise ValueError("No recording found for tab " + ", ".join(f"'{t}'" for t in silent[:5]) +
+                                 " — upload it named like the tab (e.g. " + f"{silent[0]}.mp3).")
+            base = values_to_project("text", vals)
+            out_dir = os.path.join(OUT_DIR, f"batch_texts_{_stamp()}")
+            os.makedirs(out_dir, exist_ok=True)
+
+            def jobs():
+                taken = set()
+                for k, par in enumerate(pars, 1):
+                    yield text_batch.video_name(par, k, taken), text_batch.part_project(base, par)
+            return out_dir, len(pars), jobs()
+
+        yield from _stream_batch(request, plan, progress)
+
+    gr.on(triggers=[c.change for c in inputs], fn=check, inputs=inputs, outputs=[xl["info"], xl["part"], xl["go"]],
+          trigger_mode="always_last", show_progress="hidden")
+    xl["load"].click(load_part, inputs + [xl["part"]] + fields, fields)
+    dep = xl["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"], pv["info"],
+                                       xl["files"], xl["zip"]], queue=False)
+    dep.success(render_all, inputs + fields,
+                [pv["vid"], pv["info"], xl["files"], xl["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]],
+                **_progress_on(dep, pv["vid"]))
+
+
 # ------------------------------------------------------------------ Know a Country
 KC_TEMPLATE = os.path.join(APP_PROJ_DIR, "know_country_template.xlsx")
 KC_CACHE = os.path.join(DATA_DIR, "cache")
@@ -1540,6 +1669,45 @@ def build_ui():
                 return gr.update()
             vc_st["theme"].select(theme_picked, v_bg, v_bg, show_progress="hidden")
 
+        with gr.Tab("📖 English Texts"):
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=3, min_width=420):
+                    tx_proj = project_bar()
+                    with gr.Tabs():
+                        with gr.Tab("📊 Excel sheet"):
+                            with gr.Column(elem_classes="pane"):
+                                txl = tx_batch_tab()
+                        with gr.Tab("📝 Text"):
+                            with gr.Column(elem_classes="pane"):
+                                with gr.Row():
+                                    t_sub = gr.Textbox(label="Small line above the title", placeholder="UNIT 3 · READING")
+                                    t_tag = gr.Textbox(label="Arabic tag (top right, optional)", rtl=True,
+                                                       placeholder="اقرأ واستمع")
+                                t_title = gr.Textbox(label="Title", placeholder="Move Your Body, Lift Your Mood")
+                                t_words = gr.Textbox(lines=16, max_lines=60, label="Words", info=TX_WORDS_HELP)
+                                t_info = gr.Markdown()
+                                t_audio = gr.Audio(type="filepath", label="Recording of the paragraph (mp3 / wav…)")
+                                t_gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Recording volume")
+                        with gr.Tab("⏱️ Design"):
+                            with gr.Column(elem_classes="pane"):
+                                gr.Markdown("**Textbook page** — the text inks in as it is read; highlighted words get "
+                                            "a marker swipe, fly into the Word Bank and their Arabic writes in.")
+                                with gr.Row():
+                                    t_band = gr.Dropdown(TX_BANDS, value="teal", label="Page colour",
+                                                         info="The title band, Word Bank and ticks")
+                                    t_marker = gr.Dropdown(TX_MARKERS, value="yellow", label="Highlighter colour")
+                                t_lead = gr.Slider(0.3, 3, value=1.0, step=0.1, label="Reading starts at (seconds)",
+                                                   info="Time for the page to appear before the voice starts")
+                        tx_st = style_tab()
+                        tx_end = ending_tab()
+                    tx_fields = shared_fields(tx_st, tx_end) + [t_title, t_sub, t_tag, t_words, t_audio, t_gain,
+                                                                 t_lead, t_band, t_marker]
+                tx_pv = preview_panel("text")
+            wire(tx_proj, tx_pv, tx_fields)
+            wire_tx_batch(txl, tx_pv, tx_fields)
+            gr.on(triggers=[t_words.change, t_audio.change], fn=words_report, inputs=[t_words, t_audio],
+                  outputs=t_info, trigger_mode="always_last", show_progress="hidden")
+
         with gr.Tab("🌍 Know a Country"):
             know_country_tab()
 
@@ -1550,6 +1718,7 @@ def build_ui():
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["quiz"][2]), "quiz"), None, qz_fields)
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["mcq"][2]), "mcq"), None, mq_fields)
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["vocab"][2]), "vocab"), None, vc_fields)
+        demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["text"][2]), "text"), None, tx_fields)
     return demo
 
 

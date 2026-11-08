@@ -46,6 +46,13 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `list_style` Editorial (`list_highlight`) / Chalkboard (`chalk_board`, `chalk_mark`, `chalk_color`;
   font `fonts/library/PatrickHand`). Excel: Type = list, one word per row with its Audio;
   `vocab_batch.merge_lists` joins rows into pages (`list_size` words, a new Page title starts a page)
+- `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
+  (ElevenLabs word timings); words ink in as spoken (`vs`/`ve` per word), highlighted words get a marker swipe, fly
+  into the Word Bank, Arabic writes in right-to-left. `text.words` = lines `word | start | end | highlighted | arabic`
+  (same as Excel columns B-F); neighbouring rows with the same multi-word highlight = one phrase. Long text → pages
+  (sentence breaks, per-page size, recording cut and delayed for the page turn: `shifts` / `cuts`) + recap page.
+  Font `fonts/library/Literata`. `engine/text_batch.py` — workbook: every tab = one video (title / subtitle columns,
+  recording named like the tab); template `projects/texts_template.xlsx`
 - `engine/know_country/` — 🌍 Know a Country tab (not a template class: its own renderer). `video.py` = one Excel
   row -> one MP4 (scenes = list of (name, dur, cam_fn, draw_fn, sound cues); `render()` draws scenes on a spawn
   Pool, the main process only reads the row), `globe.py` = orthographic globe + vector borders (world raster cached
