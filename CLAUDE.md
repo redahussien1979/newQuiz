@@ -41,6 +41,11 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   is a list of elements laid out by `_stack` at the biggest of `SCALES` that fits between `TOP` and `BOTTOM` (Shorts
   safe area); IPA uses `fonts/NotoSans-Bold.ttf`. `engine/vocab_batch.py` — Excel rows -> items, split per group
   (template `projects/words_template.xlsx`)
+- `engine/know_country/` — 🌍 Know a Country tab (not a template class: its own renderer). `video.py` = one Excel
+  row -> one MP4 (scenes = list of (name, dur, cam_fn, draw_fn, sound cues); `render()` draws scenes on a spawn
+  Pool, the main process only reads the row), `globe.py` = orthographic globe + vector borders (world raster cached
+  in `DATA_DIR/cache`), `sound.py` = numpy-only SFX/music, `util.py` = text/chips/pins, `topo.py` = TopoJSON reader,
+  `template.py` builds `projects/know_country_template.xlsx`; `data/` = countries.json, countries-50m.json, PNG flags/icons
 - `projects/example_*.json` — example projects (same format the app saves); `projects/*_template.xlsx` — Excel templates
 - `engine/userdata.py` — the user's work lives OUTSIDE the app folder (the user updates by replacing the folder with a
   new zip): `DATA_DIR` = Documents/Video Studio (or env `VS_DATA`) holds `projects/` (+ `media/`) and `outputs/`;
