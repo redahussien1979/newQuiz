@@ -155,6 +155,21 @@ example: Both sides agreed to a ceasefire last night
 - **Excel batch:** download the template (an example row of every group and type), one item per row. **One group per video** makes separate videos for each group (15 political rows + 10 proverb rows at 5 per video = 3 + 2 videos); **In sheet order** keeps the rows in order and lets groups mix (every item keeps its own badge and colour). Lesson numbers count up from the number you choose.
 - The videos are 1080 × 1920 MP4 (H.264 + AAC, fast start): ready for YouTube Shorts, Instagram Reels, Facebook Reels and TikTok. The preview warns when a video is longer than 60 s (keep Facebook Reels under 60 s).
 
+### 🌍 Know a Country
+A map-first explainer (about 90 s) made from **one Excel row**: a 3D globe flies to the country, then location and
+neighbours (each neighbour outlined, with a flashing dot and its name), the capital, straight-line distances from
+cities you choose, area and population (with their dates and sources), a **true-size comparison** (the country's
+real outline is dragged onto 4–5 other countries), language and currency, top exports, and your facts.
+- Download **⬇️ Excel template** in the tab. The **guide** sheet explains every column; the **areas** sheet holds the
+  areas used in the comparisons (green rows are verified — check any other row before using it); the **cities**
+  sheet holds the cities for the distances (add your own).
+- Upload the sheet, pick a country (or **All rows**), press **🖼️ Quick check** for one picture, then
+  **🎬 Render video**. A video takes about 15–25 minutes; it is saved in `Documents/Video Studio/outputs/`.
+- Accuracy is yours: every figure shown comes from your sheet, with the date and source you type. Distances are
+  calculated (great-circle, rounded to 10 km). Borders follow Natural Earth; use the **nearby** column to choose
+  the neighbours yourself.
+- The first render builds a world map cache (~70 MB) in `Documents/Video Studio/cache/`.
+
 ### Sound
 - **Built-in music** is generated from scratch, so there are no copyright claims. **Quiz Show**, **Bright Pop**, **Lo-fi Chill**, **Epic** and **Ambient** are real music loops (chords, bass and drums); Tension, Mystery, Calm and Pulse are the original atmospheric drones.
 - **Opening sound**: Bass hit, Cinematic boom, Swoosh + impact, Game show jingle, Sparkle, Deep drums or None.
@@ -220,6 +235,7 @@ engine/globe.py      real-Earth globe intro (data/earth.jpg)
 engine/finish.py     motion polish (camera drift, push-ins) + cinematic finish (glow, grain, vignette, light leaks)
 engine/strings.py    Arabic/English wording, year & number formatting
 engine/templates/    timeline.py, quiz.py, mcq.py, vocab.py (add yours here)
+engine/know_country/ 🌍 Know a Country: video.py (scenes), globe.py (3D map), sound.py, template.py, data/
 fonts/               Cairo.ttf, NotoSans-Bold.ttf (IPA) + licences
 data/                countries.json (outlines) + flags/ — rebuilt with tools/build_countries.py
 engine/userdata.py   where your work is saved (Documents/Video Studio) + moving it from older versions
@@ -241,4 +257,7 @@ Documents/Video Studio/outputs/    videos rendered in the app
 - Country outlines: [Natural Earth](https://www.naturalearthdata.com) (public domain). Borders follow Natural Earth's
   choices; upload your own GeoJSON outline on an event to draw a country differently.
 - Flags: [flagcdn.com](https://flagcdn.com) (public-domain flag images).
+- Know a Country: map data from [world-atlas](https://github.com/topojson/world-atlas) (Natural Earth 1:50m,
+  public domain), country facts from [mledoze/countries](https://github.com/mledoze/countries) (ODbL), flags from
+  [flag-icons](https://github.com/lipis/flag-icons) (MIT), icons from [Tabler Icons](https://tabler.io/icons) (MIT).
 - Earth image for the globe intro: NASA Earth Observatory, *Blue Marble: Next Generation* (public domain).

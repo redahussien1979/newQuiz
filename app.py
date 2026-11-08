@@ -33,6 +33,7 @@ from engine import tl_batch
 from engine import userdata
 from engine import fonts as fontlib
 from engine import vocab_batch
+from engine.know_country import video as kc_video
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 APP_PROJ_DIR = os.path.join(ROOT, "projects")  # ships with the app: example projects + Excel templates
@@ -1116,6 +1117,95 @@ def wire_vc_batch(xl, pv, fields):
                 **_progress_on(dep, pv["vid"]))
 
 
+# ------------------------------------------------------------------ Know a Country
+KC_TEMPLATE = os.path.join(APP_PROJ_DIR, "know_country_template.xlsx")
+KC_CACHE = os.path.join(DATA_DIR, "cache")
+KC_ALL = "All rows"
+KC_HELP = """**One Excel row = one video.** Download the template, fill one row per country — figures with their
+dates and sources, facts, top exports, countries to compare with (true-size drag), cities for the distances —
+then upload it here, pick a country (or *All rows*) and press **Render**.
+Use **Quick check** first: it draws one picture in about half a minute, so you can catch a typo before the long
+render. A video takes about 15–25 minutes (it is drawn on 2 processes); the sheet tab **guide** explains every
+column, and the **areas** tab holds the areas used in the comparisons (green rows are verified)."""
+
+
+def know_country_tab():
+    with gr.Row(equal_height=True):
+        gr.Markdown(KC_HELP)
+        gr.DownloadButton("⬇️ Excel template", value=KC_TEMPLATE if os.path.isfile(KC_TEMPLATE) else None,
+                          visible=os.path.isfile(KC_TEMPLATE), size="sm", min_width=130, scale=0)
+    with gr.Row():
+        sheet = gr.File(type="filepath", file_types=[".xlsx"], label="Countries sheet (.xlsx)", height=120, scale=2)
+        pick = gr.Dropdown([], label="Country", info="A row of the sheet — or All rows", scale=1)
+    with gr.Row():
+        still = gr.Button("🖼️ Quick check (one picture)", interactive=False)
+        go = gr.Button("🎬 Render video", variant="primary", interactive=False)
+    info = gr.Markdown("Upload the countries sheet to start.")
+    with gr.Row(equal_height=False):
+        img = gr.Image(label="Quick check", height=560, visible=False, interactive=False)
+        vid = gr.Video(label="Video", height=640, visible=False)
+    files = gr.File(label="Rendered videos", file_count="multiple", visible=False, height=200)
+
+    def loaded(path):
+        if not path:
+            return gr.update(choices=[], value=None), gr.update(interactive=False), gr.update(interactive=False), \
+                "Upload the countries sheet to start."
+        try:
+            names = kc_video.countries_in(path)
+        except Exception as e:
+            raise gr.Error(f"Could not read the sheet: {e}")
+        if not names:
+            return gr.update(choices=[], value=None), gr.update(interactive=False), gr.update(interactive=False), \
+                "The **countries** tab has no rows yet."
+        choices = names + ([KC_ALL] if len(names) > 1 else [])
+        return (gr.update(choices=choices, value=names[0]), gr.update(interactive=True), gr.update(interactive=True),
+                f"Found {len(names)} countr{'y' if len(names) == 1 else 'ies'}: " + ", ".join(names))
+
+    def quick(request: gr.Request, path, country, progress=gr.Progress()):
+        if not path or not country:
+            raise gr.Error("Upload the sheet and pick a country first.")
+        country = kc_video.countries_in(path)[0] if country == KC_ALL else country
+        if not _claim(request):
+            raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+        try:
+            progress(0.1, desc="Drawing one picture…")
+            out = os.path.join(OUT_DIR, f"know_country_check_{_stamp()}.png")
+            kc_video.preview(country, path, out, cache_dir=KC_CACHE)
+            return gr.update(value=out, visible=True), f"Quick check of **{country}** — looks right? Press 🎬 Render video."
+        except Exception as e:
+            raise gr.Error(str(e))
+        finally:
+            _release(request)
+
+    def render(request: gr.Request, path, country, progress=gr.Progress()):
+        if not path or not country:
+            raise gr.Error("Upload the sheet and pick a country first.")
+        todo = kc_video.countries_in(path) if country == KC_ALL else [country]
+        if not _claim(request):
+            raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+        done = []
+        try:
+            for k, c in enumerate(todo):
+                safe = "".join(ch if ch.isalnum() else "_" for ch in c).strip("_") or "country"
+                out = os.path.join(OUT_DIR, f"know_country_{safe}_{_stamp()}.mp4")
+                yield (gr.update(), gr.update(), f"⏳ Rendering **{c}** ({k + 1} of {len(todo)})… about 15–25 minutes.")
+
+                def tick(f, text, k=k):
+                    progress((k + f) / len(todo), desc=text)
+                kc_video.render(c, out, path, cache_dir=KC_CACHE, workers=2, progress=tick)
+                done.append(out)
+                yield (gr.update(value=out, visible=True), gr.update(value=list(done), visible=True),
+                       f"✅ {len(done)} of {len(todo)} done — saved in `{OUT_DIR}`")
+        except Exception as e:
+            raise gr.Error(f"{type(e).__name__}: {e}" if not isinstance(e, ValueError) else str(e))
+        finally:
+            _release(request)
+
+    sheet.change(loaded, sheet, [pick, still, go, info], show_progress="hidden")
+    still.click(quick, [sheet, pick], [img, info])
+    go.click(render, [sheet, pick], [vid, files, info])
+
+
 def build_ui():
     kw = {"css": CSS} if "css" in inspect.signature(gr.Blocks.__init__).parameters else {}
     with gr.Blocks(title="Video Studio", **kw) as demo:
@@ -1415,6 +1505,9 @@ def build_ui():
                     return "theme"
                 return gr.update()
             vc_st["theme"].select(theme_picked, v_bg, v_bg, show_progress="hidden")
+
+        with gr.Tab("🌍 Know a Country"):
+            know_country_tab()
 
         with gr.Tab("📘 Help"):
             gr.Markdown(HELP)
