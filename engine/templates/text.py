@@ -72,7 +72,7 @@ RULE = (226, 228, 223)
 SAFE_BOTTOM = 1536          # the bottom 20 % is covered by the caption / channel name
 SAFE_RIGHT = 918            # the Shorts buttons sit right of this
 SIZES = tuple(range(74, 35, -2))
-TURN = 0.6                  # page turn
+TURN = 0.85                 # page turn (a real page curl)
 FLY = 0.85                  # word flight
 REVEAL = 0.6                # Arabic writes in
 ENDING_LEN = 4.5
@@ -377,17 +377,29 @@ def _ar_justified(lines, size, col, font, width):
 
 
 def _marker(w, h, col, seed):
-    """A highlighter stroke: slightly uneven edges, rounded ends."""
+    """A felt-tip highlighter stroke: uneven edges, slanted chisel ends, streaks along the stroke (the felt runs a
+    little dry in places) and more ink where the pen starts and stops."""
     rng = np.random.default_rng(seed)
     S = 2
-    im = Image.new("RGBA", (int(w * S), int(h * S)), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    top = [(x, rng.uniform(0, h * 0.10) * S) for x in np.linspace(0, w * S, 7)]
-    bot = [(x, h * S - rng.uniform(0, h * 0.12) * S) for x in np.linspace(w * S, 0, 7)]
-    d.polygon(top + bot, fill=tuple(col) + (232,))
-    d.ellipse([-h * 0.25 * S, 0, h * 0.25 * S, h * S], fill=tuple(col) + (232,))
-    d.ellipse([w * S - h * 0.25 * S, 0, w * S + h * 0.25 * S, h * S], fill=tuple(col) + (232,))
-    return im.resize((int(w), int(h)), Image.LANCZOS)
+    W2, H2 = max(2, int(w * S)), max(2, int(h * S))
+    shape = Image.new("L", (W2, H2), 0)
+    d = ImageDraw.Draw(shape)
+    sl = h * 0.22 * S  # chisel slant
+    top = [(x, rng.uniform(0, h * 0.09) * S) for x in np.linspace(sl, W2, 8)]
+    bot = [(x, H2 - rng.uniform(0, h * 0.11) * S) for x in np.linspace(W2 - sl, 0, 8)]
+    d.polygon(top + bot, fill=255)
+    a = np.asarray(shape, np.float32) / 255.0
+    rows = 0.80 + 0.20 * rng.random(H2)                               # streaks along the stroke
+    rows = np.convolve(rows, np.ones(5) / 5, mode="same")[:, None]
+    along = 0.93 + 0.07 * np.sin(np.linspace(0, rng.uniform(3, 7), W2) + rng.uniform(0, 6))[None, :]
+    grain = 0.94 + 0.06 * rng.random((H2, W2))
+    x = np.linspace(0, 1, W2)[None, :]
+    ends = 1 + 0.16 * (np.exp(-x / 0.035) + np.exp(-(1 - x) / 0.035))  # pooled ink at both ends
+    a = np.clip(a * rows * along * grain * ends * 0.78, 0, 1)
+    arr = np.zeros((H2, W2, 4), np.uint8)
+    arr[..., :3] = col
+    arr[..., 3] = (a * 255).astype(np.uint8)
+    return Image.fromarray(arr).resize((int(w), int(h)), Image.LANCZOS)
 
 
 def _check(r, col, tick=(255, 255, 255)):
@@ -451,6 +463,48 @@ def _shadow_box(size, box, r, blur, alpha, dy):
     return sh.filter(ImageFilter.GaussianBlur(blur))
 
 
+def _multiply(frame, im, x, y):
+    """Lay a coloured RGBA image on the frame like ink on paper (multiply blend): the paper grain shows through."""
+    x, y = int(x), int(y)
+    x0, y0 = max(0, x), max(0, y)
+    x1, y1 = min(frame.width, x + im.width), min(frame.height, y + im.height)
+    if x1 <= x0 or y1 <= y0:
+        return
+    reg = np.asarray(frame.crop((x0, y0, x1, y1)), np.float32)
+    src = np.asarray(im.crop((x0 - x, y0 - y, x1 - x, y1 - y)), np.float32)
+    a = src[..., 3:4] / 255.0
+    out = reg.copy()
+    out[..., :3] = reg[..., :3] * (1 - a + a * src[..., :3] / 255.0)
+    frame.paste(Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)), (x0, y0))
+
+
+def _spring(tau):
+    """A damped spring after a landing: 1 at the hit, then a few quick, fading swings."""
+    return math.exp(-7.0 * tau) * math.cos(17.0 * tau) if tau >= 0 else 0.0
+
+
+def _ease_out(x):
+    x = max(0.0, min(1.0, x))
+    return 1 - (1 - x) ** 3
+
+
+def _sparkle(r, col):
+    """A four-point star with a soft glow."""
+    S = 4
+    n = 2 * r * S
+    im = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    c = n / 2
+    pts = []
+    for k in range(8):
+        a = math.pi / 4 * k
+        rr = c * (1.0 if k % 2 == 0 else 0.22)
+        pts.append((c + rr * math.cos(a), c + rr * math.sin(a)))
+    d.polygon(pts, fill=tuple(col) + (255,))
+    glow = im.filter(ImageFilter.GaussianBlur(n / 9))
+    return Image.alpha_composite(glow, im).resize((2 * r, 2 * r), Image.LANCZOS)
+
+
 def make_video(project):
     """The video object for the project's design (`text.style`)."""
     style = (project.get("text", {}) or {}).get("style") or "textbook"
@@ -464,7 +518,12 @@ class TextVideo:
     LINE = 1.66                 # line height / text size
     MARK_ON_TOP = False         # the word mark is drawn over the ink (pen) or under it (highlighter, glow)
     FINISH_EXTRA = 0.0          # extra time after the ticks for a design's last flourish
-    TURN_STYLE = "slide"
+    SUP = True                  # footnote numbers after the highlighted words (= their Word Bank number)
+    DROPCAP = True              # the first letter of the text set big over two lines
+    TAB = True                  # the VOCABULARY index tab on the page edge (Textbook)
+    DIM = 0.34                  # how much the lines not being read fade back while the voice reads
+    BREATH = 0.055              # the word being spoken grows this much and settles
+    WAVE_H = 15                 # half height of the waveform progress bar
     MIN_SIZE = 44               # smallest comfortable reading size on a phone (longer texts get more pages)
     GAP_MAX = 2.0               # widest justified word gap (in spaces) before a page takes a smaller size
 
@@ -499,6 +558,7 @@ class TextVideo:
         self._header()
         self._paginate()
         self._timeline()
+        self._build_wave()
         self.bg = self._background()
         self.line_base = [0]
         for idx, z in zip(self.page_words, self.page_size):
@@ -540,9 +600,29 @@ class TextVideo:
         self.leader_col = (196, 200, 196)
         self.flash_col = self.marker_col
         self.panel = dict(bg=(255, 255, 255), border=self.band, text=AR_COL, label=self.band, font=AR_FONT)
+        self.wave_cols = ((212, 217, 213), self.band)
+        self.wave_grad = (self.band, self.band)
+        self.focus_col = _mix(self.band, (255, 255, 255), 0.88) + (255,)
+        self.page_back = (240, 238, 230)
+        self.burst_col = self.marker_col
 
     def _background(self):
-        return _noise_bg(_vgrad(PAPER_TOP, PAPER_BOT))
+        """The page, and at the right edge the edges of the pages under it (a real book)."""
+        img = _noise_bg(_vgrad(PAPER_TOP, PAPER_BOT))
+        edge = W - 22
+        strip = np.repeat(np.linspace(0, 1, 22, dtype=np.float32)[None, :], H, axis=0)
+        desk = Image.fromarray((np.array((206, 200, 188), np.float32) * (0.82 + 0.18 * strip[..., None])
+                                ).astype(np.uint8)).convert("RGBA")
+        img.paste(desk, (edge, 0))
+        d = ImageDraw.Draw(img)
+        for k, x in enumerate(range(edge + 1, W - 3, 4)):  # the stacked page edges
+            d.line([(x, 0), (x, H)], fill=(250, 248, 241, 255) if k % 2 == 0 else (214, 209, 198, 255), width=2)
+        sh = Image.new("RGBA", (16, H), (0, 0, 0, 0))  # the top page's soft shadow on the stack
+        sd = ImageDraw.Draw(sh)
+        for x in range(16):
+            sd.line([(x, 0), (x, H)], fill=(0, 0, 0, int(46 * (1 - x / 16) ** 2)))
+        img.alpha_composite(sh, (edge, 0))
+        return img
 
     def _fit_title(self, path, weight, big, small, two_lines_size):
         lines, size = [self.title], big
@@ -582,7 +662,8 @@ class TextVideo:
         self.tag_img = _ar_img(self.tag, 36, light) if self.tag else None
         self._drop_tag_if_crowded()
         self.bar_y = self.band_h + 34
-        self.p_top = self.band_h + 92
+        self.wave_y = self.bar_y + 4
+        self.p_top = self.band_h + 96
 
     def _drop_tag_if_crowded(self):
         used = (self.sub_img.w if self.sub_img else 0) + (self.badge.width + 24 if self.badge is not None else 0)
@@ -602,21 +683,102 @@ class TextVideo:
 
     def _band_layer(self, img):
         d = ImageDraw.Draw(img)
-        d.rectangle([0, 0, W, self.band_h], fill=self.band + (255,))
-        sh = Image.new("RGBA", (W, 26), (0, 0, 0, 0))  # soft shadow under the band
+        d.rectangle([0, 0, W - 23, self.band_h], fill=self.band + (255,))  # printed on the top page
+        sh = Image.new("RGBA", (W - 22, 26), (0, 0, 0, 0))  # soft shadow under the band
         sd = ImageDraw.Draw(sh)
         for y in range(26):
-            sd.line([(0, y), (W, y)], fill=(0, 0, 0, int(34 * (1 - y / 26) ** 2)))
+            sd.line([(0, y), (W - 22, y)], fill=(0, 0, 0, int(34 * (1 - y / 26) ** 2)))
         img.alpha_composite(sh, (0, self.band_h))
         self._put_sub_line(img, self.sub_y)
         for im, y in zip(self.title_imgs, self.title_ys):
             im.put(img, self.x0, y)
-        d.rounded_rectangle([self.x0, self.bar_y, self.x1, self.bar_y + 8], 4, fill=(228, 231, 226, 255))
+        self._wave_track(img)
+
+    def _audio_t(self, tv):
+        """The recording's time at video time tv (None in the pause of a page turn)."""
+        for k in range(len(self.page_words) - 1, -1, -1):
+            ta = tv - self.lead - self.shifts[k]
+            if ta >= self.cuts[k]:
+                nxt = self.cuts[k + 1] if k + 1 < len(self.cuts) else math.inf
+                return ta if ta < nxt else None
+        return None
+
+    def _build_wave(self):
+        """Bar heights of the waveform under the title: the real loudness of the recording over the reading (or,
+        without a recording, a voice-like shape made from the word timings)."""
+        n = max(20, int(self.width // 7))
+        t0, t1 = self.first_t, max(self.first_t + 0.5, self.last_t)
+        times = [t0 + (t1 - t0) * (k + 0.5) / n for k in range(n)]
+        half = (t1 - t0) / n / 2
+        amps = None
+        if self.audio:
+            try:
+                a = np.abs(load_audio(self.audio)).mean(axis=1)
+                vals = []
+                for tv in times:
+                    ta = self._audio_t(tv)
+                    if ta is None:
+                        vals.append(0.0)
+                        continue
+                    i0, i1 = int(max(0, ta - half) * SR), int((ta + half) * SR)
+                    seg = a[i0:max(i1, i0 + 1)]
+                    vals.append(float(np.sqrt(np.mean(seg ** 2))) if len(seg) else 0.0)
+                amps = np.array(vals)
+            except Exception:
+                amps = None
+        if amps is None or amps.max() <= 0:
+            rng = np.random.default_rng(21)
+            vals = []
+            for tv in times:
+                on = any(self.vs[i] - 0.03 <= tv <= self.ve[i] + 0.03 for i in range(len(self.words)))
+                vals.append((0.55 + 0.45 * rng.random()) if on else 0.06 + 0.06 * rng.random())
+            amps = np.convolve(np.array(vals), [0.25, 0.5, 0.25], mode="same")
+        ref = np.percentile(amps, 92) or 1.0
+        self.wave = np.clip(np.sqrt(np.clip(amps / ref, 0, 1)), 0.1, 1.0)
+
+    def _wave_img(self, fill):
+        """Rounded bars; fill = a colour, or 'grad' (blue -> gold)."""
+        hh = self.WAVE_H
+        im = Image.new("RGBA", (self.width + 4, 2 * hh + 4), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        n = len(self.wave)
+        step = self.width / n
+        for k, a in enumerate(self.wave):
+            x = 2 + k * step
+            h = max(2.5, a * hh)
+            d.rounded_rectangle([x, hh + 2 - h, x + 4, hh + 2 + h], 2, fill=(255, 255, 255, 255))
+        if fill == "grad":
+            g = np.linspace(0, 1, im.width)[None, :, None]
+            arr = np.array(self.wave_grad[0], np.float32) * (1 - g) + np.array(self.wave_grad[1], np.float32) * g
+            col = Image.fromarray(np.repeat(arr, im.height, axis=0).astype(np.uint8)).convert("RGBA")
+        else:
+            col = Image.new("RGBA", im.size, tuple(fill[:3]) + (255,))
+        a = im.getchannel("A")
+        if fill != "grad" and len(fill) == 4:
+            a = a.point(lambda v: v * fill[3] // 255)
+        col.putalpha(a)
+        return col
+
+    def _wave_track(self, img):
+        """The waiting (unplayed) waveform, drawn on the page."""
+        if "wave_track" not in self._misc:
+            self._misc["wave_track"] = self._wave_img(self.wave_cols[0])
+            self._misc["wave_fill"] = self._wave_img(self.wave_cols[1])
+        _comp(img, self._misc["wave_track"], self.x0 - 2, self.wave_y - self.WAVE_H - 2)
 
     def _draw_progress(self, frame, p):
-        if p > 0:
-            ImageDraw.Draw(frame).rounded_rectangle([self.x0, self.bar_y, self.x0 + max(8, self.width * p),
-                                                     self.bar_y + 8], 4, fill=self.band + (255,))
+        """The played part of the waveform, with a playhead."""
+        if p <= 0 or "wave_fill" not in self._misc:
+            return
+        im = self._misc["wave_fill"]
+        w = max(1, int(2 + self.width * p))
+        _comp(frame, im.crop((0, 0, min(im.width, w), im.height)), self.x0 - 2, self.wave_y - self.WAVE_H - 2)
+        if p < 1:
+            col = self.wave_grad[1] if self.wave_cols[1] == "grad" else self.wave_cols[1][:3]
+            x = self.x0 + self.width * p
+            d = ImageDraw.Draw(frame)
+            d.ellipse([x - 7, self.wave_y - 7, x + 7, self.wave_y + 7], fill=tuple(col) + (255,))
+            d.ellipse([x - 3, self.wave_y - 3, x + 3, self.wave_y + 3], fill=(255, 255, 255, 255))
 
     def _decor(self, dd, x, yb, w, size):
         """Faded layer: a dotted underline under the words that will fly."""
@@ -632,9 +794,10 @@ class TextVideo:
                 _marker(sp["x2"] - sp["x"] + 14, h, self.marker_col, sp["i0"]))
 
     def _draw_mark(self, frame, mk, q):
+        """The highlighter swipes along the word, its ink multiplied into the paper."""
         mx, my, im = mk
         w = max(1, int(im.width * ease_io(q)))
-        _comp(frame, im.crop((0, 0, w, im.height)), mx, my)
+        _multiply(frame, im.crop((0, 0, w, im.height)), mx, my)
 
     # -------------------------------------------------------------- line breaking + pages (shared)
     @staticmethod
@@ -680,10 +843,7 @@ class TextVideo:
         return self.W_KEY if i in self.key_of else self.W_REG
 
     def _ww(self, i, size):
-        k = (i, size)
-        if k not in self._wcache:
-            self._wcache[k] = _font(size, self._wweight(i), self.BODY).getlength(self.words[i]["w"])
-        return self._wcache[k]
+        return self._pw(i, 0, len(self.words[i]["w"]), False, size)
 
     def _splits(self, i):
         """Where word i may be broken at a line end: [(char offset, add a hyphen?)] — after its own hyphens, and
@@ -699,69 +859,119 @@ class TextVideo:
         self._wcache.setdefault("splits", {})[i] = out
         return out
 
+    def _sup_txt(self, i, b):
+        """The footnote number after the last piece of a highlighted word / phrase (Textbook)."""
+        if not self.SUP or i not in self.key_of:
+            return None
+        g = self.groups[self.key_of[i]]
+        if i != g["i1"] or b < len(self.words[i]["w"]):
+            return None
+        return str(self.key_of[i] + 1)
+
+    def _sup_font(self, size):
+        return _font(max(16, int(size * 0.46)), "Bold", LABEL)
+
     def _pw(self, i, a, b, hyph, size):
-        """Width of the piece w[a:b] (+ '-') of word i."""
+        """Width of the piece w[a:b] (+ '-') of word i (+ its footnote number)."""
         k = (i, a, b, hyph, size)
         if k not in self._wcache:
             w = self.words[i]["w"]
-            self._wcache[k] = _font(size, self._wweight(i), self.BODY).getlength(w[a:b] + ("-" if hyph else ""))
+            width = _font(size, self._wweight(i), self.BODY).getlength(w[a:b] + ("-" if hyph else ""))
+            sup = self._sup_txt(i, b)
+            if sup:
+                width += 3 + self._sup_font(size).getlength(sup)
+            self._wcache[k] = width
         return self._wcache[k]
+
+    def _dropcap(self, idx, size):
+        """The big first letter (Textbook, first page): letter, size, indent of the first two lines."""
+        if not self.DROPCAP or not idx or idx[0] != 0:
+            return None
+        w = self.words[0]["w"]
+        if len(w) < 2 or not w[0].isalpha():
+            return None
+        key = ("dc", size)
+        if key not in self._wcache:
+            lh = int(size * self.LINE)
+            cap_h = -_font(size, self.W_REG, self.BODY).getbbox("H", anchor="ls")[1]
+            ref = 200
+            ch = -_font(ref, "Bold", self.BODY).getbbox(w[0], anchor="ls")[1]
+            dsz = max(size + 2, int(ref * (lh + cap_h) / max(1, ch)))  # caps top of line 1 -> baseline of line 2
+            bb = _font(dsz, "Bold", self.BODY).getbbox(w[0], anchor="ls")
+            self._wcache[key] = dict(letter=w[0], size=dsz, left=bb[0], top=bb[1],
+                                     indent=int(bb[2] - bb[0] + size * 0.32))
+        return self._wcache[key]
+
+    def _line_w(self, idx, size, li):
+        dc = self._dropcap(idx, size)
+        return self.width - (dc["indent"] if dc and li < 2 else 0)
 
     def _break(self, idx, size):
         """Lines of word pieces (i, a, b, hyphen?) with the fewest lines and then the most even right edge (sum of
-        squared gaps), like book typesetting. A word may be split at a line end (hyphenation, which costs a little,
-        so whole words are preferred); the last line may be short but not a lone short word."""
+        squared extra space per gap), like book typesetting. A word may be split at a line end (hyphenation, which
+        costs a little, so whole words are preferred); the last line may be short but not a lone short word. With a
+        drop cap the first two lines are shorter (the line count is part of the search)."""
         key = (tuple(idx), size)
         if key in self._brk:
             return self._brk[key]
         sp = _font(size, self.W_REG, self.BODY).getlength(" ")
-        width = self.width
         n = len(idx)
+        dc = self._dropcap(idx, size)
+        short = [self.width - dc["indent"]] * 2 if dc else []
+        nl = len(short) + 1  # line-number states: 0, 1, 2+ (only the first lines differ)
         pts = []  # breakpoints: (word position, char offset, hyphen) ; offset 0 = before the word
         for p, i in enumerate(idx):
-            pts.append((p, 0, False))
-            pts += [(p, c, h) for c, h in self._splits(i)]
+            first = 1 if (dc and p == 0) else 0
+            pts.append((p, first, False))
+            pts += [(p, c, h) for c, h in self._splits(i) if c > first]
         pts.append((n, 0, False))
-        best = [math.inf] * len(pts)
-        prev = [0] * len(pts)
-        best[0] = 0.0
+        best = [[math.inf] * nl for _ in pts]
+        prev = [[None] * nl for _ in pts]
+        best[0][0] = 0.0
         for bj in range(1, len(pts)):
             pj, cj, hj = pts[bj]
+            last = bj == len(pts) - 1
             for bi in range(bj - 1, -1, -1):
                 pi, ci, _ = pts[bi]
-                if best[bi] == math.inf or (pi == pj):
+                if pi == pj:
                     continue
-                # pieces: rest of word pi from ci, whole words between, the start of word pj up to cj
                 lw = self._pw(idx[pi], ci, len(self.words[idx[pi]]["w"]), False, size)
                 for p in range(pi + 1, min(pj, n)):
                     lw += sp + self._ww(idx[p], size)
                 if cj and pj < n:
                     lw += sp + self._pw(idx[pj], 0, cj, hj, size)
                 count = (pj - pi) + (1 if cj else 0)
-                if lw > width:
-                    if count > 1:
-                        break
-                last = bj == len(pts) - 1
-                if last:
-                    bad = 0.0 if (count > 1 or lw > width * 0.35 or n == 1) else 4000.0
-                elif count == 1:
-                    bad = 30000.0
-                else:  # extra space per gap, in spaces, squared (TeX-like): even lines, no rivers
-                    r = max(0.0, width - lw) / (count - 1) / sp
-                    bad = 100.0 * r * r + (260.0 if cj else 0.0)  # a broken word costs a little
-                c = best[bi] + bad + 100000.0
-                if c < best[bj]:
-                    best[bj], prev[bj] = c, bi
-        lines, bj = [], len(pts) - 1
+                if lw > self.width and count > 1:
+                    break
+                for L in range(nl):
+                    if best[bi][L] == math.inf:
+                        continue
+                    width = short[L] if L < len(short) else self.width
+                    if lw > width and count > 1:
+                        continue
+                    if last:
+                        bad = 0.0 if (count > 1 or lw > width * 0.35 or n == 1) else 4000.0
+                    elif count == 1:
+                        bad = 30000.0
+                    else:  # extra space per gap, in spaces, squared (TeX-like): even lines, no rivers
+                        r = max(0.0, width - lw) / (count - 1) / sp
+                        bad = 100.0 * r * r + (260.0 if cj else 0.0)  # a broken word costs a little
+                    c = best[bi][L] + bad + 100000.0
+                    L2 = min(L + 1, nl - 1)
+                    if c < best[bj][L2]:
+                        best[bj][L2], prev[bj][L2] = c, (bi, L)
+        bj = len(pts) - 1
+        L = min(range(nl), key=lambda x: best[bj][x])
+        lines = []
         while bj > 0:
-            bi = prev[bj]
+            bi, Lp = prev[bj][L]
             (pi, ci, _), (pj, cj, hj) = pts[bi], pts[bj]
             line = [(idx[pi], ci, len(self.words[idx[pi]]["w"]), False)]
             line += [(idx[p], 0, len(self.words[idx[p]]["w"]), False) for p in range(pi + 1, min(pj, n))]
             if cj and pj < n:
                 line.append((idx[pj], 0, cj, hj))
             lines.append(line)
-            bj = bi
+            bj, L = bi, Lp
         self._brk[key] = lines[::-1]
         return self._brk[key]
 
@@ -824,14 +1034,14 @@ class TextVideo:
 
     TRACK_MAX = 0.035           # letter-spacing a justified line may add, x text size
 
-    def _justify(self, line, size, last):
+    def _justify(self, line, size, last, width=None):
         """(gap, tracking) of a line: slack goes first into a little letter-spacing (at most TRACK_MAX of the
         size, at most half the slack), the rest into the word gaps."""
         sp = _font(size, self.W_REG, self.BODY).getlength(" ")
         if last or len(line) < 2:
             return sp, 0.0
         widths = sum(self._pw(*pc, size) for pc in line)
-        slack = max(0.0, self.width - widths - sp * (len(line) - 1))
+        slack = max(0.0, (width or self.width) - widths - sp * (len(line) - 1))
         chars = sum(max(0, b - a + (1 if h else 0) - 1) for _, a, b, h in line)
         track = min(self.TRACK_MAX * size, slack * 0.5 / chars) if chars else 0.0
         return sp + (slack - track * chars) / (len(line) - 1), track
@@ -840,7 +1050,8 @@ class TextVideo:
         """The widest justified word gap of a page, in spaces."""
         sp = _font(size, self.W_REG, self.BODY).getlength(" ")
         lines = self._break(idx, size)
-        return max([1.0] + [self._justify(ln, size, False)[0] / sp for ln in lines[:-1] if len(ln) > 1])
+        return max([1.0] + [self._justify(ln, size, False, self._line_w(idx, size, li))[0] / sp
+                            for li, ln in enumerate(lines[:-1]) if len(ln) > 1])
 
     def _page_size(self, idx):
         sizes = [z for z in SIZES if z <= self.size * 1.15 and self._fits(idx, z)] or [self.size]
@@ -900,23 +1111,29 @@ class TextVideo:
 
     # -------------------------------------------------------------- pre-rendered pages (shared)
     def _build_page(self, k):
+        """A page = the still parts (background, header, word bank) + the paragraph as two layers: faded text and
+        ink (the ink is revealed word by word as it is read). Also: word pieces, marks and line positions."""
         idx = self.page_words[k]
         size = self.page_size[k]
         lh = int(size * self.LINE)
         base = self.bg.copy()
         self._band_layer(base)
+        faded = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         ink = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        dd, di = ImageDraw.Draw(base), ImageDraw.Draw(ink)
+        dd, di = ImageDraw.Draw(faded), ImageDraw.Draw(ink)
         lines = self._break(idx, size)
         top = self.p_top + self.page_off[k]
-        sp = _font(size, self.W_REG, self.BODY).getlength(" ")
-        boxes, pieces, spans, baselines = {}, [], [], []
+        dc = self._dropcap(idx, size)
+        boxes, pieces, spans, baselines, line_info = {}, [], [], [], []
+        sup_f = self._sup_font(size)
         for li, line in enumerate(lines):
-            gap, track = self._justify(line, size, li == len(lines) - 1)  # justified: every line but the last
+            lw = self._line_w(idx, size, li)
+            gap, track = self._justify(line, size, li == len(lines) - 1, lw)  # justified: every line but the last
             widths = [self._pw(i, a, b, h, size) + track * max(0, b - a + (1 if h else 0) - 1) for i, a, b, h in line]
-            x = float(self.x0)
+            x = float(self.x1 - lw)
             yb = top + li * lh + int(size * 1.05)
             baselines.append(yb)
+            first_piece = len(pieces)
             for (i, a, b, hyph), w in zip(line, widths):
                 f = _font(size, self._wweight(i), self.BODY)
                 asc, desc = f.getmetrics()
@@ -933,28 +1150,67 @@ class TextVideo:
                 else:
                     dd.text((x, yb), txt, font=f, fill=fcol, anchor="ls")
                     di.text((x, yb), txt, font=f, fill=icol, anchor="ls")
+                sup = self._sup_txt(i, b)
+                if sup:  # footnote number = the word's Word Bank number
+                    sx = x + w - sup_f.getlength(sup)
+                    dd.text((sx, yb - size * 0.42), sup, font=sup_f, fill=self.faded_key + (255,), anchor="ls")
+                    di.text((sx, yb - size * 0.42), sup, font=sup_f, fill=self.accent + (255,), anchor="ls")
                 box = (int(x) - 2, int(yb - asc - 4), int(math.ceil(x + w)) + 2, int(yb + desc + 4))
                 boxes.setdefault(i, box)  # the flight starts from the word's first piece
                 f0, f1 = a / len(word), (b / len(word) if b < len(word) else 1.0)
                 pieces.append(dict(i=i, box=box, f0=f0, f1=f1))
                 if key:
-                    self._decor(dd, x, yb, w, size)
+                    tw = w - (3 + sup_f.getlength(sup) if sup else 0)
+                    self._decor(dd, x, yb, tw, size)
                     gi = self.key_of[i]
                     self.key_line.setdefault(gi, self.line_base[k] + li + 1)
                     if spans and spans[-1]["gi"] == gi and spans[-1]["li"] == li:
-                        spans[-1].update(i1=i, f1=f1, x2=x + w)  # a phrase on one line = one mark
+                        spans[-1].update(i1=i, f1=f1, x2=x + tw)  # a phrase on one line = one mark
                     else:
-                        spans.append(dict(gi=gi, li=li, i0=i, i1=i, f0=f0, f1=f1, x=x, x2=x + w, yb=yb, size=size))
+                        spans.append(dict(gi=gi, li=li, i0=i, i1=i, f0=f0, f1=f1, x=x, x2=x + tw, yb=yb, size=size))
                 x += w + gap
-        for s in spans:
-            s["mk"] = self._make_mark(s)
+            fp, lp = pieces[first_piece], pieces[-1]
+            line_info.append(dict(yb=yb, y=yb - size * 0.33, t0=self._wt(fp["i"], fp["f0"]),
+                                  t1=self._wt(lp["i"], lp["f1"])))
+        if dc:  # the drop cap: inks with the first letters of the first word
+            f = _font(dc["size"], "Bold", self.BODY)
+            yb = baselines[1] if len(baselines) > 1 else baselines[0]
+            x = self.x0 - dc["left"]
+            dd.text((x, yb), dc["letter"], font=f, fill=self.faded_key + (255,), anchor="ls")
+            di.text((x, yb), dc["letter"], font=f, fill=self.accent + (255,), anchor="ls")
+            bb = f.getbbox(dc["letter"], anchor="ls")
+            box = (int(x + bb[0]) - 4, int(yb + bb[1]) - 4, int(x + bb[2]) + 4, int(yb + bb[3]) + 4)
+            pieces.insert(0, dict(i=0, box=box, f0=0.0, f1=1.0 / len(self.words[0]["w"]), dc=True))
+        for sp_ in spans:
+            sp_["mk"] = self._make_mark(sp_)
         self._page_decor(base, k, baselines, lh, size)
-        para_box = (self.x0 - 16, top, self.x1 + 16, top + len(lines) * lh + 12)
+        y0 = min([top] + [p["box"][1] for p in pieces])
+        para_box = (self.x0 - 16, int(y0) - 6, self.x1 + 16, top + len(lines) * lh + 12)
         keys = self._keys_in(idx)
         slots = self._bank_rows(base, keys, para_box[3] + 52, size=size) if keys else []
+        self._page_extras(base, slots)
         ink_c = ink.crop(para_box)
-        return dict(kind="text", k=k, idx=idx, base=base, ink_rgb=ink_c.convert("RGB"), ink_a=ink_c.getchannel("A"),
-                    box=para_box, boxes=boxes, pieces=pieces, spans=spans, slots=slots, keys=keys, size=size)
+        return dict(kind="text", k=k, idx=idx, base=base, faded=faded.crop(para_box), clean=base.crop(para_box),
+                    ink_rgb=ink_c.convert("RGB"), ink_a=ink_c.getchannel("A"), box=para_box, boxes=boxes,
+                    pieces=pieces, spans=spans, slots=slots, keys=keys, size=size, lines=line_info, lh=lh)
+
+    def _page_extras(self, base, slots):
+        """A design's touches that depend on where the word bank is (Textbook: a VOCABULARY index tab on the page
+        edge, level with the Word Bank)."""
+        if not slots or not self.TAB:
+            return
+        top = slots[0]["y"] - 82
+        bottom = min(slots[-1]["y"] + slots[-1]["h"], top + 420)
+        h = int(bottom - top)
+        if h < 150:
+            return
+        lab = _Txt("VOCABULARY", 20, (255, 255, 255), "Bold", LABEL, track=0.22)
+        tab = Image.new("RGBA", (h, 44), (0, 0, 0, 0))
+        ImageDraw.Draw(tab).rounded_rectangle([0, 0, h - 1, 43 + 14], 14, fill=self.band + (255,))
+        lab.put(tab, (h - lab.w) / 2, 22 + 7)
+        tab = tab.rotate(90, expand=True)  # reads bottom to top, along the page edge
+        base.alpha_composite(_shadow_box(base.size, (0, top, 44, top + h), 10, 8, 60, 3))
+        base.alpha_composite(tab, (0, int(top)))
 
     def _build_recap(self):
         base = self.bg.copy()
@@ -963,6 +1219,7 @@ class TextVideo:
         n = len(keys)
         slots = self._bank_rows(base, keys, self.p_top + 10, avail=SAFE_BOTTOM - self.p_top - 10,
                                 label=f"{self.bank_label} · {n}")
+        self._page_extras(base, slots)
         return dict(kind="recap", k=len(self.page_words), base=base, slots=slots, keys=keys, size=self.size)
 
     # -------------------------------------------------------------- word bank (Textbook: ruled rows)
@@ -989,7 +1246,8 @@ class TextVideo:
         for j, gi in enumerate(keys):
             g = self.groups[gi]
             base = y + int(row_h * 0.66)
-            num = _Txt(str(j + 1), max(26, int(en_size * 0.6)), self.bank_col, "Bold", LABEL)
+            num = _Txt(str(gi + 1) if self.SUP else str(j + 1), max(26, int(en_size * 0.6)), self.bank_col, "Bold",
+                       LABEL)  # Textbook: the same number as the footnote in the text
             num.put(img, self.x0, base)
             d.line([(self.x0, y + row_h - 1), (self.x1, y + row_h - 1)], fill=self.rule_col + (255,), width=2)
             en = _Txt(g["text"], en_size, self.en_col, self.W_KEY, self.BODY)
@@ -1028,12 +1286,19 @@ class TextVideo:
         self._draw_check(frame, s, t)
 
     def _put_en(self, frame, s, t, t_land, recap):
-        pop = 1.0 if recap else 1 + 0.12 * (1 - ease_out_back(prog(t, t_land, t_land + 0.3)))
-        if abs(pop - 1) > 0.005:
-            im = s["en"].im.resize((int(s["en"].im.width * pop), int(s["en"].im.height * pop)), Image.BILINEAR)
-            _comp(frame, im, int(s["en_x"] - s["en"].pad * pop), int(s["base"] - s["en"].base * pop))
-        else:
-            s["en"].put(frame, s["en_x"], s["base"], prog(t, t_land, t_land + 0.25) if recap else 1.0)
+        """The word in its slot; on landing it squashes and springs back (anchored on its baseline)."""
+        if recap:
+            s["en"].put(frame, s["en_x"], s["base"], prog(t, t_land, t_land + 0.25))
+            return
+        d = _spring(t - t_land) if t - t_land < 0.9 else 0.0
+        if abs(d) < 0.01:
+            s["en"].put(frame, s["en_x"], s["base"])
+            return
+        sx, sy = 1 + 0.16 * d, 1 - 0.14 * d
+        im = s["en"].im
+        im = im.resize((max(1, int(im.width * sx)), max(1, int(im.height * sy))), Image.BILINEAR)
+        cx = s["en_x"] + s["en"].w / 2
+        _comp(frame, im, int(cx - im.width / 2), int(s["base"] - s["en"].base * sy))
 
     @staticmethod
     def _put_ar(frame, ar, x, y, q):
@@ -1085,7 +1350,7 @@ class TextVideo:
             self._fly_imgs[gi] = (back, t.im, (t.pad, t.base), S)
         return self._fly_imgs[gi]
 
-    def _draw_flight(self, frame, pg, gi, u):
+    def _flight_layer(self, pg, gi, u, ghost=False):
         back, txt, (ax, ay), S = self._fly(gi)
         g = self.groups[gi]
         x0, y0, x1, y1 = pg["boxes"][g["i0"]]
@@ -1103,7 +1368,7 @@ class TextVideo:
         size = (max(1, int(txt.width * k)), max(1, int(txt.height * k)))
         lay = txt.resize(size, Image.BILINEAR)
         pa = 1 - prog(u, 0.72, 1.0)
-        if pa > 0.01:
+        if pa > 0.01 and not ghost:
             lay = Image.alpha_composite(_fade(back.resize(size, Image.BILINEAR), pa), lay)
         ox, oy = ax * k, ay * k
         if abs(rot) > 0.2:
@@ -1113,7 +1378,34 @@ class TextVideo:
             dx, dy = ox - cx, oy - cy
             ox = lay.width / 2 + dx * math.cos(a) + dy * math.sin(a)
             oy = lay.height / 2 - dx * math.sin(a) + dy * math.cos(a)
-        _comp(frame, lay, int(round(x - ox)), int(round(y - oy)))
+        return lay, int(round(x - ox)), int(round(y - oy))
+
+    def _draw_flight(self, frame, pg, gi, u):
+        """The flying word, with a short fading trail of where it just was."""
+        for j, a in ((3, 0.07), (2, 0.13), (1, 0.22)):
+            ug = u - 0.045 * j
+            if 0.05 < ug < 0.9:
+                lay, x, y = self._flight_layer(pg, gi, ug, ghost=True)
+                _comp(frame, _fade(lay, a * (1 - prog(u, 0.8, 1.0))), x, y)
+        lay, x, y = self._flight_layer(pg, gi, u)
+        _comp(frame, lay, x, y)
+
+    def _burst(self, frame, s, tau):
+        """The landing flourish (Textbook: a puff of highlighter dust)."""
+        cx, cy = s["en_x"] + s["en"].w / 2, s["base"] - s["en_size"] * 0.35
+        rng = np.random.default_rng(s["gi"] * 7 + 3)
+        p = _ease_out(tau / 0.75)
+        fade_ = 1 - prog(tau, 0.25, 0.75)
+        ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(ov)
+        for _ in range(16):
+            ang = rng.uniform(0, 2 * math.pi)
+            dist = rng.uniform(40, 130) * p
+            r = rng.uniform(4, 10) * (1 - 0.4 * p)
+            x = cx + math.cos(ang) * (dist + s["en"].w * 0.35)
+            y = cy + math.sin(ang) * dist * 0.55
+            d.ellipse([x - r, y - r, x + r, y + r], fill=self.burst_col + (int(200 * fade_),))
+        frame.alpha_composite(ov.filter(ImageFilter.GaussianBlur(1.2)))
 
     # -------------------------------------------------------------- translation of the whole paragraph
     def _build_translation(self):
@@ -1170,11 +1462,12 @@ class TextVideo:
         if k > 0 and t < self.turns[k] + TURN:
             a = self._draw_page(k - 1, self.turns[k])
             b = self._draw_page(k, t)
-            frame = self._turn(a, b, ease_io(prog(t, self.turns[k], self.turns[k] + TURN)))
+            frame = self._turn(a, b, prog(t, self.turns[k], self.turns[k] + TURN))
         else:
             frame = self._draw_page(k, t)
         if t < 0.9:
             frame = self._intro(frame, t)
+        frame = self._camera(frame, t)
         if self.tr is not None and t >= self.tr0:
             self._draw_translation(frame, t)
         if self.has_ending:
@@ -1182,29 +1475,68 @@ class TextVideo:
         global_fade(frame, t, self.dur, fade_in=False)
         return frame.convert("RGB")
 
-    def _turn(self, a, b, e):
-        """Page turn: the old page slides away to the left, the new one comes in from the right."""
-        cut = self.bar_y + 20  # the header stays; the page below it slides
-        if self.TURN_STYLE == "fade":  # the old page fades out, then the new one fades in (never both at once)
-            frame = (b if e >= 0.5 else a).copy()
-            frame.paste(self.bg.crop((0, cut, W, H)), (0, cut))
-            if e < 0.5:
-                _comp(frame, _fade(a.crop((0, cut, W, H)), 1 - 2 * e), 0, cut - int(30 * 2 * e))
-            else:
-                _comp(frame, _fade(b.crop((0, cut, W, H)), 2 * e - 1), 0, cut + int(30 * (2 - 2 * e)))
+    def _camera(self, frame, t):
+        """A slow push-in while the text is read, and a small nudge each time a word takes off."""
+        s = 1 + 0.024 * ease_io(prog(t, self.first_t - 0.4, self.reading_end))
+        for f0 in self.fly0:
+            x = t - f0
+            if 0 < x < 0.55:
+                s += 0.0075 * math.sin(math.pi * x / 0.55)
+        if s < 1.0008:
             return frame
+        cx, cy = W / 2, 880.0
+        box = (cx - cx / s, cy - cy / s, cx + (W - cx) / s, cy + (H - cy) / s)
+        return frame.resize((W, H), Image.BICUBIC, box=box)
+
+    def _turn(self, a, b, e):
+        """A real page turn: the old page bends round a cylinder from its right edge and is carried over to the left,
+        showing its back; the new page lies underneath, in the shadow of the turning sheet. The fold is slanted (the
+        bottom corner leads)."""
+        cut = self.wave_y + self.WAVE_H + 10  # the header stays; the page below it turns
+        A = np.asarray(a.crop((0, cut, W, H)).convert("RGB"), np.float32)
+        B = np.asarray(b.crop((0, cut, W, H)).convert("RGB"), np.float32)
+        h, w = A.shape[:2]
+        R_ = 72.0
+        e = ease_io(e)
+        X = np.arange(w, dtype=np.float32)[None, :]
+        ys = np.arange(h, dtype=np.float32)[:, None]
+        F = (w + 230.0) + (-3.4 * R_ - (w + 230.0)) * e
+        fy = F - 230.0 * (ys / h)                      # fold position per row
+        rows = np.arange(h)[:, None]
+        back_col = np.array(self.page_back, np.float32)
+
+        def take(xsrc):
+            return A[rows, np.clip(xsrc, 0, w - 1).astype(np.int32)]
+
+        out = B.copy()
+        d = X - (fy + R_)  # the turning sheet throws a soft shadow on the new page
+        out *= np.where(d > 0, 1 - 0.38 * np.exp(-np.clip(d, 0, None) / 55.0), 0.62)[..., None]
+        flat = X < fy
+        out = np.where(flat[..., None], A, out)
+        # the turned-over part lying flat on top (its back, mirrored, a little see-through)
+        xs_back = fy + math.pi * R_ + (fy - X)
+        back = flat & (xs_back < w)
+        light = 0.97 - 0.10 * np.exp(-np.clip(fy - X, 0, None) / 70.0)
+        backside = (back_col * 0.92 + take(xs_back) * 0.08) * light[..., None]
+        edge = 2 * fy - w + math.pi * R_  # its left edge: a shadow on the old page just beyond it
+        sh = np.where((X < edge) & flat, 1 - 0.22 * np.exp(-np.clip(edge - X, 0, None) / 26.0), 1.0)
+        out = np.where(flat[..., None] & ~back[..., None], out * sh[..., None], out)
+        out = np.where(back[..., None], backside, out)
+        # the curl itself
+        rel = np.clip((X - fy) / R_, 0, 1)
+        in_cyl = (X >= fy) & (X < fy + R_)
+        th_b = math.pi - np.arcsin(rel)
+        xs_cb = fy + R_ * th_b
+        cyl_back = in_cyl & (xs_cb < w)
+        lit = 0.80 + 0.32 * np.sin(th_b - math.pi / 2 + 0.6)  # a bright line along the top of the curl
+        curl_back = (back_col * 0.92 + take(xs_cb) * 0.08) * np.clip(lit, 0.7, 1.12)[..., None]
+        out = np.where(cyl_back[..., None], curl_back, out)
+        th_f = np.arcsin(rel)
+        xs_cf = fy + R_ * th_f
+        cyl_front = in_cyl & ~cyl_back & (xs_cf < w)
+        out = np.where(cyl_front[..., None], take(xs_cf) * (0.62 + 0.38 * np.cos(th_f))[..., None], out)
         frame = b.copy()
-        frame.paste(self.bg.crop((0, cut, W, H)), (0, cut))
-        off = int(round(e * W))
-        frame.alpha_composite(a.crop((off, cut, W, H)), (0, cut))
-        if off > 0:
-            shade = Image.new("RGBA", (40, H - cut), (0, 0, 0, 0))
-            sd = ImageDraw.Draw(shade)
-            for x in range(40):
-                sd.line([(x, 0), (x, H)], fill=(0, 0, 0, int(60 * (x / 40) ** 2)))
-            bx = W - off
-            frame.alpha_composite(b.crop((bx, cut, W, H)), (bx, cut))
-            _comp(frame, shade, bx - 40, cut)
+        frame.paste(Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).convert("RGBA"), (0, cut))
         return frame
 
     def _intro(self, frame, t):
@@ -1236,24 +1568,30 @@ class TextVideo:
                     self._draw_slot(frame, s, t, self.recap_row[j], True)
             self._draw_final(frame, pg, t)
             return frame
+        bx0, by0, bx1, by1 = pg["box"]
+        focus = self._focus(pg, t)
+        if focus:
+            self._draw_focus_band(frame, pg, *focus)
         if not self.MARK_ON_TOP:
             for sp in pg["spans"]:
                 q = self._span_q(sp, t)
                 if q > 0:
                     self._draw_mark(frame, sp["mk"], q)
-        # read-along ink: every spoken word, the current one wiping in left to right
-        bx0, by0, bx1, by1 = pg["box"]
+        # the paragraph: faded text + the ink of every spoken word, the current one wiping in left to right
         mask = Image.new("L", (bx1 - bx0, by1 - by0), 0)
         md = ImageDraw.Draw(mask)
-        any_ink = False
+        active = []
         for pc in pg["pieces"]:
             i = pc["i"]
             if t < self.vs[i]:
                 break
             x0, y0, x1, y1 = pc["box"]
-            q = prog(t, self._wt(i, pc["f0"]), self._wt(i, pc["f1"]))
+            t0, t1 = self._wt(i, pc["f0"]), self._wt(i, pc["f1"])
+            q = prog(t, t0, t1)
             if q <= 0:
                 break
+            if t < t1 + 0.2 and not pc.get("dc"):
+                active.append((pc, prog(t, t0, t1 + 0.2)))
             xr = x0 + (x1 - x0) * q
             if q >= 1:
                 md.rectangle([x0 - bx0, y0 - by0, x1 - bx0, y1 - by0], fill=255)
@@ -1265,9 +1603,15 @@ class TextVideo:
                     xs = xr - edge + s - bx0
                     if xs >= x0 - bx0:
                         md.line([(xs, y0 - by0), (xs, y1 - by0)], fill=int(255 * (1 - s / edge)))
-            any_ink = True
-        if any_ink:
-            frame.paste(pg["ink_rgb"], (bx0, by0), ImageChops.multiply(mask, pg["ink_a"]))
+        text = pg["faded"].copy()
+        ink = Image.new("RGBA", text.size, (0, 0, 0, 0))
+        ink.paste(pg["ink_rgb"], (0, 0), ImageChops.multiply(mask, pg["ink_a"]))
+        text.alpha_composite(ink)
+        for pc, p in active:  # the word being spoken breathes: grows a touch, lifts, settles
+            self._breathe(text, pc["box"], (bx0, by0), p)
+        frame.alpha_composite(text, (bx0, by0))
+        if focus:
+            self._dim(frame, pg, *focus)
         if self.MARK_ON_TOP:
             for sp in pg["spans"]:
                 q = self._span_q(sp, t)
@@ -1277,6 +1621,8 @@ class TextVideo:
             t_land = self.fly0[s["gi"]] + FLY
             if t >= t_land:
                 self._draw_slot(frame, s, t, t_land, False)
+                if t < t_land + 0.8:
+                    self._burst(frame, s, t - t_land)
         for gi in pg["keys"]:
             u = prog(t, self.fly0[gi], self.fly0[gi] + FLY)
             if 0 < u < 1:
@@ -1284,6 +1630,65 @@ class TextVideo:
         if not self.recap and k == len(self.page_words) - 1:
             self._draw_final(frame, pg, t)
         return frame
+
+    def _breathe(self, text, box, origin, p):
+        x0, y0, x1, y1 = (box[0] - origin[0], box[1] - origin[1], box[2] - origin[0], box[3] - origin[1])
+        k = math.sin(math.pi * p)
+        sc = 1 + self.BREATH * k
+        if k < 0.02:
+            return
+        word = text.crop((x0, y0, x1, y1))
+        text.paste((0, 0, 0, 0), (x0, y0, x1, y1))
+        big = word.resize((max(1, int(word.width * sc)), max(1, int(word.height * sc))), Image.BICUBIC)
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2 - 3 * k
+        text.alpha_composite(big, (int(round(cx - big.width / 2)), int(round(cy - big.height / 2))))
+
+    def _focus(self, pg, t):
+        """(y of the focus band, strength 0-1) while the voice reads this page, else None."""
+        lines = pg["lines"]
+        if not lines:
+            return None
+        a = prog(t, lines[0]["t0"] - 0.45, lines[0]["t0"] + 0.05) * (1 - prog(t, lines[-1]["t1"] + 0.25,
+                                                                                lines[-1]["t1"] + 0.8))
+        if a <= 0.01:
+            return None
+        c = 0
+        for j, ln in enumerate(lines):
+            if t >= ln["t0"] - 0.12:
+                c = j
+        y = lines[c]["y"]
+        if c > 0:  # glide from the line before
+            e = ease_io(prog(t, lines[c]["t0"] - 0.2, lines[c]["t0"] + 0.12))
+            y = lines[c - 1]["y"] + (y - lines[c - 1]["y"]) * e
+        return y, a
+
+    def _draw_focus_band(self, frame, pg, y, a):
+        size = pg["size"]
+        key = ("band", size)
+        if key not in self._misc:
+            bh = int(size * 1.34)
+            im = Image.new("RGBA", (self.width + 44, bh), (0, 0, 0, 0))
+            ImageDraw.Draw(im).rounded_rectangle([0, 0, im.width - 1, bh - 1], int(bh * 0.3), fill=self.focus_col)
+            self._misc[key] = im
+        im = self._misc[key]
+        _comp(frame, _fade(im, a), self.x0 - 22, int(round(y - im.height / 2)))
+
+    def _dim(self, frame, pg, y, a):
+        """The lines not being read fade back a little toward the page (the read line stays sharp)."""
+        bx0, by0, bx1, by1 = pg["box"]
+        lh = pg["lh"]
+        key = ("hole", bx1 - bx0, lh)
+        if key not in self._misc:
+            hh = int(lh * 1.5)
+            v = np.linspace(-1, 1, hh)
+            prof = np.clip((1 - np.abs(v)) / 0.42, 0, 1)  # flat in the middle, soft edges
+            self._misc[key] = Image.fromarray((np.repeat(prof[:, None], bx1 - bx0, axis=1) * 255).astype(np.uint8))
+        hole = self._misc[key]
+        m = Image.new("L", (bx1 - bx0, by1 - by0), 0)
+        m.paste(hole, (0, int(round(y - by0 - hole.height / 2))))
+        k = self.DIM * a
+        m = m.point([int(255 * k * (255 - v) / 255) for v in range(256)])
+        frame.paste(pg["clean"], (bx0, by0), m)
 
     def _slot_of(self, pg, gi):
         return next(s for s in pg["slots"] if s["gi"] == gi)
@@ -1351,6 +1756,7 @@ class TextVideo:
 
 # ================================================================== Night studio
 class StudioVideo(TextVideo):
+    SUP = DROPCAP = TAB = False
     BODY = LABEL
     MIN_SIZE = 40               # a sans-serif reads bigger
     W_REG, W_KEY = "Medium", "Bold"
@@ -1368,6 +1774,10 @@ class StudioVideo(TextVideo):
         self.bank_label, self.bank_label_ar = "KEY WORDS", "كلمات مهمة"
         self.bank_col = (142, 166, 255)
         self.panel = dict(bg=(20, 26, 52), border=self.GOLD, text=self.GOLD, label=(142, 166, 255), font=DEFAULT_FONT)
+        self.wave_cols = ((255, 255, 255, 46), "grad")
+        self.wave_grad = (self.BLUE, self.GOLD)
+        self.focus_col = (255, 255, 255, 15)
+        self.page_back = (26, 34, 66)
 
     def _background(self):
         yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
@@ -1403,25 +1813,14 @@ class StudioVideo(TextVideo):
         self.tag_img = _ar_img(self.tag, 36, (142, 166, 255), DEFAULT_FONT) if self.tag else None
         self._drop_tag_if_crowded()
         self.bar_y = self.band_h + 24
-        self.p_top = self.band_h + 84
+        self.wave_y = self.bar_y + 4
+        self.p_top = self.band_h + 90
 
     def _band_layer(self, img):
         self._put_sub_line(img, self.sub_y)
         for im, y in zip(self.title_imgs, self.title_ys):
             im.put(img, self.x0, y)
-        ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        ImageDraw.Draw(ov).rounded_rectangle([self.x0, self.bar_y, self.x1, self.bar_y + 6], 3, fill=(255, 255, 255, 34))
-        img.alpha_composite(ov)
-
-    def _draw_progress(self, frame, p):
-        if p <= 0:
-            return
-        if "grad" not in self._misc:
-            g = np.linspace(0, 1, self.width)[None, :, None]
-            arr = np.array(self.BLUE, np.float32) * (1 - g) + np.array(self.GOLD, np.float32) * g
-            self._misc["grad"] = Image.fromarray(np.repeat(arr, 6, axis=0).astype(np.uint8)).convert("RGBA")
-        w = max(6, int(self.width * p))
-        _comp(frame, self._misc["grad"].crop((0, 0, w, 6)), self.x0, self.bar_y)
+        self._wave_track(img)
 
     def _decor(self, dd, x, yb, w, size):
         pass
@@ -1450,6 +1849,24 @@ class StudioVideo(TextVideo):
         return Image.alpha_composite(glow, glow)
 
     # glass cards, two columns
+    def _burst(self, frame, s, tau):
+        """Gold sparkles bursting from the card."""
+        cx, cy = s["en_x"] + s["en"].w / 2, s["base"] - s["en_size"] * 0.35
+        rng = np.random.default_rng(s["gi"] * 5 + 1)
+        p = _ease_out(tau / 0.8)
+        fade_ = 1 - prog(tau, 0.3, 0.8)
+        for _ in range(11):
+            ang = rng.uniform(0, 2 * math.pi)
+            dist = rng.uniform(50, 150) * p
+            r = int(rng.uniform(9, 17) * (1 - 0.3 * p))
+            key = ("spark", r)
+            if key not in self._misc:
+                self._misc[key] = _sparkle(r, (255, 226, 150))
+            sp = self._misc[key]
+            x = cx + math.cos(ang) * (dist + s["en"].w * 0.3)
+            y = cy + math.sin(ang) * dist * 0.6
+            _comp(frame, _fade(sp, fade_ * rng.uniform(0.6, 1.0)), int(x - r), int(y - r))
+
     def _card_h(self, n, size):
         return max(132, min(184, int(size * 3.0) - (14 if n > 6 else 0)))
 
@@ -1535,12 +1952,12 @@ class StudioVideo(TextVideo):
 
 # ================================================================== Exam passage
 class ExamVideo(TextVideo):
+    SUP = DROPCAP = TAB = False
     BODY = SERIF
     W_REG, W_KEY = "Regular", "Bold"
     LINE = 1.62
     MARK_ON_TOP = True
     FINISH_EXTRA = 0.7
-    TURN_STYLE = "fade"
     RED, BLUE = (200, 38, 28), (31, 79, 163)
     SHEET = (36, 40, 1044, 1700)
 
@@ -1558,6 +1975,10 @@ class ExamVideo(TextVideo):
         self.leader_col = (205, 202, 196)
         self.flash_col = (255, 236, 232)
         self.panel = dict(bg=(255, 254, 250), border=(40, 40, 40), text=self.BLUE, label=self.RED, font=PLEX_AR)
+        self.wave_cols = ((216, 212, 204), (22, 22, 22))
+        self.wave_grad = ((22, 22, 22), (22, 22, 22))
+        self.focus_col = (234, 240, 250, 255)
+        self.page_back = (246, 244, 238)
 
     def show_line_ref(self):
         return True
@@ -1591,18 +2012,15 @@ class ExamVideo(TextVideo):
         self.tag_img = _ar_img(self.tag, 32, (110, 110, 110), PLEX_AR) if self.tag else None
         self._drop_tag_if_crowded()
         self.bar_y = self.band_h
-        self.p_top = self.band_h + 60
+        self.wave_y = self.band_h + 32
+        self.p_top = self.band_h + 78
 
     def _band_layer(self, img):
         self._put_sub_line(img, self.sub_y)
         for im, y in zip(self.title_imgs, self.title_ys):
             im.put(img, self.x0, y)
-        ImageDraw.Draw(img).rectangle([self.x0, self.bar_y, self.x1, self.bar_y + 4], fill=(222, 219, 212, 255))
-
-    def _draw_progress(self, frame, p):
-        if p > 0:
-            ImageDraw.Draw(frame).rectangle([self.x0, self.bar_y, self.x0 + max(4, self.width * p), self.bar_y + 4],
-                                            fill=(22, 22, 22, 255))
+        ImageDraw.Draw(img).rectangle([self.x0, self.bar_y, self.x1, self.bar_y + 3], fill=(30, 30, 30, 255))
+        self._wave_track(img)
 
     def _decor(self, dd, x, yb, w, size):
         pass
@@ -1636,6 +2054,21 @@ class ExamVideo(TextVideo):
         pill = Image.new("RGBA", t.im.size, (0, 0, 0, 0))
         ImageDraw.Draw(pill).rectangle(bx, fill=(255, 254, 250, 255), outline=self.RED + (255,), width=4 * S)
         return Image.alpha_composite(sh, pill)
+
+    def _burst(self, frame, s, tau):
+        """Red ink droplets flicked from the pen."""
+        cx, cy = s["en_x"] + s["en"].w + 10, s["base"] - s["en_size"] * 0.4
+        rng = np.random.default_rng(s["gi"] * 3 + 9)
+        p = _ease_out(tau / 0.55)
+        fade_ = 1 - prog(tau, 0.35, 0.8)
+        d = ImageDraw.Draw(frame)
+        for _ in range(9):
+            ang = rng.uniform(-1.2, 1.2)
+            dist = rng.uniform(26, 90) * p
+            r = rng.uniform(2.5, 6.5)
+            x, y = cx + math.cos(ang) * dist, cy + math.sin(ang) * dist * 0.8
+            col = _mix(self.RED, (255, 254, 250), 1 - fade_)
+            d.ellipse([x - r * 1.25, y - r, x + r * 1.25, y + r], fill=col + (255,))
 
     def _draw_check(self, frame, s, t):
         c = self._check_at(s["gi"])
@@ -1691,6 +2124,7 @@ NOTE_ROT = [-3.0, 2.2, -1.5, 2.6, -2.2, 1.6, -2.8, 2.0, -1.2, 2.4]
 
 
 class NotebookVideo(TextVideo):
+    SUP = DROPCAP = TAB = False
     BODY = HAND
     MIN_SIZE = 52               # handwriting reads smaller than print
     W_REG, W_KEY = "Regular", "Regular"
@@ -1709,6 +2143,10 @@ class NotebookVideo(TextVideo):
         self.bank_label, self.bank_label_ar = "My new words", "كلماتي الجديدة"
         self.bank_col = self.RED
         self.panel = dict(bg=(255, 246, 196), border=(226, 200, 96), text=self.RED, label=self.BLUE, font=RUQAA)
+        self.wave_cols = ((202, 214, 230), self.BLUE)
+        self.wave_grad = (self.BLUE, self.BLUE)
+        self.focus_col = (255, 244, 160, 120)
+        self.page_back = (243, 240, 229)
 
     def _background(self):
         img = _noise_bg(_vgrad((249, 247, 240), (244, 241, 232)), 1.8, 7)
@@ -1735,7 +2173,8 @@ class NotebookVideo(TextVideo):
         self.tag_img = _ar_img(self.tag, 40, (123, 138, 153), RUQAA) if self.tag else None
         self._drop_tag_if_crowded()
         self.bar_y = self.band_h + 18
-        self.p_top = self.band_h + 64
+        self.wave_y = self.bar_y + 6
+        self.p_top = self.band_h + 74
 
     def _band_layer(self, img):
         self._put_sub_line(img, self.sub_y)
@@ -1747,12 +2186,7 @@ class NotebookVideo(TextVideo):
             w = min(self.width, self.title_imgs[-1].w + 20)
             pts = [(self.x0 + x, y + 4 * math.sin(x / 38)) for x in range(0, int(w), 6)]
             d.line(pts, fill=self.RED + (255,), width=4, joint="curve")
-        d.line([(self.x0, self.bar_y), (self.x1, self.bar_y)], fill=(222, 228, 236, 255), width=5)
-
-    def _draw_progress(self, frame, p):
-        if p > 0:
-            ImageDraw.Draw(frame).line([(self.x0, self.bar_y), (self.x0 + max(5, self.width * p), self.bar_y)],
-                                       fill=self.BLUE + (255,), width=5)
+        self._wave_track(img)
 
     def _decor(self, dd, x, yb, w, size):
         pass
@@ -1763,12 +2197,12 @@ class NotebookVideo(TextVideo):
         if not baselines:
             return
         y = baselines[0] + size * 0.16
-        while y - lh > self.bar_y + 30:
+        while y - lh > self.wave_y + self.WAVE_H + 14:
             y -= lh
         while y < H:
             d.line([(0, y), (W, y)], fill=(198, 216, 236, 255), width=2)
             y += lh
-        d.line([(62, self.bar_y + 10), (62, H)], fill=(240, 150, 150, 255), width=3)
+        d.line([(62, self.wave_y + self.WAVE_H + 4), (62, H)], fill=(240, 150, 150, 255), width=3)
 
     def _make_mark(self, sp):
         """A hand-drawn red ring around the words (drawn as it is read)."""
@@ -1796,6 +2230,35 @@ class NotebookVideo(TextVideo):
         return sh.filter(ImageFilter.GaussianBlur(6 * S))
 
     # sticky notes, three columns
+    def _burst(self, frame, s, tau):
+        """Pen doodles round the note: little strokes shooting out, and two stars."""
+        x, y, nw, nh = s["note"]
+        cx, cy = x + nw / 2, y + nh / 2
+        p = _ease_out(tau / 0.45)
+        fade_ = 1 - prog(tau, 0.45, 0.8)
+        if fade_ <= 0:
+            return
+        col = self.RED + (int(255 * fade_),)
+        ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(ov)
+        rx, ry = nw / 2 + 18, nh / 2 + 16
+        for k in range(8):  # strokes from the note's edge outward
+            a = 2 * math.pi * k / 8 + 0.3
+            ex, ey = math.cos(a), math.sin(a)
+            r0 = 1.0 + 0.08 * p
+            r1 = r0 + 0.32 * p
+            d.line([(cx + ex * rx * r0, cy + ey * ry * r0), (cx + ex * rx * r1, cy + ey * ry * r1)], fill=col,
+                   width=4)
+        for k, (sx, sy) in enumerate(((x - 14, y + 6), (x + nw + 12, y + nh - 10))):  # two outline stars
+            r = 14 * p
+            pts = []
+            for j in range(11):
+                a = -math.pi / 2 + j * math.pi / 5
+                rr = r if j % 2 == 0 else r * 0.45
+                pts.append((sx + rr * math.cos(a), sy + rr * math.sin(a)))
+            d.line(pts, fill=col, width=3, joint="curve")
+        frame.alpha_composite(ov)
+
     def _note_h(self, n, size):
         return max(128, min(186, int(size * 2.9)))
 
@@ -1861,14 +2324,20 @@ class NotebookVideo(TextVideo):
         return im
 
     def _draw_slot(self, frame, s, t, t_land, recap):
+        """The sticky note slaps on: pops in, squashes against the page, springs back."""
         x, y, nw, nh = s["note"]
         q = ease_io(prog(t, t_land + 0.12, t_land + 0.12 + REVEAL))
         c = self._check_at(s["gi"])
         im = self._note(s, q, c is not None and t >= c + 0.1)
-        sc = ease_out_back(prog(t, t_land - 0.08, t_land + 0.3))
-        if sc < 0.995:
-            im = im.resize((max(1, int(im.width * sc)), max(1, int(im.height * sc))), Image.BILINEAR)
-        _comp(frame, _fade(im, min(1.0, prog(t, t_land - 0.08, t_land + 0.08))),
+        if recap:
+            sx = sy = ease_out_back(prog(t, t_land - 0.08, t_land + 0.3))
+        else:
+            sc = _ease_out(prog(t, t_land - 0.1, t_land + 0.05)) * 0.12 + 0.88
+            d = _spring(t - t_land) if t - t_land < 0.9 else 0.0
+            sx, sy = sc * (1 + 0.10 * d), sc * (1 - 0.09 * d)
+        if abs(sx - 1) > 0.004 or abs(sy - 1) > 0.004:
+            im = im.resize((max(1, int(im.width * sx)), max(1, int(im.height * sy))), Image.BILINEAR)
+        _comp(frame, _fade(im, min(1.0, prog(t, t_land - 0.1, t_land + 0.05))),
               int(x + nw / 2 - im.width / 2), int(y + nh / 2 - im.height / 2))
 
     def _mark_sound(self, mx, t):

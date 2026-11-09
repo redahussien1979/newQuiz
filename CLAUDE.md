@@ -55,7 +55,12 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   override look hooks: `_style`, `_background`, `_header`, `_band_layer`, `_make_mark`/`_draw_mark`, `_bank_rows`/
   `_draw_slot`, `_fly_back`, `_draw_final`); `make_video(project)` picks the class. Lines: `_break` = DP over word
   pieces (pyphen hyphenation, optional) for even justified lines, `_justify` adds a little letter-spacing;
-  `_page_size` trades size against word-gap width. Optional `level` badge and `translation` card after the reading.
+  `_page_size` trades size against word-gap width. Optional `level` badge and `translation` card after the reading
+  (Arabic justified with kashida: `_ar_justified`). A page = `base` (still parts) + `faded` / `ink` paragraph layers;
+  per frame: focus band + dim of the other lines (`_focus`/`_dim`), the spoken word breathes (`_breathe`), flight
+  trail, landing spring (`_spring`) + per-design `_burst`, camera push-in (`_camera`), waveform progress
+  (`_build_wave`, real loudness or from the timings), page curl (`_turn`, numpy cylinder warp). Textbook only:
+  `DROPCAP`, `SUP` (footnote numbers = bank numbers), textured multiply highlighter, page edges + `TAB`.
   Font `fonts/library/Literata`. `engine/text_batch.py` — workbook: every tab = one video (title / subtitle columns,
   recording named like the tab); template `projects/texts_template.xlsx`
 - `engine/know_country/` — 🌍 Know a Country tab (not a template class: its own renderer). `video.py` = one Excel
