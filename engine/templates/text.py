@@ -287,7 +287,7 @@ def _ar_fit(txt, size, col, font, max_w, min_size=24):
 
 
 def _ar_wrap(txt, size, col, font, max_w):
-    """Arabic paragraph -> line images (right-to-left, greedy by width)."""
+    """Arabic paragraph -> line texts (greedy by width)."""
     lines, cur = [], ""
     for w in txt.split():
         test = (cur + " " + w).strip()
@@ -298,7 +298,82 @@ def _ar_wrap(txt, size, col, font, max_w):
             cur = test
     if cur:
         lines.append(cur)
-    return [_ar_img(ln, size, col, font) for ln in lines]
+    return lines
+
+
+# Arabic justification with kashida (tatweel ـ), as Arabic books do: a join is drawn longer instead of the spaces
+# growing. A kashida goes after a letter that connects to the next one (never after ا د ذ ر ز و ة ى ء, never inside
+# لا), after that letter's diacritics, and preferably at the word's last join.
+TATWEEL = "\u0640"
+_AR_MARKS = set(chr(c) for c in list(range(0x064B, 0x0660)) + [0x0670])
+_JOIN_NEXT = set("بتثجحخسشصضطظعغفقكلمنهيئپچگکی")
+_AR_LETTER = re.compile("[\u0621-\u064A\u0671-\u06D3]")
+
+
+def _kashida_points(word):
+    """Where a tatweel may go in a word (character positions), the last join first."""
+    pts = []
+    for k, ch in enumerate(word):
+        if ch not in _JOIN_NEXT:
+            continue
+        j = k + 1
+        while j < len(word) and word[j] in _AR_MARKS:
+            j += 1
+        if j < len(word) and _AR_LETTER.match(word[j]) and word[j] != "ء" and not (ch == "ل" and word[j] in "اأإآ"):
+            pts.append(j)
+    return pts[::-1]
+
+
+def _has_tatweel(font):
+    from ..core import _font_cmap
+    cmap = _font_cmap(font)
+    return cmap is None or 0x0640 in cmap
+
+
+def _ar_justified(lines, size, col, font, width):
+    """Line images exactly `width` wide (the last line: natural width), words placed right to left. Slack goes into
+    kashidas first (at most 2 per word, the longest words first, one round at a time so they spread over the line),
+    the rest evenly into the spaces."""
+    out = []
+    space = max(4, _ar_img("ب ب", size, col, font).width - 2 * _ar_img("ب", size, col, font).width + 8)
+    tw = max(1, _ar_img("بـب", size, col, font).width - _ar_img("بب", size, col, font).width)
+    kashida = _has_tatweel(font)
+    for n, line in enumerate(lines):
+        words = line.split()
+        if n == len(lines) - 1 or len(words) < 2:
+            out.append(_ar_img(line, size, col, font))
+            continue
+        imgs = [_ar_img(w, size, col, font) for w in words]
+        slack = width - sum(im.width for im in imgs) + 8 * len(imgs) - space * (len(words) - 1)
+        if kashida and slack > 0:
+            pts = [_kashida_points(w) for w in words]
+            count = [0] * len(words)
+            room = slack - space * 0.5 * (len(words) - 1)  # the spaces may grow a little too
+            order = sorted(range(len(words)), key=lambda k: -len(words[k]))
+            changed = True
+            while room >= tw and changed:
+                changed = False
+                for k in order:
+                    if pts[k] and count[k] < 2 and room >= tw:
+                        count[k] += 1
+                        room -= tw
+                        changed = True
+            for k, c in enumerate(count):
+                if c:
+                    j = pts[k][0]
+                    imgs[k] = _ar_img(words[k][:j] + TATWEEL * c + words[k][j:], size, col, font)
+        # _ar_img keeps 4 px of air on each side: overlap it so the gaps are true word spaces
+        inner = [im.width - 8 for im in imgs]
+        gap = (width - sum(inner)) / (len(words) - 1)
+        h = max(im.height for im in imgs)
+        line_im = Image.new("RGBA", (width + 8, h), (0, 0, 0, 0))
+        x = float(width + 4)
+        for im, w in zip(imgs, inner):  # right to left
+            x -= w
+            _comp(line_im, im, int(round(x - 4)), (h - im.height) // 2)
+            x -= gap
+        out.append(line_im)
+    return out
 
 
 def _marker(w, h, col, seed):
@@ -1047,7 +1122,8 @@ class TextVideo:
         x0, x1 = self.x0 - 16, self.x1 + 16
         size = 52
         while True:
-            lines = _ar_wrap(self.translation, size, p["text"], p["font"], x1 - x0 - 72)
+            lines = _ar_justified(_ar_wrap(self.translation, size, p["text"], p["font"], x1 - x0 - 72), size,
+                                  p["text"], p["font"], x1 - x0 - 72)
             pitch = int(size * 1.75)
             if 160 + (len(lines) - 1) * pitch + lines[-1].height <= bottom - top or size <= 30:
                 break
