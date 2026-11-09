@@ -629,10 +629,12 @@ def logo_badge(path, size, shape="circle"):
     return out
 
 
-def make_video(project):
-    """The video object for the project's design (`text.style`)."""
+def make_video(project, layout_only=False):
+    """The video object for the project's design (`text.style`). layout_only: stop after the page layout (fast:
+    how many pages and at what size, nothing drawn)."""
     style = (project.get("text", {}) or {}).get("style") or "textbook"
-    return {"studio": StudioVideo, "exam": ExamVideo, "notebook": NotebookVideo}.get(style, TextVideo)(project)
+    cls = {"studio": StudioVideo, "exam": ExamVideo, "notebook": NotebookVideo}.get(style, TextVideo)
+    return cls(project, layout_only=layout_only)
 
 
 # ================================================================== the reading engine (+ the Textbook design)
@@ -653,7 +655,7 @@ class TextVideo:
     MIN_SIZE = 44               # smallest comfortable reading size on a phone (longer texts get more pages)
     GAP_MAX = 2.0               # widest justified word gap (in spaces) before a page takes a smaller size
 
-    def __init__(self, project):
+    def __init__(self, project, layout_only=False):
         s = project.get("settings", {})
         d = project.get("text", {})
         e = project.get("ending", {})
@@ -691,6 +693,8 @@ class TextVideo:
         self.width = self.x1 - self.x0
         self._header()
         self._paginate()
+        if layout_only:
+            return
         self._timeline()
         self._build_wave()
         self.bg = self._background()

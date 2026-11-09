@@ -69,6 +69,13 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `logo_end` = logo over the ending card. Page colour `brand` = Logolept red. Fonts: each design has `TITLE` /
   `BODY` / `ar_font`; the font picked in 🎨 Style & sound (`settings.font_file`) replaces them (`_apply_font`; Arabic
   only if the font has Arabic letters). The text starts under the waveform (`page_off` small; spare room at the bottom).
+  ✍️ Paragraphs sub-tab (`app.para_tab` / `wire_paragraphs`, logic in `engine/paragraphs.py`): pasted paragraphs
+  (`parse`), click-to-highlight on a gr.HighlightedText (`toggle`, select events with queue=False), choices in the
+  project's `text.para_store` JSON (marks as phrase + occurrence, meanings, translations, keyed by title / first
+  words), `suggest` (rarity from `data/english_freq.txt`, CC BY-SA from wordfreq), aliases (`spoken`), meanings Excel
+  round trip, `meter` (uses `make_video(..., layout_only=True)`), `project_for` -> normal text project.
+  `engine/elevenlabs.py`: settings in DATA_DIR/elevenlabs.json (key never in projects), `/with-timestamps` TTS (urllib),
+  cache DATA_DIR/tts/<hash>.mp3+.json, `word_times` maps character times to screen words.
   Font `fonts/library/Literata`. `engine/text_batch.py` — workbook: every tab = one video (title / subtitle columns,
   recording named like the tab); template `projects/texts_template.xlsx`
 - `engine/know_country/` — 🌍 Know a Country tab (not a template class: its own renderer). `video.py` = one Excel
