@@ -30,6 +30,7 @@ from engine.templates.vocab import LIST_STYLES as VC_LIST_STYLES
 from engine.templates.vocab import TITLE_STYLES as VC_TITLE_STYLES
 from engine.templates.text import BAND_CHOICES as TX_BANDS, MARKER_CHOICES as TX_MARKERS, words_report
 from engine.templates.text import LEVEL_CHOICES as TX_LEVELS, STYLE_CHOICES as TX_STYLES
+from engine.templates.text import DEFAULT_LOGO as TX_LOGO, LOGO_SHAPES as TX_LOGO_SHAPES
 from engine import batch
 from engine import countries
 from engine import tl_batch
@@ -68,9 +69,9 @@ VC_KEYS = ["group", "group_name", "title", "subtitle", "lesson", "lesson_n", "it
            "title_style", "hook", "pace", "guess_seconds", "timer", "timer_fx", "recap", "audio", "audio_gain",
            "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color"]
 TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "lead", "band", "marker", "style",
-           "level", "translation"]
+           "level", "translation", "logo", "brand_name", "logo_shape", "logo_intro", "logo_end", "ending_on"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS}
-MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio"}
+MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo"}
 MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
 DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": "", "maps": False, "guess": False,
             "guess_q": "", "intro": "hook", "map_style": "auto", "polish": False, "finish": False,
@@ -79,7 +80,8 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "pace": "normal", "guess_seconds": 5, "timer": "Bar", "recap": True, "audio_gain": 1.0,
             "list_style": "Editorial", "list_highlight": "cream", "chalk_board": "green", "chalk_mark": "circle",
             "chalk_color": "pink", "tag": "", "lead": 1.0, "band": "teal", "marker": "yellow",
-            "style": "textbook", "level": "", "translation": ""}  # for projects saved before these options existed
+            "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
+            "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -171,6 +173,8 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 - Four designs (⏱️ Design): Textbook page, Night studio, Exam passage (line numbers, red pen, LEARNED stamp), Notebook
   (handwriting, sticky notes). Lines are justified like a book (long words are hyphenated when it helps).
 - Optional per tab: `level` (A1–C2 badge) and `paragraph translation` (Arabic translation shown after the reading).
+- 🏷️ Your logo (⏱️ Design) sits at the top of every page with your name beside it; switch on the logo opening and the
+  logo on the ending card if you want them. "Logolept red" is the page colour that matches the logo.
 - The text is sized to fill the Shorts safe area; long paragraphs turn into pages (the voice waits for the page
   turn) and end with a Word Bank recap. Each render also saves a cover picture.
 
@@ -213,6 +217,8 @@ def project_to_values(p, tpl):
         for k in KEYS[tpl]:
             v = d.get(k, DEFAULTS.get(k))
             if k in MEDIA_FIELDS:
+                if k == "logo" and v and not os.path.isfile(v) and os.path.basename(v) == os.path.basename(TX_LOGO):
+                    v = TX_LOGO  # the logo that ships with the app (the app folder may have moved)
                 v = v if v and os.path.isfile(v) else None
             elif k in MEDIA_LISTS:
                 v = [f for f in (v or []) if f and os.path.isfile(f)] or None
@@ -452,6 +458,8 @@ def make_actions(tpl):
             p["quiz"]["answer_image"] = _keep_media(p["quiz"].get("answer_image"))
         elif tpl == "text":
             p["text"]["reading_audio"] = _keep_media(p["text"].get("reading_audio"))
+            logo = p["text"].get("logo") or ""
+            p["text"]["logo"] = logo if os.path.abspath(logo) == os.path.abspath(TX_LOGO) else _keep_media(logo)
         stamp = _stamp()
         if tpl == "vocab":
             p["vocab"]["audio"] = _keep_media_list(p["vocab"].get("audio"), os.path.join(MEDIA_DIR, f"words_audio_{stamp}"))
@@ -1721,10 +1729,27 @@ def build_ui():
                                                            label="Textbook: highlighter colour")
                                 t_lead = gr.Slider(0.3, 3, value=1.0, step=0.1, label="Reading starts at (seconds)",
                                                    info="Time for the page to appear before the voice starts")
+                                gr.Markdown("**🏷️ Your logo** — at the top of every page, in every design "
+                                            "(remove the picture for no logo)")
+                                with gr.Row():
+                                    t_logo = gr.Image(value=TX_LOGO, type="filepath", label="Logo (square PNG)",
+                                                      height=170, scale=1)
+                                    with gr.Column(scale=2):
+                                        t_bname = gr.Textbox(value="LOGOLEPT", label="Name beside the logo",
+                                                             info="Empty = the logo alone")
+                                        t_lshape = gr.Radio(TX_LOGO_SHAPES, value="circle", label="Logo shape",
+                                                            info="Circle = cropped round with a white rim; As it "
+                                                                 "is = your picture's own shape")
+                                gr.Markdown("**🎬 Opening and ending** — switch each one on or off")
+                                with gr.Row():
+                                    t_lintro = gr.Checkbox(value=False, label="Logo opening (0.8 s before the page)")
+                                    t_endon = gr.Checkbox(value=True, label="Ending card (texts in 🔚 Ending)")
+                                    t_lend = gr.Checkbox(value=True, label="Logo on the ending card")
                         tx_st = style_tab()
                         tx_end = ending_tab()
                     tx_fields = shared_fields(tx_st, tx_end) + [t_title, t_sub, t_tag, t_words, t_audio, t_gain,
-                                                                 t_lead, t_band, t_marker, t_style, t_level, t_trans]
+                                                                 t_lead, t_band, t_marker, t_style, t_level, t_trans,
+                                                                 t_logo, t_bname, t_lshape, t_lintro, t_lend, t_endon]
                 tx_pv = preview_panel("text")
             wire(tx_proj, tx_pv, tx_fields)
             wire_tx_batch(txl, tx_pv, tx_fields)

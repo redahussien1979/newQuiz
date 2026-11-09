@@ -32,7 +32,12 @@
     "audio_gain": 1.0,
     "lead": 1.0,
     "style": "textbook",
-    "band": "teal",
+    "brand_name": "LOGOLEPT",
+    "logo_shape": "circle",
+    "logo_intro": false,
+    "logo_end": true,
+    "ending_on": true,
+    "band": "brand",
     "marker": "yellow"
   }
 }

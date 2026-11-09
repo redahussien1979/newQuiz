@@ -61,6 +61,12 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   trail, landing spring (`_spring`) + per-design `_burst`, camera push-in (`_camera`), waveform progress
   (`_build_wave`, real loudness or from the timings), page curl (`_turn`, numpy cylinder warp). Textbook only:
   `DROPCAP`, `SUP` (footnote numbers = bank numbers), textured multiply highlighter, page edges + `TAB`.
+  Brand: `text.logo` (default `projects/brand/logolept_logo.png`), `brand_name`, `logo_shape` circle/plain →
+  `_apply_brand` turns the small line into the brand row (`_Brand`: logo + name + small line + badge) on every page of
+  every design and moves the page down; `logo_intro` = `_sting` (STING s, the whole timeline starts later via `lead`),
+  `logo_end` = logo over the ending card. Page colour `brand` = Logolept red. Fonts: each design has `TITLE` /
+  `BODY` / `ar_font`; the font picked in 🎨 Style & sound (`settings.font_file`) replaces them (`_apply_font`; Arabic
+  only if the font has Arabic letters). The text starts under the waveform (`page_off` small; spare room at the bottom).
   Font `fonts/library/Literata`. `engine/text_batch.py` — workbook: every tab = one video (title / subtitle columns,
   recording named like the tab); template `projects/texts_template.xlsx`
 - `engine/know_country/` — 🌍 Know a Country tab (not a template class: its own renderer). `video.py` = one Excel
