@@ -1,0 +1,13 @@
+english_freq.txt — the most frequent English words, most frequent first (one per line).
+
+Exported from the open word-frequency data of wordfreq 3.1.1 by Robyn Speer
+(https://github.com/rspeer/wordfreq, https://doi.org/10.5281/zenodo.7199437).
+This list is redistributed under the Creative Commons Attribution-ShareAlike 4.0 license
+(https://creativecommons.org/licenses/by-sa/4.0/), as the wordfreq data is.
+
+wordfreq is built on: Google Books Ngrams (http://books.google.com/ngrams); SUBTLEX-US / SUBTLEX-UK
+word lists by Marc Brysbaert et al. (freely available data, http://crr.ugent.be/programs-data/subtitle-frequencies);
+OPUS OpenSubtitles 2018 (http://opus.nlpl.eu/OpenSubtitles.php, data from http://www.opensubtitles.org/);
+the Leeds Internet Corpus (http://corpus.leeds.ac.uk/list.html); Wikipedia; ParaCrawl (https://paracrawl.eu).
+
+Used by the app to suggest the less common (harder) words of a paragraph.

@@ -7,6 +7,7 @@ import datetime as dt
 import inspect
 import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -36,6 +37,8 @@ from engine import countries
 from engine import tl_batch
 from engine import userdata
 from engine import fonts as fontlib
+from engine import elevenlabs as el
+from engine import paragraphs as para
 from engine import text_batch
 from engine import vocab_batch
 from engine.word_list import BOARD_CHOICES, CHALK_COLOR_CHOICES, HIGHLIGHTS, MARKS
@@ -69,7 +72,8 @@ VC_KEYS = ["group", "group_name", "title", "subtitle", "lesson", "lesson_n", "it
            "title_style", "hook", "pace", "guess_seconds", "timer", "timer_fx", "recap", "audio", "audio_gain",
            "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color"]
 TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "lead", "band", "marker", "style",
-           "level", "translation", "logo", "brand_name", "logo_shape", "logo_intro", "logo_end", "ending_on"]
+           "level", "translation", "logo", "brand_name", "logo_shape", "logo_intro", "logo_end", "ending_on",
+           "para_text", "para_store", "para_alias"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo"}
 MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
@@ -81,7 +85,8 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "list_style": "Editorial", "list_highlight": "cream", "chalk_board": "green", "chalk_mark": "circle",
             "chalk_color": "pink", "tag": "", "lead": 1.0, "band": "teal", "marker": "yellow",
             "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
-            "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True}  # for projects saved before these options existed
+            "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
+            "para_text": "", "para_store": "{}", "para_alias": ""}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -165,6 +170,11 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   In Excel: Type = list, one word per row with its Audio; "Words per list page" sets how many go on one page.
 
 ### English Texts tips
+- **✍️ Paragraphs** (the easiest way): paste paragraphs (an empty line between them, optional `# Title` line), click
+  words to highlight them (click the next word to make a phrase, click again to remove; ✨ Suggest marks the less
+  common words), ⬇️ download the words sheet, write the Arabic, ⬆️ upload it, then 🎬 Render all. ElevenLabs reads every
+  paragraph (your API key and voice are saved on this computer only); each voice is made once and reused, so changing
+  highlights, meanings or the design costs no credits. 🗣️ Say it differently: `COP29 = cop twenty-nine`.
 - Every tab of the workbook is one paragraph = one video. One spoken word per row: **B** word, **C** start, **D** end
   (the word timings from ElevenLabs), **E** highlighted words, **F** Arabic translation, and a **title** column.
 - Upload the recordings (ElevenLabs names are fine: each goes to the tab whose reading length it matches; a file
@@ -1282,6 +1292,275 @@ def wire_tx_batch(xl, pv, fields):
                 **_progress_on(dep, pv["vid"]))
 
 
+# ------------------------------------------------------------------ English Texts: ✍️ Paragraphs (ElevenLabs inside)
+PARA_HELP = """**Paste paragraphs → click the words to highlight → ElevenLabs reads them → render.** One paragraph =
+one video; leave an empty line between paragraphs; an optional first line `# Title`. Design, logo, music and ending
+come from the other tabs."""
+PARA_PASTE_HELP = ("An empty line between paragraphs. Start a paragraph with a line `# Its title` (else the title from "
+                   "📝 Text is used).")
+
+
+def _store(js):
+    try:
+        st = json.loads(js or "{}")
+        return st if isinstance(st, dict) else {}
+    except ValueError:
+        return {}
+
+
+def para_tab():
+    s = el.load_settings(DATA_DIR)
+    gr.Markdown(PARA_HELP)
+    with gr.Accordion("🔑 ElevenLabs voice — saved on this computer only, never in projects or videos",
+                      open=not s["api_key"]):
+        key = gr.Textbox(value=s["api_key"], type="password", label="ElevenLabs API key",
+                         info="elevenlabs.io → your profile → API keys")
+        with gr.Row(equal_height=True):
+            voice = gr.Dropdown([(s["voice_name"] or s["voice_id"], s["voice_id"])], value=s["voice_id"],
+                                allow_custom_value=True, label="Voice", scale=3,
+                                info="🔄 lists every voice in your account — or paste a voice ID")
+            load_v = gr.Button("🔄 Load my voices", scale=1, min_width=150)
+        with gr.Row():
+            model = gr.Dropdown(el.MODELS, value=s["model"], label="Model")
+            speed = gr.Slider(0.7, 1.2, value=s["speed"], step=0.05, label="Speed")
+        with gr.Row():
+            stab = gr.Slider(0, 1, value=s["stability"], step=0.05, label="Stability",
+                             info="Lower = more expressive, higher = steadier")
+            sim = gr.Slider(0, 1, value=s["similarity"], step=0.05, label="Similarity to the voice")
+        with gr.Row(equal_height=True):
+            save_k = gr.Button("💾 Save voice settings", min_width=150)
+            listen = gr.Button("▶ Listen (first sentence)", min_width=150)
+            sample = gr.Audio(label="Sample", interactive=False, autoplay=True, scale=2)
+    text = gr.Textbox(lines=10, max_lines=40, label="Paragraphs", info=PARA_PASTE_HELP,
+                      placeholder="# The Climate Summit\nDelegates from around the world gather in Antalya …")
+    meter = gr.Markdown()
+    with gr.Row(equal_height=True):
+        pick = gr.Dropdown([], label="Paragraph to highlight", scale=3)
+        join = gr.Checkbox(value=True, label="Click the next word to make a phrase", scale=2)
+    ht = gr.HighlightedText([], label="👆 Click words to highlight them (click again to remove)",
+                            combine_adjacent=False, show_legend=False, interactive=False)
+    with gr.Row(equal_height=True):
+        sug = gr.Button("✨ Suggest hard words", min_width=150)
+        n_sug = gr.Slider(1, 10, value=5, step=1, label="How many", scale=2)
+        clr = gr.Button("🧹 Clear highlights", min_width=140)
+    words = gr.Markdown()
+    alias = gr.Textbox(lines=2, max_lines=10, label="🗣️ Say it differently (optional)",
+                       placeholder="COP29 = cop twenty-nine\nDr. = doctor",
+                       info="The screen shows the left side, the voice reads the right side")
+    gr.Markdown("**🌐 Arabic meanings** — download the sheet, write the Arabic, upload it back")
+    with gr.Row(equal_height=True):
+        mk_xl = gr.Button("⬇️ Make the words sheet (Excel)", min_width=200)
+        up_xl = gr.UploadButton("⬆️ Upload the filled sheet", file_types=[".xlsx"], min_width=200)
+    xl_file = gr.File(label="Words sheet — fill column D (and the 'paragraphs' tab for full translations)",
+                      visible=False, height=90)
+    with gr.Row(equal_height=True):
+        gen = gr.Button("🎙️ Generate voices", min_width=160)
+        load = gr.Button("📥 Load this paragraph into the editor", min_width=200)
+        go = gr.Button("🎬 Render all videos", variant="primary", min_width=180)
+    info = gr.Markdown()
+    zipb = gr.DownloadButton("📦 Download all (.zip)", visible=False, variant="primary")
+    files = gr.File(label="Rendered videos (a cover picture is saved next to each)", file_count="multiple",
+                    visible=False, height=260)
+    store = gr.Textbox(value="{}", visible=False)
+    return dict(key=key, voice=voice, load_v=load_v, model=model, speed=speed, stab=stab, sim=sim, save_k=save_k,
+                listen=listen, sample=sample, text=text, meter=meter, pick=pick, join=join, ht=ht, sug=sug,
+                n_sug=n_sug, clr=clr, words=words, alias=alias, mk_xl=mk_xl, up_xl=up_xl, xl_file=xl_file, gen=gen,
+                load=load, go=go, info=info, zip=zipb, files=files, store=store)
+
+
+def wire_paragraphs(ui, pv, fields):
+    voice_in = [ui["key"], ui["voice"], ui["model"], ui["speed"], ui["stab"], ui["sim"]]
+
+    def settings(key, voice, model, speed, stab, sim):
+        s = el.load_settings(DATA_DIR)
+        s.update(api_key=(key or "").strip(), voice_id=(voice or "").strip(), model=model or s["model"],
+                 speed=float(speed), stability=float(stab), similarity=float(sim))
+        return s
+
+    def current(text, pick):
+        paras = para.parse(text)
+        k = int(pick) if pick is not None and str(pick).isdigit() and int(pick) < len(paras) else 0
+        return paras, k
+
+    def views(text, st_js, pick):
+        paras, k = current(text, pick)
+        st = _store(st_js)
+        if not paras:
+            return [], "_Paste a paragraph above._"
+        return para.view(paras[k], st), para.words_md(paras[k], st)
+
+    def on_text(text, pick):
+        paras, k = current(text, pick)
+        choices = [(para.label(i, p), str(i)) for i, p in enumerate(paras)]
+        return gr.update(choices=choices, value=str(k) if paras else None)
+
+    def show_meter(text, st_js, alias, *rest):
+        vi, vals = rest[:6], rest[6:]
+        try:
+            return para.meter(para.parse(text), _store(st_js), values_to_project("text", vals),
+                              para.parse_aliases(alias), DATA_DIR, settings(*vi))
+        except Exception as e:
+            return f"⚠️ {_msg(e)}"
+
+    def click(text, st_js, pick, join, evt: gr.SelectData):
+        paras, k = current(text, pick)
+        if not paras:
+            return gr.update(), gr.update(), gr.update()
+        st = para.toggle(paras[k], _store(st_js), int(evt.index), bool(join))
+        return json.dumps(st, ensure_ascii=False), para.view(paras[k], st), para.words_md(paras[k], st)
+
+    def do_suggest(text, st_js, pick, n):
+        paras, k = current(text, pick)
+        if not paras:
+            raise gr.Error("Paste a paragraph first.")
+        st = para.suggest(paras[k], _store(st_js), int(n))
+        return json.dumps(st, ensure_ascii=False), para.view(paras[k], st), para.words_md(paras[k], st)
+
+    def do_clear(text, st_js, pick):
+        paras, k = current(text, pick)
+        if not paras:
+            return gr.update(), gr.update(), gr.update()
+        st = para.clear(paras[k], _store(st_js))
+        return json.dumps(st, ensure_ascii=False), para.view(paras[k], st), para.words_md(paras[k], st)
+
+    def make_sheet(text, st_js):
+        paras = para.parse(text)
+        if not paras:
+            raise gr.Error("Paste paragraphs first.")
+        path = os.path.join(OUT_DIR, f"words_for_translation_{_stamp()}.xlsx")
+        para.export_xlsx(paras, _store(st_js), path)
+        return gr.update(value=path, visible=True)
+
+    def read_sheet(file, text, st_js, pick):
+        path = file if isinstance(file, str) else getattr(file, "name", None)
+        paras, k = current(text, pick)
+        try:
+            st, msg = para.import_xlsx(path, paras, _store(st_js))
+        except Exception as e:
+            raise gr.Error(f"Could not read the sheet: {_msg(e)}")
+        gr.Info(msg, duration=6)
+        return json.dumps(st, ensure_ascii=False), para.words_md(paras[k], st) if paras else gr.update()
+
+    def save_voice(*vi):
+        s = settings(*vi)
+        el.save_settings(DATA_DIR, **s)
+        gr.Info("Voice settings saved on this computer.", duration=4)
+
+    def load_voices(key, voice):
+        try:
+            vs = el.list_voices((key or "").strip())
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        name = next((n for n, i in vs if i == voice), None)
+        if name:
+            el.save_settings(DATA_DIR, voice_name=name.split(" — ")[0])
+        gr.Info(f"{len(vs)} voices found in your account.", duration=4)
+        return gr.update(choices=vs, value=voice if any(i == voice for _, i in vs) else (vs[0][1] if vs else voice))
+
+    def do_listen(text, alias, *vi):
+        paras = para.parse(text)
+        first = " ".join(paras[0]["words"]) if paras else "Hello! This is how your videos will sound."
+        m = re.search(r"^.*?[.!?](\s|$)", first)
+        p = dict(title="", words=(m.group(0) if m else first).split()[:40], key="sample")
+        s = settings(*vi)
+        try:
+            mp3, _ = para.voice_for(p, para.parse_aliases(alias), DATA_DIR, s)
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        el.save_settings(DATA_DIR, **s)
+        return mp3
+
+    def generate(text, alias, *vi, progress=gr.Progress()):
+        paras = para.parse(text)
+        if not paras:
+            raise gr.Error("Paste paragraphs first.")
+        s = settings(*vi)
+        al = para.parse_aliases(alias)
+        made = 0
+        for k, p in enumerate(paras):
+            progress(k / len(paras), desc=f"Voice {k + 1} of {len(paras)}…")
+            if para.voice_for(p, al, DATA_DIR, s, make=False) is None:
+                try:
+                    para.voice_for(p, al, DATA_DIR, s)
+                except Exception as e:
+                    raise gr.Error(f"Paragraph {k + 1}: {_msg(e)}")
+                made += 1
+        el.save_settings(DATA_DIR, **s)
+        return f"✅ Voices ready — {made} new, {len(paras) - made} already made (no credits used for those)."
+
+    def load_one(text, st_js, pick, alias, *rest):
+        vi, vals = rest[:6], rest[6:]
+        paras, k = current(text, pick)
+        if not paras:
+            raise gr.Error("Paste paragraphs first.")
+        try:
+            mp3, times = para.voice_for(paras[k], para.parse_aliases(alias), DATA_DIR, settings(*vi))
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        proj = para.project_for(values_to_project("text", vals), paras[k], _store(st_js), mp3, times)
+        gr.Info(f"Paragraph {k + 1} is in the editor (📝 Text) with its voice — check the preview, 🎬 Render video "
+                "makes only this one.", duration=7)
+        return project_to_values(proj, "text")
+
+    def start(request: gr.Request):
+        if not _claim(request):
+            raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+        return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
+                gr.update(interactive=False), "⏳ Making the voices and rendering… each video appears below when done.",
+                gr.update(value=None, visible=False), gr.update(value=None, visible=False))
+
+    def render_all(request: gr.Request, text, st_js, alias, *rest, progress=gr.Progress()):
+        vi, vals = rest[:6], rest[6:]
+
+        def plan():
+            paras = para.parse(text)
+            if not paras:
+                raise ValueError("Paste paragraphs first.")
+            st, al, s = _store(st_js), para.parse_aliases(alias), settings(*vi)
+            base = values_to_project("text", vals)
+            out_dir = os.path.join(OUT_DIR, f"batch_paragraphs_{_stamp()}")
+            os.makedirs(out_dir, exist_ok=True)
+
+            def jobs():
+                taken = set()
+                for k, p in enumerate(paras, 1):
+                    try:
+                        mp3, times = para.voice_for(p, al, DATA_DIR, s)
+                    except Exception as e:
+                        raise ValueError(f"Paragraph {k}: {_msg(e)}")
+                    name = text_batch.video_name(dict(title=p["title"], tab=f"paragraph {k}"), k, taken)
+                    yield name, para.project_for(base, p, st, mp3, times)
+            return out_dir, len(paras), jobs()
+
+        yield from _stream_batch(request, plan, progress)
+
+    t, stj, pk = ui["text"], ui["store"], ui["pick"]
+    t.change(on_text, [t, pk], pk, show_progress="hidden")
+    gr.on(triggers=[t.change, pk.change, stj.change], fn=views, inputs=[t, stj, pk], outputs=[ui["ht"], ui["words"]],
+          trigger_mode="always_last", show_progress="hidden")
+    gr.on(triggers=[t.change, stj.change, ui["alias"].change, ui["voice"].change, ui["model"].change,
+                    ui["speed"].change], fn=show_meter, inputs=[t, stj, ui["alias"]] + voice_in + fields,
+          outputs=ui["meter"], trigger_mode="always_last", show_progress="hidden")
+    # clicks answer at once (no queue): a fast second click then always sees the first one's result
+    ui["ht"].select(click, [t, stj, pk, ui["join"]], [stj, ui["ht"], ui["words"]], show_progress="hidden",
+                    queue=False)
+    ui["sug"].click(do_suggest, [t, stj, pk, ui["n_sug"]], [stj, ui["ht"], ui["words"]], queue=False)
+    ui["clr"].click(do_clear, [t, stj, pk], [stj, ui["ht"], ui["words"]], queue=False)
+    ui["mk_xl"].click(make_sheet, [t, stj], ui["xl_file"])
+    ui["up_xl"].upload(read_sheet, [ui["up_xl"], t, stj, pk], [stj, ui["words"]])
+    ui["save_k"].click(save_voice, voice_in, None)
+    ui["load_v"].click(load_voices, [ui["key"], ui["voice"]], ui["voice"])
+    ui["listen"].click(do_listen, [t, ui["alias"]] + voice_in, ui["sample"])
+    ui["gen"].click(generate, [t, ui["alias"]] + voice_in, ui["info"]).then(
+        show_meter, [t, stj, ui["alias"]] + voice_in + fields, ui["meter"])
+    ui["load"].click(load_one, [t, stj, pk, ui["alias"]] + voice_in + fields, fields)
+    dep = ui["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"], pv["info"],
+                                       ui["files"], ui["zip"]], queue=False)
+    dep.success(render_all, [t, stj, ui["alias"]] + voice_in + fields,
+                [pv["vid"], pv["info"], ui["files"], ui["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"]],
+                **_progress_on(dep, pv["vid"]))
+
+
 # ------------------------------------------------------------------ Know a Country
 KC_TEMPLATE = os.path.join(APP_PROJ_DIR, "know_country_template.xlsx")
 KC_CACHE = os.path.join(DATA_DIR, "cache")
@@ -1691,6 +1970,9 @@ def build_ui():
                 with gr.Column(scale=3, min_width=420):
                     tx_proj = project_bar()
                     with gr.Tabs():
+                        with gr.Tab("✍️ Paragraphs"):
+                            with gr.Column(elem_classes="pane"):
+                                txp = para_tab()
                         with gr.Tab("📊 Excel sheet"):
                             with gr.Column(elem_classes="pane"):
                                 txl = tx_batch_tab()
@@ -1749,10 +2031,12 @@ def build_ui():
                         tx_end = ending_tab()
                     tx_fields = shared_fields(tx_st, tx_end) + [t_title, t_sub, t_tag, t_words, t_audio, t_gain,
                                                                  t_lead, t_band, t_marker, t_style, t_level, t_trans,
-                                                                 t_logo, t_bname, t_lshape, t_lintro, t_lend, t_endon]
+                                                                 t_logo, t_bname, t_lshape, t_lintro, t_lend, t_endon,
+                                                                 txp["text"], txp["store"], txp["alias"]]
                 tx_pv = preview_panel("text")
             wire(tx_proj, tx_pv, tx_fields)
             wire_tx_batch(txl, tx_pv, tx_fields)
+            wire_paragraphs(txp, tx_pv, tx_fields)
             gr.on(triggers=[t_words.change, t_audio.change], fn=words_report, inputs=[t_words, t_audio],
                   outputs=t_info, trigger_mode="always_last", show_progress="hidden")
 
