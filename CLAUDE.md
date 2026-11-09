@@ -51,6 +51,8 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   into the Word Bank, Arabic writes in right-to-left. `text.words` = lines `word | start | end | highlighted | arabic`
   (same as Excel columns B-F); neighbouring rows with the same multi-word highlight = one phrase. Long text → pages
   (sentence breaks, per-page size, recording cut and delayed for the page turn: `shifts` / `cuts`) + recap page.
+  `_pack` returns (pages, roughness): pages end at sentence ends; a sentence longer than a page breaks at a clause end
+  (`_clauses`: , ; : dash, +1) and only then between words (+4); `_paginate` picks (roughness, pages) lowest, then size.
   Designs `text.style`: `textbook` (TextVideo = the shared engine) / `studio` / `exam` / `notebook` (subclasses only
   override look hooks: `_style`, `_background`, `_header`, `_band_layer`, `_make_mark`/`_draw_mark`, `_bank_rows`/
   `_draw_slot`, `_fly_back`, `_draw_final`); `make_video(project)` picks the class. Lines: `_break` = DP over word
