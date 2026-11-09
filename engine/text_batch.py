@@ -8,10 +8,11 @@ Tab layout (row 1 = headers, any order; without headers the columns are read as 
 - E: write the word (or anything, e.g. *) on the row of a word that should fly into the word bank. Neighbouring rows
   with the same several-word text in E (e.g. "ten-minute walk" on both rows) fly together as one phrase.
 - F: the Arabic meaning, on the row of the highlighted word (any row of a phrase).
-- title / subtitle / audio (optional columns): the cell under the header (row 2). title = the big title of the
-  video, subtitle = the small line above it, audio = the file name of the recording.
-- The recording: upload it with the sheet, named like the tab (tab `paragraph1` -> `paragraph1.mp3`), or name it
-  in the audio column.
+- title / subtitle / level / paragraph translation / audio (optional columns): the cell under the header (row 2).
+  title = the big title (else the tab name), subtitle = the small line above it, level = A1-C2 badge, paragraph
+  translation = the Arabic translation of the whole paragraph (shown after the reading), audio = the recording's name.
+- The recording: upload it with the sheet. A file named like the tab (`paragraph1.mp3`) or named in the audio column
+  goes to that tab; any other file (e.g. ElevenLabs_2026-….mp3) goes to the tab whose reading length it matches.
 """
 import copy
 import os
@@ -31,11 +32,15 @@ _ALIASES = {
     "title": ["title", "videotitle", "العنوان", "عنوان"],
     "subtitle": ["subtitle", "unit", "topline", "lesson", "العنوانالفرعي", "الوحده", "الدرس"],
     "audio": ["audio", "audiofile", "sound", "recording", "voice", "mp3", "الصوت", "صوت", "التسجيل"],
+    "level": ["level", "cefr", "cefrlevel", "المستوي", "مستوي"],
+    "translation": ["paragraphtranslation", "fulltranslation", "translationofparagraph", "translationparagraph",
+                    "paragraphtranslationarabic", "ترجمهالفقره", "ترجمهالنص", "الترجمهالكامله"],
 }
 _LOOKUP = {_norm(a): k for k, names in _ALIASES.items() for a in names}
 _POSITIONAL = ["index", "word", "start", "end", "mark", "arabic"]  # columns A..F when there is no header row
 AUDIO_EXT = (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".wma")
-HEADERS = ["index", "word", "start", "end", "highlighted words", "arabic translation", "title", "subtitle"]
+HEADERS = ["index", "word", "start", "end", "highlighted words", "arabic translation", "title", "subtitle", "level",
+           "paragraph translation"]
 
 
 def _columns(header):
@@ -85,6 +90,7 @@ def read_tab(path, tab=None):
         raise ValueError(f"Tab '{tab or 'first'}' has no words in the word column.")
     return dict(tab=tab or "", title=_first_below(body, cols.get("title")),
                 subtitle=_first_below(body, cols.get("subtitle")), audio_name=_first_below(body, cols.get("audio")),
+                level=_first_below(body, cols.get("level")), translation=_first_below(body, cols.get("translation")),
                 rows=rows, problems=problems)
 
 
@@ -134,14 +140,55 @@ def find_audio(par, uploads, folder="", n_tabs=1):
             for f in sorted(os.listdir(folder)):
                 if f.lower().endswith(AUDIO_EXT) and _stem(f) == tab:
                     return os.path.join(folder, f)
-    if n_tabs == 1 and len(uploads) == 1:
-        return uploads[0]
     return ""
+
+
+def _length(path):
+    try:
+        from .audio import audio_length
+        return audio_length(path)
+    except Exception:
+        return None
+
+
+def _reading_len(par):
+    ends = [float(str(r[2]).replace(",", ".")) for r in par["rows"] if _is_num(r[2])]
+    return max(ends) if ends else None
+
+
+def _match_by_length(pars, uploads):
+    """Recordings whose names say nothing (ElevenLabs_2026-…mp3) go to the tabs still without one: each to the tab
+    whose last word ends closest to the recording's length. Pairs are taken best first; a recording more than 40 %
+    longer / shorter than every remaining tab is left out (it is probably not one of these paragraphs)."""
+    used = {p["audio"] for p in pars if p.get("audio")}
+    files = [u for u in uploads if u not in used]
+    tabs = [p for p in pars if p["rows"] and not p.get("audio")]
+    if not files or not tabs:
+        return
+    lens = {u: _length(u) for u in files}
+    pairs = []
+    for u in files:
+        for p in tabs:
+            r, a = _reading_len(p), lens[u]
+            if r and a:
+                pairs.append((abs(a - r) / max(r, 0.1), u, p))
+    pairs.sort(key=lambda x: x[0])
+    for diff, u, p in pairs:
+        if diff > 0.4 or u in used or p.get("audio"):
+            continue
+        p["audio"], p["audio_by"] = u, "length"
+        used.add(u)
+    left = [u for u in files if u not in used]
+    still = [p for p in tabs if not p.get("audio")]
+    if len(left) == 1 and len(still) == 1:  # one recording and one tab left: they belong together
+        still[0]["audio"], still[0]["audio_by"] = left[0], "only"
 
 
 def load_book(path, uploads=(), folder=""):
     """Every visible tab of the workbook (or the CSV file) -> list of paragraphs (see read_tab), each with its
-    `audio` path ('' when no recording was found) and `problems`."""
+    `audio` path ('' when no recording was found) and `problems`. A recording named like a tab (or named in its
+    audio column) goes to that tab; the other recordings are matched by length (_match_by_length)."""
+    uploads = [u for u in (uploads or []) if u and os.path.isfile(u)]
     tabs = sheet_names(path) or [None]
     out = []
     for tab in tabs:
@@ -152,6 +199,7 @@ def load_book(path, uploads=(), folder=""):
             continue
         par["audio"] = find_audio(par, uploads, folder, len(tabs))
         out.append(par)
+    _match_by_length(out, uploads)
     return out
 
 
@@ -159,7 +207,10 @@ def summary(pars):
     usable = [p for p in pars if p["rows"]]
     if not pars:
         return "The workbook has no tabs."
-    lines = [f"**{len(usable)} video{'s' if len(usable) != 1 else ''}** — one per tab:"]
+    ready = [p for p in usable if p.get("audio")]
+    skip = len(usable) - len(ready)
+    lines = [f"**{len(ready)} video{'s' if len(ready) != 1 else ''}** to render — one per tab"
+             + (f" ({skip} tab{'s' if skip != 1 else ''} without a recording will be skipped)" if skip else "") + ":"]
     for k, p in enumerate(pars, 1):
         if not p["rows"]:
             lines.append(f"- ⚠️ tab **{p['tab']}**: {p['problems'][0] if p['problems'] else 'no words'}")
@@ -167,8 +218,13 @@ def summary(pars):
         keys = count_keys(p["rows"])
         no_ar = missing_arabic(p["rows"])
         bits = [f"{len(p['rows'])} words", f"{keys} highlighted"]
-        bits.append("🎙️ " + os.path.basename(p["audio"]) if p["audio"] else "⚠️ no recording (upload "
-                    f"`{p['tab'] or 'the audio'}.mp3`)")
+        if p["audio"]:
+            ln = _length(p["audio"])
+            how = " (matched by length)" if p.get("audio_by") == "length" else ""
+            bits.append(f"🎙️ `{os.path.basename(p['audio'])}`" + (f" {ln:.1f} s" if ln else "") + how)
+        else:
+            bits.append("⚠️ no recording — upload one about "
+                        f"{_reading_len(p) or 0:.0f} s long, or name it `{p['tab'] or 'paragraph'}.mp3`")
         if not p["title"]:
             bits.append("⚠️ no title")
         if no_ar:
@@ -212,10 +268,12 @@ def part_project(base, par):
     p = copy.deepcopy(base)
     d = p.setdefault("text", {})
     d["words"] = rows_text(par["rows"])
-    if par.get("title"):
-        d["title"] = par["title"]
+    d["title"] = par.get("title") or par.get("tab") or d.get("title", "")  # never another tab's title
     if par.get("subtitle"):
         d["subtitle"] = par["subtitle"]
+    if par.get("level"):
+        d["level"] = par["level"].strip().upper()
+    d["translation"] = par.get("translation") or ""  # per tab: never another paragraph's translation
     d["reading_audio"] = par.get("audio") or ""
     return p
 
@@ -238,8 +296,10 @@ def write_template(path):
         for i, w in enumerate(words, 1):
             ws.append([i, w["w"], w["s"], w["e"], w["mark"] or None, w["ar"] or None,
                        (EXAMPLE["text"]["title"] if k == 0 else "Paragraph two title") if i == 1 else None,
-                       EXAMPLE["text"]["subtitle"] if i == 1 else None])
-        for col, width in zip("ABCDEFGH", [7, 18, 8, 8, 22, 26, 30, 22]):
+                       EXAMPLE["text"]["subtitle"] if i == 1 else None,
+                       EXAMPLE["text"]["level"] if i == 1 else None,
+                       (EXAMPLE["text"]["translation"] if k == 0 else None) if i == 1 else None])
+        for col, width in zip("ABCDEFGHIJ", [7, 18, 8, 8, 22, 26, 30, 22, 8, 60]):
             ws.column_dimensions[col].width = width
     wb.save(path)
     return path

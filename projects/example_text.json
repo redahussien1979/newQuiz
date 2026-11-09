@@ -25,10 +25,13 @@
     "title": "Move Your Body, Lift Your Mood",
     "subtitle": "UNIT 3 · READING",
     "tag": "اقرأ واستمع",
+    "level": "B1",
     "words": "Physical | 0.3 | 0.6 | Physical activity | النشاط البدني\nactivity | 0.68 | 1.08 | Physical activity\nfloods | 1.22 | 1.48\nthe | 1.52 | 1.58\nbrain | 1.64 | 1.86\nwith | 1.9 | 2\nmood-lifting | 2.1 | 2.54 | mood-lifting | مُحسِّنة للمزاج\nchemicals, | 2.62 | 3.16\nand | 3.28 | 3.4\nstudies | 3.46 | 3.7\nshow | 3.78 | 4.019\neven | 4.08 | 4.24\na | 4.28 | 4.4\nbrisk | 4.44 | 4.78 | brisk | سريع / نشيط\nten-minute | 4.88 | 5.28\nwalk | 5.36 | 5.58\ncan | 5.66 | 5.78\nchase | 5.84 | 6.04 | chase away | تطرد / تُبعد\naway | 6.08 | 6.28 | chase away\nstress | 6.36 | 6.66\nand | 6.72 | 6.84\nsharpen | 6.94 | 7.22\nyour | 7.26 | 7.34\nfocus. | 7.42 | 7.82 | focus | التركيز",
+    "translation": "النشاط البدني يغمر الدماغ بمواد كيميائية تُحسّن المزاج، وتُظهر الدراسات أن مجرد مشي سريع لعشر دقائق يمكن أن يطرد التوتر ويزيد تركيزك.",
     "reading_audio": "",
     "audio_gain": 1.0,
     "lead": 1.0,
+    "style": "textbook",
     "band": "teal",
     "marker": "yellow"
   }
