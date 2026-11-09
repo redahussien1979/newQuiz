@@ -55,9 +55,9 @@ PLEX_AR = _lib("IBMPlexSansArabic", "IBMPlexSansArabic-SemiBold.ttf")
 STYLE_CHOICES = [("📘 Textbook page", "textbook"), ("🌙 Night studio", "studio"), ("📝 Exam passage", "exam"),
                  ("📒 Notebook", "notebook")]
 LEVEL_CHOICES = [("None", ""), ("A1", "A1"), ("A2", "A2"), ("B1", "B1"), ("B2", "B2"), ("C1", "C1"), ("C2", "C2")]
-BANDS = {"teal": (15, 110, 116), "navy": (30, 52, 98), "maroon": (128, 34, 46), "forest": (34, 96, 62),
+BANDS = {"brand": (140, 14, 26), "teal": (15, 110, 116), "navy": (30, 52, 98), "maroon": (128, 34, 46), "forest": (34, 96, 62),
          "plum": (88, 54, 128), "slate": (52, 64, 78)}
-BAND_CHOICES = [("Teal", "teal"), ("Navy", "navy"), ("Maroon", "maroon"), ("Forest green", "forest"),
+BAND_CHOICES = [("Logolept red", "brand"), ("Teal", "teal"), ("Navy", "navy"), ("Maroon", "maroon"), ("Forest green", "forest"),
                 ("Plum", "plum"), ("Slate", "slate")]
 MARKERS = {"yellow": (255, 224, 102), "green": (178, 236, 140), "pink": (255, 176, 204), "blue": (160, 214, 255),
            "orange": (255, 198, 124)}
@@ -76,6 +76,10 @@ TURN = 0.85                 # page turn (a real page curl)
 FLY = 0.85                  # word flight
 REVEAL = 0.6                # Arabic writes in
 ENDING_LEN = 4.5
+STING = 0.9                 # the logo opening (when switched on)
+LOGO = 118                  # the logo in the header, px
+DEFAULT_LOGO = os.path.join(ROOT, "projects", "brand", "logolept_logo.png")
+LOGO_SHAPES = [("Circle", "circle"), ("As it is", "plain")]
 
 try:  # syllable hyphenation for justified lines (optional: without it words split only at their own hyphens)
     import pyphen
@@ -117,7 +121,11 @@ EXAMPLE = {
         "audio_gain": 1.0,
         "lead": 1.0,
         "style": "textbook",
-        "band": "teal",
+        "brand_name": "LOGOLEPT",  # "logo" missing = the bundled Logolept logo (DEFAULT_LOGO)
+        "logo_shape": "circle",
+        "logo_intro": False,
+        "logo_end": True,
+        "band": "brand",
         "marker": "yellow",
     },
 }
@@ -505,6 +513,68 @@ def _sparkle(r, col):
     return Image.alpha_composite(glow, im).resize((2 * r, 2 * r), Image.LANCZOS)
 
 
+class _Brand:
+    """The brand row at the top of every page: [logo]  NAME / small line + level badge. put(img, x, y) with y = the
+    row's anchor (the name sits just above it, the small line just below)."""
+
+    def __init__(self, logo, name, sub, badge):
+        self.logo, self.name, self.sub, self.badge = logo, name, sub, badge
+        self.gap = 24
+        tw = max(name.w if name else 0, (sub.w if sub else 0) + (badge.width + 20 if badge is not None else 0))
+        self.w = logo.width + self.gap + tw
+        self.top, self.below = -int(logo.height * 0.56), int(logo.height * 0.44)
+
+    def put(self, img, x, y):
+        _comp(img, self.logo, int(x), int(y + self.top))
+        tx = x + self.logo.width + self.gap
+        if self.name:
+            self.name.put(img, tx, y - 4 if self.sub or self.badge is not None else y + 14)
+        sx = tx
+        if self.sub:
+            self.sub.put(img, sx, y + 40)
+            sx += self.sub.w + 20
+        if self.badge is not None:
+            _comp(img, self.badge, int(sx), int(y + 40 - self.badge.height * 0.78))
+
+
+def logo_badge(path, size, shape="circle"):
+    """The logo as shown in the video: a circle (cropped to fill it) with a white rim and a soft shadow, or the image
+    as it is (fitted). None when there is no usable image."""
+    if not path or not os.path.isfile(str(path)):
+        return None
+    try:
+        src = Image.open(path).convert("RGBA")
+    except Exception:
+        return None
+    pad = max(8, size // 10)
+    out = Image.new("RGBA", (size + 2 * pad, size + 2 * pad), (0, 0, 0, 0))
+    S = 3
+    if shape == "circle":
+        n = size * S
+        side = min(src.size)
+        sq = src.crop(((src.width - side) // 2, (src.height - side) // 2, (src.width + side) // 2,
+                       (src.height + side) // 2)).resize((n, n), Image.LANCZOS)
+        disc = Image.new("RGBA", (n, n), (255, 255, 255, 255))  # a see-through logo sits on white
+        disc.alpha_composite(sq)
+        m = Image.new("L", (n, n), 0)
+        ImageDraw.Draw(m).ellipse([0, 0, n - 1, n - 1], fill=255)
+        disc.putalpha(m)
+        rim = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+        ImageDraw.Draw(rim).ellipse([0, 0, n - 1, n - 1], outline=(255, 255, 255, 255), width=int(n * 0.035))
+        disc.alpha_composite(rim)
+        im = disc.resize((size, size), Image.LANCZOS)
+        out.alpha_composite(_shadow_box(out.size, (pad, pad + 3, pad + size, pad + size + 3), size // 2, pad * 0.6,
+                                        90, 0))
+    else:
+        k = size / max(src.size)
+        im = src.resize((max(1, int(src.width * k)), max(1, int(src.height * k))), Image.LANCZOS)
+        sh = Image.new("RGBA", out.size, (0, 0, 0, 0))
+        sh.paste((0, 0, 0, 70), (pad + (size - im.width) // 2, pad + (size - im.height) // 2 + 4), im.getchannel("A"))
+        out.alpha_composite(sh.filter(ImageFilter.GaussianBlur(pad * 0.5)))
+    out.alpha_composite(im, (pad + (size - im.width) // 2, pad + (size - im.height) // 2))
+    return out
+
+
 def make_video(project):
     """The video object for the project's design (`text.style`)."""
     style = (project.get("text", {}) or {}).get("style") or "textbook"
@@ -524,6 +594,7 @@ class TextVideo:
     DIM = 0.34                  # how much the lines not being read fade back while the voice reads
     BREATH = 0.055              # the word being spoken grows this much and settles
     WAVE_H = 15                 # half height of the waveform progress bar
+    STYLE_LIGHT = True          # a light page (the logo opening writes the name in colour, not white)
     MIN_SIZE = 44               # smallest comfortable reading size on a phone (longer texts get more pages)
     GAP_MAX = 2.0               # widest justified word gap (in spaces) before a page takes a smaller size
 
@@ -550,6 +621,13 @@ class TextVideo:
         self.tag = str(d.get("tag") or "").strip()
         self.level = str(d.get("level") or "").strip().upper()[:3]
         self.translation = " ".join(str(d.get("translation") or "").split())
+        self.logo_path = d.get("logo") if d.get("logo") is not None else DEFAULT_LOGO
+        self.brand_name = str(d.get("brand_name") if d.get("brand_name") is not None else "LOGOLEPT").strip()
+        self.logo_shape = d.get("logo_shape") or "circle"
+        self.logo_img = logo_badge(self.logo_path, LOGO, self.logo_shape)
+        self.sting = STING if (d.get("logo_intro") and self.logo_img is not None) else 0.0
+        self.end_logo = bool(d.get("logo_end", True)) and self.logo_img is not None
+        self.lead = self.lead + self.sting  # the reading starts after the logo opening
         self._wcache, self._brk = {}, {}
         self._fly_imgs, self._misc = {}, {}
 
@@ -581,7 +659,7 @@ class TextVideo:
                 pass
         self.base_duration = self.dur = dur
         self.silences = []
-        self.cover_time = min(self.done, self.E - 0.2)
+        self.cover_time = min(self.done, self.E - 0.2)  # the cover (thumbnail) shows the full page with the logo
 
     # -------------------------------------------------------------- design: colours / geometry (Textbook)
     def _style(self, d):
@@ -664,11 +742,35 @@ class TextVideo:
         self.bar_y = self.band_h + 34
         self.wave_y = self.bar_y + 4
         self.p_top = self.band_h + 96
+        self._apply_brand((255, 255, 255), light, 26)
 
     def _drop_tag_if_crowded(self):
         used = (self.sub_img.w if self.sub_img else 0) + (self.badge.width + 24 if self.badge is not None else 0)
         if self.tag_img and used + self.tag_img.width + 40 > self.width:
             self.tag_img = None
+
+    def _apply_brand(self, name_col, sub_col, sub_size):
+        """With a logo: the small line becomes the brand row ([logo] NAME / small line + badge) and everything
+        below moves down to make room for it."""
+        if self.logo_img is None:
+            return
+        name = _Txt(self.brand_name.upper(), 40, name_col, "ExtraBold", LABEL, track=0.1) if self.brand_name else None
+        sub = _Txt(self.subtitle.upper(), sub_size, sub_col, "Bold", LABEL, track=0.16) if self.subtitle else None
+        self.sub_img = _Brand(self.logo_img, name, sub, self.badge)
+        self.badge = None
+        self.sub_y += 26
+        bottom = self.sub_y + self.sub_img.below
+        if self.title_imgs:
+            cap_top = self.title_ys[0] - self.title_imgs[0].size * 0.74
+            delta = max(0, int(bottom + 22 - cap_top))
+        else:
+            delta = max(0, int(bottom + 30 - self.band_h))
+        self.title_ys = [y + delta for y in self.title_ys]
+        self.band_h += delta
+        self.bar_y += delta
+        self.wave_y += delta
+        self.p_top += delta
+        self._drop_tag_if_crowded()
 
     def _put_sub_line(self, img, y):
         """Subtitle, level badge after it, Arabic tag on the right (all on one line at baseline y)."""
@@ -1465,13 +1567,17 @@ class TextVideo:
             frame = self._turn(a, b, prog(t, self.turns[k], self.turns[k] + TURN))
         else:
             frame = self._draw_page(k, t)
-        if t < 0.9:
-            frame = self._intro(frame, t)
+        if t < self.sting:
+            return self._sting(t).convert("RGB")
+        if t < self.sting + 0.9:
+            frame = self._intro(frame, t - self.sting)
         frame = self._camera(frame, t)
         if self.tr is not None and t >= self.tr0:
             self._draw_translation(frame, t)
         if self.has_ending:
             draw_ending(frame, t, self.E, *self.ending, self.accent)
+            if self.end_logo and t >= self.E + 0.1:
+                self._end_logo(frame, t)
         global_fade(frame, t, self.dur, fade_in=False)
         return frame.convert("RGB")
 
@@ -1549,6 +1655,40 @@ class TextVideo:
         band = frame.crop((0, 0, W, self.band_h + 26))
         _comp(out, band, 0, int(-(self.band_h + 26) * (1 - e)))
         return out
+
+    def _big_logo(self, size):
+        key = ("biglogo", size)
+        if key not in self._misc:
+            self._misc[key] = logo_badge(self.logo_path, size, self.logo_shape)
+        return self._misc[key]
+
+    def _sting(self, t):
+        """The logo opening: the logo springs up on the page's background, then flies to its place in the header."""
+        out = self.bg.copy()
+        big = self._big_logo(460)
+        pop = ease_out_back(prog(t, 0.0, 0.35))
+        fly = ease_io(prog(t, 0.5, self.sting))
+        hx = self.x0 + self.logo_img.width / 2  # where the logo sits in the header
+        hy = self.sub_y + self.sub_img.top + self.logo_img.height / 2
+        cx, cy = 540 + (hx - 540) * fly, 860 + (hy - 860) * fly
+        sc = (0.55 + 0.45 * pop) * (1 + (self.logo_img.width / big.width - 1) * fly)
+        im = big.resize((max(1, int(big.width * sc)), max(1, int(big.height * sc))), Image.LANCZOS)
+        _comp(out, _fade(im, min(1.0, prog(t, 0.0, 0.12))), int(cx - im.width / 2), int(cy - im.height / 2))
+        if self.brand_name:
+            nm = _Txt(self.brand_name.upper(), 64, self.accent if self.STYLE_LIGHT else (255, 255, 255), "ExtraBold",
+                      LABEL, track=0.12)
+            a = prog(t, 0.15, 0.35) * (1 - prog(t, 0.45, 0.6))
+            if a > 0:
+                nm.put(out, 540 - nm.w / 2, 860 + big.height * 0.55 * sc + 70, a)
+        return out
+
+    def _end_logo(self, frame, t):
+        big = self._big_logo(190)
+        sc = ease_out_back(prog(t, self.E + 0.1, self.E + 0.45))
+        if sc <= 0.02:
+            return
+        im = big.resize((max(1, int(big.width * sc)), max(1, int(big.height * sc))), Image.LANCZOS)
+        _comp(frame, im, int(540 - im.width / 2), int(470 - im.height / 2))
 
     def _wt(self, i, f):
         """The moment the reading reaches fraction f of word i."""
@@ -1698,8 +1838,13 @@ class TextVideo:
         pass
 
     def sound(self, mx):
-        mx.intro(0.05)
-        mx.add(0.05, mx.paper(), 0.45)
+        if self.sting:
+            sig, pan = mx.whoosh(0.6)
+            mx.add(0.02, sig, 0.12, pan)
+            mx.add(0.3, mx.chime(), 0.16)
+            mx.add(self.sting - 0.35, mx.whoosh(0.5)[0], 0.08)
+        mx.intro(0.05 + self.sting)
+        mx.add(0.05 + self.sting, mx.paper(), 0.45)
         if self.audio:
             self._place_voice(mx)
         for k in range(1, len(self.turns)):
@@ -1757,6 +1902,7 @@ class TextVideo:
 # ================================================================== Night studio
 class StudioVideo(TextVideo):
     SUP = DROPCAP = TAB = False
+    STYLE_LIGHT = False
     BODY = LABEL
     MIN_SIZE = 40               # a sans-serif reads bigger
     W_REG, W_KEY = "Medium", "Bold"
@@ -1815,6 +1961,7 @@ class StudioVideo(TextVideo):
         self.bar_y = self.band_h + 24
         self.wave_y = self.bar_y + 4
         self.p_top = self.band_h + 90
+        self._apply_brand((255, 255, 255), (142, 166, 255), 24)
 
     def _band_layer(self, img):
         self._put_sub_line(img, self.sub_y)
@@ -2014,6 +2161,7 @@ class ExamVideo(TextVideo):
         self.bar_y = self.band_h
         self.wave_y = self.band_h + 32
         self.p_top = self.band_h + 78
+        self._apply_brand((17, 17, 17), (90, 90, 90), 22)
 
     def _band_layer(self, img):
         self._put_sub_line(img, self.sub_y)
@@ -2175,6 +2323,7 @@ class NotebookVideo(TextVideo):
         self.bar_y = self.band_h + 18
         self.wave_y = self.bar_y + 6
         self.p_top = self.band_h + 74
+        self._apply_brand(self.BLUE, (123, 138, 153), 24)
 
     def _band_layer(self, img):
         self._put_sub_line(img, self.sub_y)
