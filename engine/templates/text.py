@@ -1123,34 +1123,67 @@ class TextVideo:
     def _fits(self, idx, size):
         return self._need(idx, size) <= SAFE_BOTTOM - self.p_top and len(self._keys_in(idx)) <= 10
 
+    _CLAUSE_END = re.compile(r"[,;:\u2014\u2013\u060C\u061B][\"'\u201d\u2019)\]]*$")
+
+    def _clauses(self, sent):
+        """A sentence cut into clauses (after , ; : or a dash), each a list of word indices; phrases stay whole."""
+        out, cur = [], []
+        for atom in self._atoms(sent):
+            cur += atom
+            if self._CLAUSE_END.search(self.words[atom[-1]]["w"]):
+                out.append(cur)
+                cur = []
+        return out + ([cur] if cur else [])
+
     def _pack(self, size):
-        pages, cur = [], []
+        """Pages at this size, filled sentence by sentence, + how rough their breaks are: 0 = every page ends at a
+        sentence end; a sentence longer than a page is cut at a clause end (+1 each) and only when a clause alone is
+        too long, between words (+4 each). The recording is cut where the page breaks, so a clean break also
+        means the voice waits for the page turn in a natural pause."""
+        pages, cur, rough = [], [], 0
+
+        def close():
+            nonlocal cur
+            if cur:
+                pages.append(cur)
+                cur = []
+
         for sent in self._units():
             if self._fits(cur + sent, size):
                 cur = cur + sent
                 continue
-            if cur:
-                pages.append(cur)
-                cur = []
+            close()
             if self._fits(sent, size):
                 cur = list(sent)
                 continue
-            for atom in self._atoms(sent):  # a sentence longer than a page: split it between words
-                if self._fits(cur + atom, size):
-                    cur = cur + atom
-                else:
-                    if cur:
-                        pages.append(cur)
-                    cur = list(atom)
-        return pages + ([cur] if cur else [])
+            for clause in self._clauses(sent):  # a sentence longer than a page
+                if self._fits(cur + clause, size):
+                    cur = cur + clause
+                    continue
+                if cur:
+                    close()
+                    rough += 1
+                if self._fits(clause, size):
+                    cur = list(clause)
+                    continue
+                for atom in self._atoms(clause):  # a clause longer than a page: between words, last resort
+                    if self._fits(cur + atom, size):
+                        cur = cur + atom
+                    else:
+                        if cur:
+                            close()
+                            rough += 4
+                        cur = list(atom)
+        close()
+        return pages, rough
 
     def _paginate(self):
-        best = None
+        best = None  # cleanest page breaks first, then fewest pages, then the biggest text
         for size in [z for z in SIZES if z >= self.MIN_SIZE] or [SIZES[-1]]:
-            pages = self._pack(size)
-            if best is None or len(pages) < len(best[1]):
-                best = (size, pages)
-        self.size, self.page_words = best
+            pages, rough = self._pack(size)
+            if best is None or (rough, len(pages)) < best[0]:
+                best = ((rough, len(pages)), size, pages)
+        _, self.size, self.page_words = best
         # each page then takes the biggest size that fits it (at most 15 % bigger, so the pages still match) and
         # whose justified lines keep tight word gaps (a book page, not rivers of white)
         self.page_size = [self._page_size(idx) for idx in self.page_words]
