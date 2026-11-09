@@ -125,6 +125,7 @@ EXAMPLE = {
         "logo_shape": "circle",
         "logo_intro": False,
         "logo_end": True,
+        "ending_on": True,
         "band": "brand",
         "marker": "yellow",
     },
@@ -650,7 +651,7 @@ class TextVideo:
         self.tr = self._build_translation() if self.translation else None
 
         ending_q = parse_lines(e.get("question", ""), ["white", "gold"])
-        self.has_ending = bool(e.get("intro") or ending_q or e.get("cta"))
+        self.has_ending = bool(d.get("ending_on", True)) and bool(e.get("intro") or ending_q or e.get("cta"))
         self.ending = (e.get("intro", ""), ending_q, e.get("cta", ""), s.get("handle", ""))
         dur = self.E + (ENDING_LEN if self.has_ending else 0.5)
         if self.audio:

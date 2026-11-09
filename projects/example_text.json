@@ -36,6 +36,7 @@
     "logo_shape": "circle",
     "logo_intro": false,
     "logo_end": true,
+    "ending_on": true,
     "band": "brand",
     "marker": "yellow"
   }
