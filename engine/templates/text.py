@@ -283,7 +283,7 @@ def _comp(frame, im, x, y):
 
 def _ar_img(txt, size, col=AR_COL, font=AR_FONT):
     """Arabic text (shaped, right-to-left), cropped to its ink left and right."""
-    im = text_img_in(font, txt, int(size), col, "Bold", shadow=False)
+    im = text_img_in(_ar_font_for(font, txt), txt, int(size), col, "Bold", shadow=False)
     box = im.getchannel("A").getbbox() or (0, 0, im.width, im.height)
     return im.crop((max(0, box[0] - 4), 0, min(im.width, box[2] + 4), im.height))
 
@@ -300,7 +300,7 @@ def _ar_wrap(txt, size, col, font, max_w):
     lines, cur = [], ""
     for w in txt.split():
         test = (cur + " " + w).strip()
-        if cur and _ar_img(test, size, col, font).width > max_w:
+        if cur and _ar_line(test, size, col, font).width - 2 * _AR_PAD > max_w:
             lines.append(cur)
             cur = w
         else:
@@ -339,21 +339,76 @@ def _has_tatweel(font):
     return cmap is None or 0x0640 in cmap
 
 
+_AR_PAD = 8  # air left and right of an Arabic word / line image (marks and kashidas may reach a little past it)
+
+
+def _joins_ok(font, txt):
+    """Without RAQM, Arabic is drawn with ready-made joined letter shapes: does `font` have every beginning / middle /
+    end shape this text needs? (A missing isolated shape is fine: the plain letter looks the same.)"""
+    from ..core import HAS_RAQM, _font_cmap, _reshape
+    if HAS_RAQM or not _reshape:
+        return True
+    cmap = _font_cmap(font)
+    if cmap is None:
+        return True
+    import unicodedata
+    for c in _reshape(txt):
+        if 0xFB50 <= ord(c) <= 0xFEFF and ord(c) not in cmap and not unicodedata.decomposition(c).startswith("<isolated>"):
+            return False
+    return True
+
+
+def _ar_font_for(font, txt):
+    """`font`, or (without RAQM, when it lacks joined shapes) Amiri, else Cairo — so Arabic is always joined."""
+    for f in (font, AR_FONT, DEFAULT_FONT):
+        if _joins_ok(f, txt):
+            return f
+    return DEFAULT_FONT
+
+
+def _prep_in(font, txt):
+    """core._prep (Arabic shaping / direction) as it would be with `font` chosen (its missing-form fixes use it)."""
+    from ..core import _prep, _state
+    old = _state["font"]
+    _state["font"] = font
+    try:
+        return _prep(txt)
+    finally:
+        _state["font"] = old
+
+
+def _ar_line(txt, size, col, font):
+    """Arabic text on a FIXED baseline: every image of the same font and size has the same height and its baseline at
+    the same y (the font's ascent), so words and lines drawn separately still sit on one baseline. Shaped right to
+    left by the app's engine (RAQM, or arabic-reshaper + python-bidi without it). Width = advance + _AR_PAD each side."""
+    font = _ar_font_for(font, txt)
+    t2, kw = _prep_in(font, txt)
+    f = get_font(int(size), "Bold", font)
+    asc, desc = f.getmetrics()
+    d0 = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    w = int(math.ceil(d0.textlength(t2, font=f, **kw)))
+    py = int(size * 0.25)  # room for marks above / below the font's own ascent and descent
+    im = Image.new("RGBA", (w + 2 * _AR_PAD, asc + desc + 2 * py), (0, 0, 0, 0))
+    ImageDraw.Draw(im).text((_AR_PAD, py + asc), t2, font=f, fill=tuple(col) + (255,), anchor="ls", **kw)
+    return im
+
+
 def _ar_justified(lines, size, col, font, width):
-    """Line images exactly `width` wide (the last line: natural width), words placed right to left. Slack goes into
-    kashidas first (at most 2 per word, the longest words first, one round at a time so they spread over the line),
-    the rest evenly into the spaces."""
+    """Line images exactly `width` wide (the last line: natural width), words placed right to left on one baseline.
+    Slack goes into kashidas first (at most 2 per word, the longest words first, one round at a time so they spread
+    over the line), the rest evenly into the spaces."""
     out = []
-    space = max(4, _ar_img("ب ب", size, col, font).width - 2 * _ar_img("ب", size, col, font).width + 8)
-    tw = max(1, _ar_img("بـب", size, col, font).width - _ar_img("بب", size, col, font).width)
+    adv = lambda t: _ar_line(t, size, col, font).width - 2 * _AR_PAD
+    space = max(4, adv("ب ب") - 2 * adv("ب"))
+    tw = max(1, adv("بـب") - adv("بب"))
     kashida = _has_tatweel(font)
     for n, line in enumerate(lines):
         words = line.split()
         if n == len(lines) - 1 or len(words) < 2:
-            out.append(_ar_img(line, size, col, font))
+            out.append(_ar_line(line, size, col, font))
             continue
-        imgs = [_ar_img(w, size, col, font) for w in words]
-        slack = width - sum(im.width for im in imgs) + 8 * len(imgs) - space * (len(words) - 1)
+        imgs = [_ar_line(w, size, col, font) for w in words]
+        slack = width - sum(im.width - 2 * _AR_PAD for im in imgs) - space * (len(words) - 1)
         if kashida and slack > 0:
             pts = [_kashida_points(w) for w in words]
             count = [0] * len(words)
@@ -370,16 +425,14 @@ def _ar_justified(lines, size, col, font, width):
             for k, c in enumerate(count):
                 if c:
                     j = pts[k][0]
-                    imgs[k] = _ar_img(words[k][:j] + TATWEEL * c + words[k][j:], size, col, font)
-        # _ar_img keeps 4 px of air on each side: overlap it so the gaps are true word spaces
-        inner = [im.width - 8 for im in imgs]
+                    imgs[k] = _ar_line(words[k][:j] + TATWEEL * c + words[k][j:], size, col, font)
+        inner = [im.width - 2 * _AR_PAD for im in imgs]
         gap = (width - sum(inner)) / (len(words) - 1)
-        h = max(im.height for im in imgs)
-        line_im = Image.new("RGBA", (width + 8, h), (0, 0, 0, 0))
-        x = float(width + 4)
-        for im, w in zip(imgs, inner):  # right to left
+        line_im = Image.new("RGBA", (width + 2 * _AR_PAD, imgs[0].height), (0, 0, 0, 0))
+        x = float(width + _AR_PAD)
+        for im, w in zip(imgs, inner):  # right to left, every word on the same baseline (same image height)
             x -= w
-            _comp(line_im, im, int(round(x - 4)), (h - im.height) // 2)
+            _comp(line_im, im, int(round(x - _AR_PAD)), 0)
             x -= gap
         out.append(line_im)
     return out
