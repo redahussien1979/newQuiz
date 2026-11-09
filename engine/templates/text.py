@@ -583,6 +583,7 @@ def make_video(project):
 
 # ================================================================== the reading engine (+ the Textbook design)
 class TextVideo:
+    TITLE, TITLE_W = SERIF, "ExtraBold"  # the design's own title font (replaced by a font chosen in the app)
     BODY = SERIF                # paragraph font, its weights for plain / highlighted words
     W_REG, W_KEY = "Regular", "SemiBold"
     LINE = 1.66                 # line height / text size
@@ -632,6 +633,7 @@ class TextVideo:
         self._fly_imgs, self._misc = {}, {}
 
         self._style(d)
+        self._apply_font(s.get("font_file"))
         self.width = self.x1 - self.x0
         self._header()
         self._paginate()
@@ -684,6 +686,32 @@ class TextVideo:
         self.page_back = (240, 238, 230)
         self.burst_col = self.marker_col
 
+    def _apply_font(self, value):
+        """The font picked in 🎨 Style & sound (a library family name or a .ttf / .otf file) replaces the design's fonts:
+        title, paragraph, flying words, word bank. If it also writes Arabic it is used for the meanings and the
+        translation too; otherwise the design's Arabic font stays. No font picked = the design's own fonts."""
+        if not value:
+            return
+        path = str(value)
+        if not os.path.isfile(path):
+            try:
+                from ..fonts import resolve
+                path = resolve(value)
+            except Exception:
+                return
+        if not path or not os.path.isfile(path) or path == DEFAULT_FONT and str(value) != DEFAULT_FONT:
+            return
+        from ..core import _font_cmap
+        cmap = _font_cmap(path)
+        if cmap is None or ord("a") in cmap:  # it writes English
+            self.BODY = self.TITLE = path
+            self.TITLE_W = "Bold"
+            if self.W_KEY == self.W_REG:
+                self.W_KEY = "Bold"  # highlighted words stand out in a print font (Notebook's hand font had one weight)
+        if cmap is None or 0x0644 in cmap:  # it writes Arabic too
+            self.ar_font = path
+            self.panel = dict(self.panel, font=path)
+
     def _background(self):
         """The page, and at the right edge the edges of the pages under it (a real book)."""
         img = _noise_bg(_vgrad(PAPER_TOP, PAPER_BOT))
@@ -727,8 +755,8 @@ class TextVideo:
         """The coloured band: small line, title (1-2 lines), level badge and the Arabic tag; sets self.band_h."""
         light = _mix(self.band, (255, 255, 255), 0.72)
         self.sub_img = _Txt(self.subtitle.upper(), 30, light, "Bold", LABEL, track=0.16) if self.subtitle else None
-        lines, size = self._fit_title(SERIF, "ExtraBold", 66, 48, 56)
-        self.title_imgs = [_Txt(ln, size, (255, 255, 255), "ExtraBold") for ln in lines]
+        lines, size = self._fit_title(self.TITLE, self.TITLE_W, 66, 48, 56)
+        self.title_imgs = [_Txt(ln, size, (255, 255, 255), self.TITLE_W, self.TITLE) for ln in lines]
         self.sub_y = 182
         y = self.sub_y + (84 if (self.sub_img or self.level) else 30)
         self.title_ys = []
@@ -737,11 +765,11 @@ class TextVideo:
             y += int(size * 1.18)
         self.band_h = (self.title_ys[-1] if self.title_ys else y) + 56
         self.badge = self._badge((255, 255, 255), self.band)
-        self.tag_img = _ar_img(self.tag, 36, light) if self.tag else None
+        self.tag_img = _ar_img(self.tag, 36, light, self.ar_font) if self.tag else None
         self._drop_tag_if_crowded()
         self.bar_y = self.band_h + 34
         self.wave_y = self.bar_y + 4
-        self.p_top = self.band_h + 96
+        self.p_top = self.band_h + 76
         self._apply_brand((255, 255, 255), light, 26)
 
     def _drop_tag_if_crowded(self):
@@ -1129,8 +1157,8 @@ class TextVideo:
         for idx, z in zip(self.page_words, self.page_size):
             for gi in self._keys_in(idx):
                 self.gsize[gi] = z
-        avail = SAFE_BOTTOM - self.p_top  # leftover space: half above the text (a calmer, centred page)
-        self.page_off = [min(230, max(0, (avail - self._need(idx, z)) // 2))
+        avail = SAFE_BOTTOM - self.p_top  # the text sits under the waveform; spare room stays at the bottom
+        self.page_off = [min(24, max(0, (avail - self._need(idx, z)) // 8))
                          for idx, z in zip(self.page_words, self.page_size)]
         self.recap = len(self.page_words) > 1 and len(self.groups) > 0
 
@@ -1901,6 +1929,7 @@ class TextVideo:
 
 # ================================================================== Night studio
 class StudioVideo(TextVideo):
+    TITLE, TITLE_W = DISPLAY, "Regular"
     SUP = DROPCAP = TAB = False
     STYLE_LIGHT = False
     BODY = LABEL
@@ -1946,8 +1975,8 @@ class StudioVideo(TextVideo):
     def _header(self):
         self.sub_img = _Txt(self.subtitle.upper(), 28, (142, 166, 255), "Bold", LABEL, track=0.2) \
             if self.subtitle else None
-        lines, size = self._fit_title(DISPLAY, "Regular", 78, 52, 62)
-        self.title_imgs = [_Txt(ln, size, (255, 255, 255), "Regular", DISPLAY) for ln in lines]
+        lines, size = self._fit_title(self.TITLE, self.TITLE_W, 78, 52, 62)
+        self.title_imgs = [_Txt(ln, size, (255, 255, 255), self.TITLE_W, self.TITLE) for ln in lines]
         self.sub_y = 186
         y = self.sub_y + (92 if (self.sub_img or self.level) else 40)
         self.title_ys = []
@@ -1956,11 +1985,11 @@ class StudioVideo(TextVideo):
             y += int(size * 1.2)
         self.band_h = (self.title_ys[-1] if self.title_ys else y) + 36
         self.badge = self._badge(self.GOLD, (12, 16, 36))
-        self.tag_img = _ar_img(self.tag, 36, (142, 166, 255), DEFAULT_FONT) if self.tag else None
+        self.tag_img = _ar_img(self.tag, 36, (142, 166, 255), self.ar_font) if self.tag else None
         self._drop_tag_if_crowded()
         self.bar_y = self.band_h + 24
         self.wave_y = self.bar_y + 4
-        self.p_top = self.band_h + 90
+        self.p_top = self.band_h + 70
         self._apply_brand((255, 255, 255), (142, 166, 255), 24)
 
     def _band_layer(self, img):
@@ -2032,7 +2061,7 @@ class StudioVideo(TextVideo):
         top -= 8
         lab = _Txt(label or self.bank_label, 26, self.bank_col, "Bold", LABEL, track=0.22)
         lab.put(img, self.x0, top + 36)
-        ar = _ar_img(self.bank_label_ar, 34, self.bank_col, DEFAULT_FONT)
+        ar = _ar_img(self.bank_label_ar, 34, self.bank_col, self.ar_font)
         if lab.w + ar.width + 40 < self.width:
             _comp(img, ar, self.x1 - ar.width, top + 36 - int(ar.height * 0.64))
         gap = 20
@@ -2054,7 +2083,7 @@ class StudioVideo(TextVideo):
             if en.w > w - 100:  # room for the tick in the corner
                 en = _Txt(g["text"], max(22, int(en_size * (w - 100) / en.w)), self.en_col, self.W_KEY, self.BODY)
             base = y + int(ch * 0.4)
-            ar_im = _ar_fit(g["ar"], en_size + 2, self.GOLD, DEFAULT_FONT, w - 56) if g["ar"] else None
+            ar_im = _ar_fit(g["ar"], en_size + 2, self.GOLD, self.ar_font, w - 56) if g["ar"] else None
             slots.append(dict(gi=gi, card=(x, y, x + w, y + ch), y=y, h=ch, base=base, en=en, en_x=x + 28,
                               en_size=en.size, num_x=x + w - 30,
                               ar=ar_im, ar_x=x + w - 28 - (ar_im.width if ar_im is not None else 0),
@@ -2099,6 +2128,7 @@ class StudioVideo(TextVideo):
 
 # ================================================================== Exam passage
 class ExamVideo(TextVideo):
+    TITLE, TITLE_W = SERIF, "Bold"
     SUP = DROPCAP = TAB = False
     BODY = SERIF
     W_REG, W_KEY = "Regular", "Bold"
@@ -2146,8 +2176,8 @@ class ExamVideo(TextVideo):
     def _header(self):
         self.sub_img = _Txt((self.subtitle or "Reading passage").upper(), 26, (90, 90, 90), "Bold", LABEL,
                             track=0.2)
-        lines, size = self._fit_title(SERIF, "Bold", 60, 44, 50)
-        self.title_imgs = [_Txt(ln, size, (17, 17, 17), "Bold") for ln in lines]
+        lines, size = self._fit_title(self.TITLE, self.TITLE_W, 60, 44, 50)
+        self.title_imgs = [_Txt(ln, size, (17, 17, 17), self.TITLE_W, self.TITLE) for ln in lines]
         self.sub_y = 150
         y = self.sub_y + 76
         self.title_ys = []
@@ -2156,11 +2186,11 @@ class ExamVideo(TextVideo):
             y += int(size * 1.18)
         self.band_h = (self.title_ys[-1] if self.title_ys else y) + 34
         self.badge = self._badge((30, 30, 30), (255, 255, 255), 24)
-        self.tag_img = _ar_img(self.tag, 32, (110, 110, 110), PLEX_AR) if self.tag else None
+        self.tag_img = _ar_img(self.tag, 32, (110, 110, 110), self.ar_font) if self.tag else None
         self._drop_tag_if_crowded()
         self.bar_y = self.band_h
         self.wave_y = self.band_h + 32
-        self.p_top = self.band_h + 78
+        self.p_top = self.band_h + 68
         self._apply_brand((17, 17, 17), (90, 90, 90), 22)
 
     def _band_layer(self, img):
@@ -2272,6 +2302,7 @@ NOTE_ROT = [-3.0, 2.2, -1.5, 2.6, -2.2, 1.6, -2.8, 2.0, -1.2, 2.4]
 
 
 class NotebookVideo(TextVideo):
+    TITLE, TITLE_W = HAND, "Regular"
     SUP = DROPCAP = TAB = False
     BODY = HAND
     MIN_SIZE = 52               # handwriting reads smaller than print
@@ -2307,9 +2338,9 @@ class NotebookVideo(TextVideo):
         return img
 
     def _header(self):
-        self.sub_img = _Txt(self.subtitle, 40, (123, 138, 153), "Regular", HAND) if self.subtitle else None
-        lines, size = self._fit_title(HAND, "Regular", 88, 60, 70)
-        self.title_imgs = [_Txt(ln, size, self.BLUE, "Regular", HAND) for ln in lines]
+        self.sub_img = _Txt(self.subtitle, 40, (123, 138, 153), "Regular", self.TITLE) if self.subtitle else None
+        lines, size = self._fit_title(self.TITLE, self.TITLE_W, 88, 60, 70)
+        self.title_imgs = [_Txt(ln, size, self.BLUE, self.TITLE_W, self.TITLE) for ln in lines]
         self.sub_y = 160
         y = self.sub_y + (84 if (self.sub_img or self.level) else 30)
         self.title_ys = []
@@ -2318,11 +2349,11 @@ class NotebookVideo(TextVideo):
             y += int(size * 1.1)
         self.band_h = (self.title_ys[-1] if self.title_ys else y) + 34
         self.badge = self._badge(self.RED, (255, 255, 255), 26)
-        self.tag_img = _ar_img(self.tag, 40, (123, 138, 153), RUQAA) if self.tag else None
+        self.tag_img = _ar_img(self.tag, 40, (123, 138, 153), self.ar_font) if self.tag else None
         self._drop_tag_if_crowded()
         self.bar_y = self.band_h + 18
         self.wave_y = self.bar_y + 6
-        self.p_top = self.band_h + 74
+        self.p_top = self.band_h + 64
         self._apply_brand(self.BLUE, (123, 138, 153), 24)
 
     def _band_layer(self, img):
@@ -2423,9 +2454,9 @@ class NotebookVideo(TextVideo):
         nh = self._note_h(n, size or self.size)
         if avail:
             nh = max(120, min(220, (avail - 70 - (rows - 1) * 22) // max(1, rows)))
-        lab = _Txt((label or self.bank_label) + ":", 46, self.RED, "Regular", HAND)
+        lab = _Txt((label or self.bank_label) + ":", 46, self.RED, self.TITLE_W, self.TITLE)
         lab.put(img, self.x0, top + 40)
-        ar = _ar_img(self.bank_label_ar, 40, self.RED, RUQAA)
+        ar = _ar_img(self.bank_label_ar, 40, self.RED, self.ar_font)
         if lab.w + ar.width + 40 < self.width:
             _comp(img, ar, self.x1 - ar.width, top + 40 - int(ar.height * 0.64))
         gap = 22
@@ -2437,10 +2468,10 @@ class NotebookVideo(TextVideo):
             x = self.x0 + c * (nw + gap)
             y = top + 70 + r * (nh + gap)
             en_size = int(min(54, nh * 0.3))
-            en = _Txt(g["text"], en_size, self.BLUE, "Regular", HAND)
+            en = _Txt(g["text"], en_size, self.BLUE, self.W_KEY, self.BODY)
             if en.w > nw - 24:
-                en = _Txt(g["text"], max(24, int(en_size * (nw - 24) / en.w)), self.BLUE, "Regular", HAND)
-            ar_im = _ar_fit(g["ar"], en_size + 2, self.RED, RUQAA, nw - 24) if g["ar"] else None
+                en = _Txt(g["text"], max(24, int(en_size * (nw - 24) / en.w)), self.BLUE, self.W_KEY, self.BODY)
+            ar_im = _ar_fit(g["ar"], en_size + 2, self.RED, self.ar_font, nw - 24) if g["ar"] else None
             base = y + int(nh * 0.42)
             slots.append(dict(gi=gi, j=j, note=(x, y, nw, nh), y=y, h=nh, base=base, en=en,
                               en_x=x + (nw - en.w) / 2, en_size=en.size, num_x=x + nw - 22,
