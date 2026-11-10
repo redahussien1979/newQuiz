@@ -175,6 +175,8 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   common words), ⬇️ download the words sheet, write the Arabic, ⬆️ upload it, then 🎬 Render all. ElevenLabs reads every
   paragraph (your API key and voice are saved on this computer only); each voice is made once and reused, so changing
   highlights, meanings or the design costs no credits. 🗣️ Say it differently: `COP29 = cop twenty-nine`.
+- 🔊 Listen to each paragraph's voice before rendering; 🔄 Regenerate voice makes a new take of that paragraph only
+  (only its characters are charged), ↩️ Previous take switches back for free.
 - Every tab of the workbook is one paragraph = one video. One spoken word per row: **B** word, **C** start, **D** end
   (the word timings from ElevenLabs), **E** highlighted words, **F** Arabic translation, and a **title** column.
 - Upload the recordings (ElevenLabs names are fine: each goes to the tab whose reading length it matches; a file
@@ -1339,6 +1341,14 @@ def para_tab():
     with gr.Row(equal_height=True):
         pick = gr.Dropdown([], label="Paragraph to highlight", scale=3)
         join = gr.Checkbox(value=True, label="Click the next word to make a phrase", scale=2)
+    with gr.Row(equal_height=True):
+        p_audio = gr.Audio(label="🔊 Voice of this paragraph — listen before rendering", interactive=False,
+                           type="filepath", scale=3)
+        with gr.Column(scale=2, min_width=220):
+            p_listen = gr.Button("▶ Listen (makes the voice if needed)")
+            p_regen = gr.Button("🔄 Regenerate voice (new take)")
+            p_prev = gr.Button("↩️ Previous take")
+    p_vinfo = gr.Markdown()
     ht = gr.HighlightedText([], label="👆 Click words to highlight them (click again to remove)",
                             combine_adjacent=False, show_legend=False, interactive=False)
     with gr.Row(equal_height=True):
@@ -1369,7 +1379,8 @@ def para_tab():
     return dict(key=key, voice=voice, load_v=load_v, model=model, speed=speed, stab=stab, sim=sim, save_k=save_k,
                 listen=listen, sample=sample, text=text, meter=meter, pick=pick, join=join, ht=ht, sug=sug,
                 n_sug=n_sug, clr=clr, words=words, alias=alias, mk_xl=mk_xl, up_xl=up_xl, xl_file=xl_file, gen=gen,
-                load=load, go=go, info=info, zip=zipb, files=files, store=store)
+                load=load, go=go, info=info, zip=zipb, files=files, store=store, p_audio=p_audio,
+                p_listen=p_listen, p_regen=p_regen, p_prev=p_prev, p_vinfo=p_vinfo)
 
 
 def wire_paragraphs(ui, pv, fields):
@@ -1510,6 +1521,44 @@ def wire_paragraphs(ui, pv, fields):
                 "makes only this one.", duration=7)
         return project_to_values(proj, "text")
 
+    def voice_note(p, al, s, made=None):
+        hit = para.voice_for(p, al, DATA_DIR, s, make=False)
+        if not hit:
+            return f"🎙️ Not made yet — ▶ Listen makes it ({len(para.spoken(p, al)[0])} characters of your credits)."
+        prev = " · ↩️ a previous take is kept" if para.has_previous(p, al, DATA_DIR, s) else ""
+        return (made or "✅ This voice is used in the video") + f" ({hit[1][-1][1]:.1f} s){prev}."
+
+    def show_voice(text, pick, alias, *vi):
+        """The paragraph's voice if it is already made (never calls ElevenLabs)."""
+        paras, k = current(text, pick)
+        if not paras:
+            return None, ""
+        s, al = settings(*vi), para.parse_aliases(alias)
+        hit = para.voice_for(paras[k], al, DATA_DIR, s, make=False)
+        return (hit[0] if hit else None), voice_note(paras[k], al, s)
+
+    def voice_action(kind):
+        def fn(text, pick, alias, *vi):
+            paras, k = current(text, pick)
+            if not paras:
+                raise gr.Error("Paste paragraphs first.")
+            s, al = settings(*vi), para.parse_aliases(alias)
+            try:
+                if kind == "listen":
+                    mp3, _ = para.voice_for(paras[k], al, DATA_DIR, s)
+                    note = None
+                elif kind == "regen":
+                    mp3, _ = para.regenerate(paras[k], al, DATA_DIR, s)
+                    note = "🔄 New take — this one is now used in the video"
+                else:
+                    mp3, _ = para.swap_takes(paras[k], al, DATA_DIR, s)
+                    note = "↩️ Back to the other take — this one is now used in the video"
+            except Exception as e:
+                raise gr.Error(_msg(e))
+            el.save_settings(DATA_DIR, **s)
+            return mp3, voice_note(paras[k], al, s, note)
+        return fn
+
     def start(request: gr.Request):
         if not _claim(request):
             raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
@@ -1550,6 +1599,13 @@ def wire_paragraphs(ui, pv, fields):
                     ui["speed"].change], fn=show_meter, inputs=[t, stj, ui["alias"]] + voice_in + fields,
           outputs=ui["meter"], trigger_mode="always_last", show_progress="hidden")
     # clicks answer at once (no queue): a fast second click then always sees the first one's result
+    gr.on(triggers=[t.change, pk.change, ui["alias"].change, ui["voice"].change, ui["model"].change,
+                    ui["speed"].change, ui["stab"].change, ui["sim"].change], fn=show_voice,
+          inputs=[t, pk, ui["alias"]] + voice_in, outputs=[ui["p_audio"], ui["p_vinfo"]],
+          trigger_mode="always_last", show_progress="hidden")
+    for btn, kind in ((ui["p_listen"], "listen"), (ui["p_regen"], "regen"), (ui["p_prev"], "prev")):
+        btn.click(voice_action(kind), [t, pk, ui["alias"]] + voice_in, [ui["p_audio"], ui["p_vinfo"]]).then(
+            show_meter, [t, stj, ui["alias"]] + voice_in + fields, ui["meter"])
     ui["ht"].select(click, [t, stj, pk, ui["join"]], [stj, ui["ht"], ui["words"]], show_progress="hidden",
                     queue=False)
     ui["sug"].click(do_suggest, [t, stj, pk, ui["n_sug"]], [stj, ui["ht"], ui["words"]], queue=False)

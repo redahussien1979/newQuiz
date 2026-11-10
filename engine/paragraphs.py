@@ -247,6 +247,53 @@ def voice_for(p, aliases, data_dir, settings, make=True):
     return mp3, el.word_times(spans, text, al)
 
 
+def _take_files(p, aliases, data_dir, settings):
+    """(current mp3, current json, previous mp3, previous json) of the paragraph's voice with these settings."""
+    text, _ = spoken(p, aliases)
+    key = el.cache_key(text, settings["voice_id"], settings["model"], settings["speed"], settings["stability"],
+                       settings["similarity"])
+    base = os.path.join(data_dir, "tts", key)
+    return base + ".mp3", base + ".json", base + ".prev.mp3", base + ".prev.json"
+
+
+def has_previous(p, aliases, data_dir, settings):
+    _, _, pm, pj = _take_files(p, aliases, data_dir, settings)
+    return os.path.isfile(pm) and os.path.isfile(pj)
+
+
+def regenerate(p, aliases, data_dir, settings):
+    """A new take of the paragraph's voice (ElevenLabs reads it again: only this paragraph's characters are
+    charged). The take it replaces is kept as the previous take. Returns (mp3, word times)."""
+    cm, cj, pm, pj = _take_files(p, aliases, data_dir, settings)
+    if os.path.isfile(cm) and os.path.isfile(cj):
+        os.replace(cm, pm)
+        os.replace(cj, pj)
+    try:
+        return voice_for(p, aliases, data_dir, settings)
+    except Exception:
+        if os.path.isfile(pm) and not os.path.isfile(cm):  # ElevenLabs failed: keep the take we had
+            os.replace(pm, cm)
+            os.replace(pj, cj)
+        raise
+
+
+def swap_takes(p, aliases, data_dir, settings):
+    """Back to the previous take (the current one becomes the previous: press again to come back). No credits."""
+    cm, cj, pm, pj = _take_files(p, aliases, data_dir, settings)
+    if not (os.path.isfile(pm) and os.path.isfile(pj)):
+        raise RuntimeError("There is no previous take of this paragraph yet (🔄 Regenerate voice makes one).")
+    tmp_m, tmp_j = cm + ".swap", cj + ".swap"
+    if os.path.isfile(cm):
+        os.replace(cm, tmp_m)
+        os.replace(cj, tmp_j)
+    os.replace(pm, cm)
+    os.replace(pj, cj)
+    if os.path.isfile(tmp_m):
+        os.replace(tmp_m, pm)
+        os.replace(tmp_j, pj)
+    return voice_for(p, aliases, data_dir, settings, make=False)
+
+
 def chars_needed(paras, aliases, data_dir, settings):
     """Characters (= ElevenLabs credits) the paragraphs still need: cached ones cost nothing."""
     total = 0
