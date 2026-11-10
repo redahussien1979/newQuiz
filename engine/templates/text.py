@@ -122,6 +122,7 @@ EXAMPLE = {
         "lead": 1.0,
         "style": "textbook",
         "read_style": "clear",
+        "text_size": "normal",
         "brand_name": "LOGOLEPT",  # "logo" missing = the bundled Logolept logo (DEFAULT_LOGO)
         "logo_shape": "circle",
         "logo_intro": False,
@@ -694,6 +695,8 @@ class TextVideo:
         # "clear": all text dark from the start, a soft marker glides behind the word being read (default);
         # "ink": the classic read-along (words start faded and ink in as they are spoken)
         self.clear = (d.get("read_style") or "clear") == "clear"
+        # Text size: bigger = a higher smallest size, so the same text simply takes more pages
+        self.MIN_SIZE = min(70, self.MIN_SIZE + {"large": 8, "xlarge": 16}.get(d.get("text_size") or "normal", 0))
         if self.clear:
             self.faded, self.faded_key = self.ink, self.key_ink
             self.DIM = 0.0
@@ -1320,7 +1323,7 @@ class TextVideo:
             end = self.ve[idx[-1]] + 0.4
             for gi in self._keys_in(idx):
                 g = self.groups[gi]
-                self.fly0[gi] = max(self.ve[g["i1"]], self.vs[g["i0"]] + 0.3) + 0.05
+                self.fly0[gi] = self.vs[g["i1"]] + 0.06  # takes off as the word (a phrase: its last word) is spoken
                 end = max(end, self.fly0[gi] + FLY + 0.12 + REVEAL)
             prev_end = end
         self.reading_end = prev_end
