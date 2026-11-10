@@ -73,7 +73,7 @@ VC_KEYS = ["group", "group_name", "title", "subtitle", "lesson", "lesson_n", "it
            "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color"]
 TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "lead", "band", "marker", "style",
            "level", "translation", "logo", "brand_name", "logo_shape", "logo_intro", "logo_end", "ending_on",
-           "para_text", "para_store", "para_alias"]
+           "para_text", "para_store", "para_alias", "read_style"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo"}
 MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
@@ -86,7 +86,8 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "chalk_color": "pink", "tag": "", "lead": 1.0, "band": "teal", "marker": "yellow",
             "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
-            "para_text": "", "para_store": "{}", "para_alias": ""}  # for projects saved before these options existed
+            "para_text": "", "para_store": "{}", "para_alias": "",
+            "read_style": "clear"}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -2066,8 +2067,11 @@ def build_ui():
                                                         "gold glow, glass cards · Exam passage = line numbers, red pen, "
                                                         "LEARNED stamp · Notebook = handwriting, pen circles, sticky "
                                                         "notes")
-                                gr.Markdown("Every design: the text inks in as it is read; highlighted words are "
-                                            "marked, fly into the word bank and their Arabic writes in.")
+                                t_read = gr.Radio([("Clear text — all dark, a marker follows the voice", "clear"),
+                                                   ("Read-along — words start grey and darken as spoken", "ink")],
+                                                  value="clear", label="Reading style")
+                                gr.Markdown("Every design: highlighted words are marked, fly into the word bank and "
+                                            "their Arabic writes in. All pages of a video use the same text size.")
                                 with gr.Row():
                                     t_band = gr.Dropdown(TX_BANDS, value="teal", label="Textbook: page colour",
                                                          info="The title band, Word Bank and ticks")
@@ -2096,7 +2100,7 @@ def build_ui():
                     tx_fields = shared_fields(tx_st, tx_end) + [t_title, t_sub, t_tag, t_words, t_audio, t_gain,
                                                                  t_lead, t_band, t_marker, t_style, t_level, t_trans,
                                                                  t_logo, t_bname, t_lshape, t_lintro, t_lend, t_endon,
-                                                                 txp["text"], txp["store"], txp["alias"]]
+                                                                 txp["text"], txp["store"], txp["alias"], t_read]
                 tx_pv = preview_panel("text")
             wire(tx_proj, tx_pv, tx_fields)
             wire_tx_batch(txl, tx_pv, tx_fields)
