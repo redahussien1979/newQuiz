@@ -732,7 +732,9 @@ def wire(proj, pv, fields):
     def do_render(request: gr.Request, *args, progress=gr.Progress()):
         return run(render, request, *args, progress=progress)
 
-    gr.on(triggers=[c.change for c in [pv["t"], pv["safe"], pv["auto"]] + fields], fn=auto_preview,
+    # fields marked _no_preview (the ✍️ Paragraphs box, its highlights, aliases) do not change the picture
+    live = [c for c in fields if not getattr(c, "_no_preview", False)]
+    gr.on(triggers=[c.change for c in [pv["t"], pv["safe"], pv["auto"]] + live], fn=auto_preview,
           inputs=[pv["auto"], pv["busy"]] + pv_in, outputs=pv_out, trigger_mode="always_last", show_progress="hidden")
     proj["ex"].click(example, None, fields)
     proj["open"].upload(load, proj["open"], fields)
@@ -1362,6 +1364,8 @@ def para_tab():
     files = gr.File(label="Rendered videos (a cover picture is saved next to each)", file_count="multiple",
                     visible=False, height=260)
     store = gr.Textbox(value="{}", visible=False)
+    for c in (text, store, alias):  # editing these never changes the video preview on the right
+        c._no_preview = True
     return dict(key=key, voice=voice, load_v=load_v, model=model, speed=speed, stab=stab, sim=sim, save_k=save_k,
                 listen=listen, sample=sample, text=text, meter=meter, pick=pick, join=join, ht=ht, sug=sug,
                 n_sug=n_sug, clr=clr, words=words, alias=alias, mk_xl=mk_xl, up_xl=up_xl, xl_file=xl_file, gen=gen,
@@ -1390,9 +1394,13 @@ def wire_paragraphs(ui, pv, fields):
         return para.view(paras[k], st), para.words_md(paras[k], st)
 
     def on_text(text, pick):
-        paras, k = current(text, pick)
+        """New paragraph list; the paragraph you picked stays picked (only reset when it no longer exists)."""
+        paras = para.parse(text)
         choices = [(para.label(i, p), str(i)) for i, p in enumerate(paras)]
-        return gr.update(choices=choices, value=str(k) if paras else None)
+        ok = pick is not None and str(pick).isdigit() and int(pick) < len(paras)
+        if ok:
+            return gr.update(choices=choices)
+        return gr.update(choices=choices, value="0" if paras else None)
 
     def show_meter(text, st_js, alias, *rest):
         vi, vals = rest[:6], rest[6:]
@@ -1535,7 +1543,7 @@ def wire_paragraphs(ui, pv, fields):
         yield from _stream_batch(request, plan, progress)
 
     t, stj, pk = ui["text"], ui["store"], ui["pick"]
-    t.change(on_text, [t, pk], pk, show_progress="hidden")
+    t.change(on_text, [t, pk], pk, show_progress="hidden", queue=False, trigger_mode="always_last")
     gr.on(triggers=[t.change, pk.change, stj.change], fn=views, inputs=[t, stj, pk], outputs=[ui["ht"], ui["words"]],
           trigger_mode="always_last", show_progress="hidden")
     gr.on(triggers=[t.change, stj.change, ui["alias"].change, ui["voice"].change, ui["model"].change,
