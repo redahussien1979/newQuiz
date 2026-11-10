@@ -62,7 +62,9 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   the spoken word, no dimming) / `ink` (classic: words start faded and ink in as spoken). `text.text_size`
   normal / large / xlarge raises MIN_SIZE (+8 / +16): bigger text, more pages. A highlighted word takes off when it
   is spoken (`fly0` = start of its last word + 0.06 s). Optional `level` badge and `translation` card after the reading
-  (Arabic justified with kashida: `_ar_justified`). A page = `base` (still parts) + `faded` / `ink` paragraph layers;
+  (Arabic justified with kashida: `_ar_justified`). Ending = its own card (`_layout_end` once, `_draw_end` per frame;
+  per-design look `_end_look`): page blurs back, card springs up, logo on its top edge, — LABEL —, the question word by
+  word (`[tag]` line = accent colour), CTA pill button tapped at `end_press` (+ click sound), handle. A page = `base` (still parts) + `faded` / `ink` paragraph layers;
   per frame: focus band + dim of the other lines (`_focus`/`_dim`), the spoken word breathes (`_breathe`), flight
   trail, landing spring (`_spring`) + per-design `_burst`, camera push-in (`_camera`), waveform progress
   (`_build_wave`, real loudness or from the timings), page curl (`_turn`, numpy cylinder warp). Textbook only:

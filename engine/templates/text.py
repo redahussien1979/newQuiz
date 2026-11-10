@@ -31,8 +31,8 @@ import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from ..audio import SR, audio_length, load_audio
-from ..core import (DEFAULT_FONT, H, ROOT, W, draw_ending, ease_io, ease_out_back, get_font, global_fade,
-                    parse_lines, prog, text_img_in)
+from ..core import (DEFAULT_FONT, H, ROOT, W, ease_io, ease_out_back, get_font, global_fade, prog,
+                    text_img_in)
 
 NAME = "English Texts"
 
@@ -76,6 +76,7 @@ TURN = 0.85                 # page turn (a real page curl)
 FLY = 0.85                  # word flight
 REVEAL = 0.6                # Arabic writes in
 ENDING_LEN = 4.5
+END_LOGO = 0.42             # when the logo pops onto the ending card (s after it starts)
 STING = 0.9                 # the logo opening (when switched on)
 LOGO = 118                  # the logo in the header, px
 DEFAULT_LOGO = os.path.join(ROOT, "projects", "brand", "logolept_logo.png")
@@ -717,9 +718,12 @@ class TextVideo:
             self.pages.append(self._build_recap())
         self.tr = self._build_translation() if self.translation else None
 
-        ending_q = parse_lines(e.get("question", ""), ["white", "gold"])
+        ending_q = [ln.strip() for ln in str(e.get("question", "") or "").splitlines() if ln.strip()]
         self.has_ending = bool(d.get("ending_on", True)) and bool(e.get("intro") or ending_q or e.get("cta"))
-        self.ending = (e.get("intro", ""), ending_q, e.get("cta", ""), s.get("handle", ""))
+        self.ending = (str(e.get("intro", "") or "").strip(), ending_q, str(e.get("cta", "") or "").strip(),
+                       str(s.get("handle", "") or "").strip())
+        if self.has_ending:
+            self._layout_end()
         dur = self.E + (ENDING_LEN if self.has_ending else 0.5)
         if self.audio:
             try:
@@ -1712,10 +1716,8 @@ class TextVideo:
         frame = self._camera(frame, t)
         if self.tr is not None and t >= self.tr0:
             self._draw_translation(frame, t)
-        if self.has_ending:
-            draw_ending(frame, t, self.E, *self.ending, self.accent)
-            if self.end_logo and t >= self.E + 0.1:
-                self._end_logo(frame, t)
+        if self.has_ending and t >= self.E:
+            frame = self._draw_end(frame, t)
         global_fade(frame, t, self.dur, fade_in=False)
         return frame.convert("RGB")
 
@@ -1827,6 +1829,285 @@ class TextVideo:
             return
         im = big.resize((max(1, int(big.width * sc)), max(1, int(big.height * sc))), Image.LANCZOS)
         _comp(frame, im, int(540 - im.width / 2), int(470 - im.height / 2))
+
+    # -------------------------------------------------------------- the ending card
+    def _end_look(self):
+        """Colours / fonts of the ending card; each design overrides the parts that differ."""
+        return dict(card=(255, 255, 255, 255), rim=None, strip=self.band, title=INK, label=self.band,
+                    muted=(118, 124, 130), btn=self.band, btn_txt=(255, 255, 255), veil=(18, 22, 28, 70), radius=44,
+                    label_font=LABEL, label_w="ExtraBold", track=0.22, tilt=0.0, tape=False, rules=False,
+                    hl=self.marker_col)
+
+    def _end_lines(self, lines, max_w, size):
+        """The question's lines wrapped to max_w at a size: [(kind, items, width)] where kind 'en' items = word _Txts
+        and kind 'ar' items = one Arabic line image."""
+        lk = self._end_l
+        out = []
+        for ln in lines:
+            col = lk["title"]
+            m = re.match(r"^\[([^\]]+)\]\s*(.*)$", ln)
+            if m:  # a "[gold] ..." line: in the card's accent colour (a named colour may not read on every card)
+                ln, col = m.group(2).strip(), lk["label"]
+            if not ln:
+                continue
+            if re.search("[\u0600-\u06FF]", ln):
+                im = _ar_fit(ln, size * 0.92, col, self.ar_font, max_w)
+                out.append(("ar", [im], im.width))
+                continue
+            row, w = [], 0.0
+            for word in ln.split():
+                tx = _Txt(word, size, col, self.TITLE_W, self.TITLE)
+                sp = size * 0.28
+                if row and w + sp + tx.w > max_w:
+                    out.append(("en", row, w))
+                    row, w = [], 0.0
+                w += (sp if row else 0) + tx.w
+                row.append(tx)
+            if row:
+                out.append(("en", row, w))
+        return out
+
+    def _layout_end(self):
+        """Lays the ending card out once (sizes and places); _draw_end animates it. The card: logo on its top edge,
+        — NEXT READING — label, the question in the design's title font (one size, up to 4 lines), a call-to-action
+        button that gets tapped, the handle."""
+        lk = self._end_l = self._end_look()
+        intro, q, cta, handle = self.ending
+        CW = 900
+        inner = CW - 130
+        top_pad = 128 if self.end_logo else 76
+        y = top_pad
+        self.end_label = None
+        if intro:
+            txt = intro.rstrip(":：").strip()
+            if not re.search("[\u0600-\u06FF]", txt):
+                txt = txt.upper() if lk["track"] else txt
+                self.end_label = _Txt(txt, 34 if lk["track"] else 50, lk["label"], lk["label_w"], lk["label_font"],
+                                      track=lk["track"])
+            else:
+                self.end_label = _ar_fit(txt, 46, lk["label"], self.ar_font, inner)
+            self.end_label_y = y + 40
+            y += 40 + 62
+        self.end_q = []
+        if q:
+            for size in range(86, 50, -4):
+                rows = self._end_lines(q, inner, size)
+                if len(rows) <= 4 and all(w <= inner for _, _, w in rows):
+                    break
+            pitch = int(size * 1.24)
+            y += int(size * 0.95)
+            k = 0
+            for kind, items, w in rows:
+                x = (CW - w) / 2
+                if kind == "ar":
+                    self.end_q.append(("ar", items[0], x, y, k))
+                    k += 1
+                else:
+                    for tx in items:
+                        self.end_q.append(("en", tx, x, y, k))
+                        x += tx.w + size * 0.28
+                        k += 1
+                y += pitch
+            y -= int(size * 0.2)
+        self.end_btn = None
+        if cta:
+            y += 30
+            room = CW - 80 - 160  # the text beside the (+), inside a pill at most the card width - 80
+            rows = [_Txt(cta, 40, lk["btn_txt"], "Bold", LABEL)]
+            if rows[0].w > room:
+                fz = int(40 * room / rows[0].w)
+                if fz >= 34:
+                    rows = [_Txt(cta, fz, lk["btn_txt"], "Bold", LABEL)]
+                else:  # a long call to action: two balanced lines
+                    ws = cta.split()
+                    parts = [cta]
+                    if len(ws) > 1:
+                        k = min(range(1, len(ws)), key=lambda j: abs(len(" ".join(ws[:j])) - len(" ".join(ws[j:]))))
+                        parts = [" ".join(ws[:k]), " ".join(ws[k:])]
+                    fz = 36
+                    while fz > 22 and max(_font(fz, "Bold", LABEL).getlength(x) for x in parts) > room:
+                        fz -= 2
+                    rows = [_Txt(x, fz, lk["btn_txt"], "Bold", LABEL) for x in parts]
+            tw = max(r.w for r in rows)
+            bh = 108 if len(rows) == 1 else 150
+            bw = tw + 96 + 64
+            self.end_btn = dict(txt=rows, box=((CW - bw) / 2, y, (CW + bw) / 2, y + bh))
+            y += bh
+        self.end_handle = None
+        if handle:
+            y += 64
+            self.end_handle = _Txt(handle, 34, lk["muted"], "SemiBold", LABEL)
+            self.end_handle_y = y
+            y += 10
+        CH = int(y + 70)
+        self.end_size = (CW, CH)
+        # timings (seconds after E)
+        n = max([it[4] for it in self.end_q] + [-1]) + 1
+        self.end_q_t = 0.8
+        q_end = self.end_q_t + 0.075 * n + 0.3
+        self.end_btn_t = q_end + 0.1
+        self.end_press = self.E + max(2.5, self.end_btn_t + 0.75)
+        # the static card (shadow, paper, strip / tape / rules), with a margin for the logo and the shadow
+        M = 120
+        base = Image.new("RGBA", (CW + 2 * M, CH + 2 * M), (0, 0, 0, 0))
+        r = lk["radius"]
+        box = (M, M, M + CW, M + CH)
+        base.alpha_composite(_shadow_box(base.size, box, r, 30, 120 if lk["card"][3] > 200 else 160, 18))
+        d = ImageDraw.Draw(base)
+        d.rounded_rectangle(box, r, fill=lk["card"])
+        if lk["rim"]:
+            d.rounded_rectangle(box, r, outline=lk["rim"], width=3)
+        if lk["strip"]:
+            m = Image.new("L", base.size, 0)
+            ImageDraw.Draw(m).rounded_rectangle(box, r, fill=255)
+            st = Image.new("RGBA", base.size, (0, 0, 0, 0))
+            ImageDraw.Draw(st).rectangle([box[0], box[1], box[2], box[1] + 14], fill=tuple(lk["strip"]) + (255,))
+            st.putalpha(ImageChops.multiply(st.getchannel("A"), m))
+            base.alpha_composite(st)
+        if lk["rules"]:
+            for yy in (box[1] + 26, box[3] - 26):
+                d.line([(box[0] + 40, yy), (box[2] - 40, yy)], fill=(40, 40, 40, 255), width=3)
+                d.line([(box[0] + 40, yy + (8 if yy < box[3] - 30 else -8)),
+                        (box[2] - 40, yy + (8 if yy < box[3] - 30 else -8))], fill=(40, 40, 40, 255), width=1)
+        if lk["tape"]:
+            tp = Image.new("RGBA", (260, 70), (236, 228, 200, 170))
+            td = ImageDraw.Draw(tp)
+            for x in range(0, 260, 9):
+                td.line([(x, 0), (x, 70)], fill=(255, 255, 255, 26), width=3)
+            tp = tp.rotate(-4, expand=True, resample=Image.BICUBIC)
+            base.alpha_composite(tp, (int(M + CW * 0.68 - tp.width / 2), int(M - tp.height / 2 + 4)))
+            if not self.end_logo:
+                base.alpha_composite(tp.transpose(Image.FLIP_LEFT_RIGHT), (int(M + CW * 0.24 - tp.width / 2),
+                                                                          int(M - tp.height / 2 + 4)))
+        self.end_base, self.end_M = base, M
+        self.end_y = max(250, int(900 - CH / 2))
+        if self.end_y + CH > 1500:
+            self.end_y = max(200, 1500 - CH)
+
+    def _draw_end(self, frame, t):
+        lk = self._end_l
+        rel = t - self.E
+        a = ease_io(prog(rel, 0.0, 0.55))
+        if a > 0.001:  # the page goes soft and steps back
+            small = frame.resize((W // 4, H // 4), Image.BILINEAR).filter(ImageFilter.GaussianBlur(5))
+            blur = small.resize((W, H), Image.BILINEAR)
+            frame = Image.blend(frame, blur, a)
+            v = lk["veil"]
+            frame.alpha_composite(Image.new("RGBA", (W, H), v[:3] + (int(v[3] * a),)))
+        p = prog(rel, 0.12, 0.72)
+        if p <= 0:
+            return frame
+        CW, CH = self.end_size
+        M = self.end_M
+        card = self.end_base.copy()
+        # logo on the top edge
+        if self.end_logo:
+            big = self._big_logo(196)
+            sc = ease_out_back(prog(rel, END_LOGO, END_LOGO + 0.4))
+            if sc > 0.02:
+                im = big.resize((max(1, int(big.width * sc)), max(1, int(big.height * sc))), Image.LANCZOS)
+                _comp(card, im, int(M + CW / 2 - im.width / 2), int(M - im.height / 2 + 6))
+        # — LABEL —
+        if self.end_label is not None:
+            lp = ease_io(prog(rel, 0.55, 1.0))
+            if lp > 0:
+                lab = self.end_label
+                lw = lab.w if isinstance(lab, _Txt) else lab.width
+                cx, ly = M + CW / 2, M + self.end_label_y
+                if isinstance(lab, _Txt):
+                    lab.put(card, cx - lw / 2, ly, lp)
+                    mid = ly - lab.size * 0.36
+                else:
+                    _comp(card, _fade(lab, lp), int(cx - lw / 2), int(ly - lab.height * 0.7))
+                    mid = ly - lab.height * 0.2
+                L = 70 * lp
+                dd = ImageDraw.Draw(card)
+                c = tuple(lk["label"]) + (255,)
+                dd.line([(cx - lw / 2 - 24 - L, mid), (cx - lw / 2 - 24, mid)], fill=c, width=4)
+                dd.line([(cx + lw / 2 + 24, mid), (cx + lw / 2 + 24 + L, mid)], fill=c, width=4)
+        # the question, word by word
+        for kind, im, x, y, k in self.end_q:
+            t0 = self.end_q_t + 0.075 * k
+            wp = prog(rel, t0, t0 + 0.32)
+            if wp <= 0:
+                continue
+            dy = 22 * (1 - ease_io(wp))
+            if kind == "en":
+                im.put(card, M + x, M + y + dy, min(1.0, wp * 1.4))
+            else:
+                _comp(card, _fade(im, min(1.0, wp * 1.4)), int(M + x), int(M + y + dy - im.height * 0.72))
+        # the button: springs in, gets a shine, is tapped (press + ripple)
+        if self.end_btn is not None:
+            bp = prog(rel, self.end_btn_t, self.end_btn_t + 0.45)
+            if bp > 0:
+                card = self._draw_end_btn(card, M, rel, bp)
+        if self.end_handle is not None:
+            hp = prog(rel, self.end_btn_t + 0.35, self.end_btn_t + 0.7)
+            if hp > 0:
+                self.end_handle.put(card, M + CW / 2 - self.end_handle.w / 2, M + self.end_handle_y, hp)
+        # the card rises with a spring (and a notebook note sits a little crooked)
+        e = ease_out_back(p)
+        sc = 0.9 + 0.1 * e
+        if lk["tilt"]:
+            card = card.rotate(lk["tilt"] * (0.4 + 0.6 * e), resample=Image.BICUBIC, expand=False)
+        if sc < 0.999:
+            card = card.resize((max(1, int(card.width * sc)), max(1, int(card.height * sc))), Image.BICUBIC)
+        card = _fade(card, min(1.0, p * 2.2))
+        cx, cy = W / 2, self.end_y + CH / 2 + 160 * (1 - e)
+        _comp(frame, card, int(cx - card.width / 2), int(cy - card.height / 2))
+        return frame
+
+    def _draw_end_btn(self, card, M, rel, bp):
+        lk = self._end_l
+        b = self.end_btn
+        x0, y0, x1, y1 = b["box"]
+        x0, y0, x1, y1 = x0 + M, y0 + M, x1 + M, y1 + M
+        bw, bh = x1 - x0, y1 - y0
+        S = 2
+        im = Image.new("RGBA", (int(bw + 80) * S, int(bh + 80) * S), (0, 0, 0, 0))
+        ox = oy = 40
+        pr = rel + self.E - self.end_press
+        # tapped: ripple ring out of the button
+        if 0 <= pr < 0.8:
+            q = pr / 0.8
+            g = 30 * ease_io(q)
+            ImageDraw.Draw(im).rounded_rectangle([(ox - g) * S, (oy - g) * S, (ox + bw + g) * S, (oy + bh + g) * S],
+                                                 int((bh / 2 + g) * S), outline=tuple(lk["btn"]) + (int(150 * (1 - q)),),
+                                                 width=5 * S)
+        sh = _shadow_box(im.size, (ox * S, (oy + 4) * S, (ox + bw) * S, (oy + bh + 4) * S), bh / 2 * S, 10 * S, 90, 0)
+        im.alpha_composite(sh)
+        d = ImageDraw.Draw(im)
+        d.rounded_rectangle([ox * S, oy * S, (ox + bw) * S, (oy + bh) * S], int(bh / 2 * S),
+                            fill=tuple(lk["btn"]) + (255,))
+        # the "+" in a ring at the left (follow)
+        cx, cy, r = (ox + 30 + 28) * S, (oy + bh / 2) * S, 26 * S
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=tuple(lk["btn_txt"]) + (255,), width=4 * S)
+        L = 12 * S
+        d.line([(cx - L, cy), (cx + L, cy)], fill=tuple(lk["btn_txt"]) + (255,), width=5 * S)
+        d.line([(cx, cy - L), (cx, cy + L)], fill=tuple(lk["btn_txt"]) + (255,), width=5 * S)
+        im = im.resize((int(bw + 80), int(bh + 80)), Image.LANCZOS)
+        rows = b["txt"]
+        pitch = rows[0].size * 1.25
+        for j, r in enumerate(rows):
+            r.put(im, ox + 96, oy + bh / 2 + r.size * 0.36 + (j - (len(rows) - 1) / 2) * pitch)
+        # a shine sweeps across every 1.6 s
+        sp = (rel - self.end_btn_t - 0.5) % 1.6
+        if sp < 0.6 and rel > self.end_btn_t + 0.5:
+            m = Image.new("L", im.size, 0)
+            ImageDraw.Draw(m).rounded_rectangle([ox, oy, ox + bw, oy + bh], int(bh / 2), fill=255)
+            gl = Image.new("L", im.size, 0)
+            gx = ox - 80 + (bw + 160) * sp / 0.6
+            ImageDraw.Draw(gl).polygon([(gx, oy), (gx + 46, oy), (gx + 16, oy + bh), (gx - 30, oy + bh)], fill=70)
+            gl = ImageChops.multiply(gl.filter(ImageFilter.GaussianBlur(6)), m)
+            im.alpha_composite(Image.merge("RGBA", (*[Image.new("L", im.size, 255)] * 3, gl)))
+        # spring in, then the tap squeezes it
+        sc = 0.6 + 0.4 * ease_out_back(bp)
+        if 0 <= pr < 0.3:
+            sc *= 1 - 0.07 * math.sin(math.pi * pr / 0.3)
+        if abs(sc - 1) > 0.002:
+            im = im.resize((max(1, int(im.width * sc)), max(1, int(im.height * sc))), Image.BICUBIC)
+        _comp(card, _fade(im, min(1.0, bp * 2)), int((x0 + x1) / 2 - im.width / 2), int((y0 + y1) / 2 - im.height / 2))
+        return card
 
     def _wt(self, i, f):
         """The moment the reading reaches fraction f of word i."""
@@ -2051,6 +2332,10 @@ class TextVideo:
             mx.add(self.tr0, mx.paper(), 0.4)
         if self.has_ending:
             mx.add(self.E, mx.chime(), 0.18)
+            if self.end_logo:
+                mx.add(self.E + END_LOGO, mx.pop(), 0.07)
+            if self.end_btn is not None:
+                mx.add(self.end_press, mx.click(), 0.2)
 
     def _final_sound(self, mx):
         pass
@@ -2092,6 +2377,11 @@ class StudioVideo(TextVideo):
     W_REG, W_KEY = "Medium", "Bold"
     LINE = 1.7
     GOLD, BLUE = (246, 197, 96), (122, 162, 255)
+
+    def _end_look(self):
+        return dict(super()._end_look(), card=(16, 22, 46, 236), rim=(246, 197, 96, 150), strip=None,
+                    title=(255, 255, 255), label=self.GOLD, muted=(150, 160, 196), btn=self.GOLD, btn_txt=(16, 20, 40),
+                    veil=(4, 6, 16, 150))
 
     def _style(self, d):
         super()._style(d)
@@ -2294,6 +2584,10 @@ class ExamVideo(TextVideo):
     RED, BLUE = (200, 38, 28), (31, 79, 163)
     SHEET = (36, 40, 1044, 1700)
 
+    def _end_look(self):
+        return dict(super()._end_look(), card=(255, 254, 250, 255), strip=None, rules=True, radius=6,
+                    title=(22, 22, 22), label=self.RED, btn=self.RED, veil=(20, 20, 20, 80))
+
     def _style(self, d):
         super()._style(d)
         self.accent = self.RED
@@ -2467,6 +2761,11 @@ class NotebookVideo(TextVideo):
     LINE = 1.5
     MARK_ON_TOP = True
     BLUE, RED = (31, 59, 115), (208, 52, 44)
+
+    def _end_look(self):
+        return dict(super()._end_look(), card=(255, 241, 158, 255), strip=None, radius=8, tilt=-1.6, tape=True,
+                    title=self.BLUE, label=self.RED, muted=(120, 110, 70), btn=self.BLUE, label_font=HAND,
+                    label_w="Regular", track=0.0, veil=(30, 34, 44, 70))
 
     def _style(self, d):
         super()._style(d)
