@@ -121,6 +121,8 @@ EXAMPLE = {
         "audio_gain": 1.0,
         "lead": 1.0,
         "style": "textbook",
+        "read_style": "clear",
+        "text_size": "normal",
         "brand_name": "LOGOLEPT",  # "logo" missing = the bundled Logolept logo (DEFAULT_LOGO)
         "logo_shape": "circle",
         "logo_intro": False,
@@ -690,6 +692,14 @@ class TextVideo:
 
         self._style(d)
         self._apply_font(s.get("font_file"))
+        # "clear": all text dark from the start, a soft marker glides behind the word being read (default);
+        # "ink": the classic read-along (words start faded and ink in as they are spoken)
+        self.clear = (d.get("read_style") or "clear") == "clear"
+        # Text size: bigger = a higher smallest size, so the same text simply takes more pages
+        self.MIN_SIZE = min(70, self.MIN_SIZE + {"large": 8, "xlarge": 16}.get(d.get("text_size") or "normal", 0))
+        if self.clear:
+            self.faded, self.faded_key = self.ink, self.key_ink
+            self.DIM = 0.0
         self.width = self.x1 - self.x0
         self._header()
         self._paginate()
@@ -1243,7 +1253,7 @@ class TextVideo:
         _, self.size, self.page_words = best
         # each page then takes the biggest size that fits it (at most 15 % bigger, so the pages still match) and
         # whose justified lines keep tight word gaps (a book page, not rivers of white)
-        self.page_size = [self._page_size(idx) for idx in self.page_words]
+        self.page_size = [self._common_size(self.page_words)] * len(self.page_words)  # one size, like a book
         self.gsize = {}
         for idx, z in zip(self.page_words, self.page_size):
             for gi in self._keys_in(idx):
@@ -1273,6 +1283,15 @@ class TextVideo:
         lines = self._break(idx, size)
         return max([1.0] + [self._justify(ln, size, False, self._line_w(idx, size, li))[0] / sp
                             for li, ln in enumerate(lines[:-1]) if len(ln) > 1])
+
+    def _common_size(self, pages):
+        """One text size for every page: the biggest that fits them all (at most 15 % over the base size), traded
+        against the widest justified word gap on any of them (each space over GAP_MAX costs 5 px of size)."""
+        fit = [z for z in SIZES if z <= self.size * 1.15 and all(self._fits(idx, z) for idx in pages)] or [self.size]
+        floor = max(self.MIN_SIZE - 4, fit[0] * 0.8)
+        return max((z for z in fit if z >= floor),
+                   key=lambda z: z - 5 * max(0.0, max(self._gap_ratio(idx, z) for idx in pages) - self.GAP_MAX),
+                   default=fit[0])
 
     def _page_size(self, idx):
         sizes = [z for z in SIZES if z <= self.size * 1.15 and self._fits(idx, z)] or [self.size]
@@ -1304,7 +1323,7 @@ class TextVideo:
             end = self.ve[idx[-1]] + 0.4
             for gi in self._keys_in(idx):
                 g = self.groups[gi]
-                self.fly0[gi] = max(self.ve[g["i1"]], self.vs[g["i0"]] + 0.3) + 0.05
+                self.fly0[gi] = self.vs[g["i1"]] + 0.06  # takes off as the word (a phrase: its last word) is spoken
                 end = max(end, self.fly0[gi] + FLY + 0.12 + REVEAL)
             prev_end = end
         self.reading_end = prev_end
@@ -1379,7 +1398,7 @@ class TextVideo:
                 box = (int(x) - 2, int(yb - asc - 4), int(math.ceil(x + w)) + 2, int(yb + desc + 4))
                 boxes.setdefault(i, box)  # the flight starts from the word's first piece
                 f0, f1 = a / len(word), (b / len(word) if b < len(word) else 1.0)
-                pieces.append(dict(i=i, box=box, f0=f0, f1=f1))
+                pieces.append(dict(i=i, box=box, f0=f0, f1=f1, yb=yb))
                 if key:
                     tw = w - (3 + sup_f.getlength(sup) if sup else 0)
                     self._decor(dd, x, yb, tw, size)
@@ -1831,6 +1850,8 @@ class TextVideo:
         focus = self._focus(pg, t)
         if focus:
             self._draw_focus_band(frame, pg, *focus)
+        if self.clear:
+            self._draw_reader(frame, pg, t)
         if not self.MARK_ON_TOP:
             for sp in pg["spans"]:
                 q = self._span_q(sp, t)
@@ -1920,6 +1941,49 @@ class TextVideo:
             e = ease_io(prog(t, lines[c]["t0"] - 0.2, lines[c]["t0"] + 0.12))
             y = lines[c - 1]["y"] + (y - lines[c - 1]["y"]) * e
         return y, a
+
+    def _reader_col(self):
+        """The reading marker's colour: a soft tint of the design's colour (RGBA)."""
+        return getattr(self, "reader_col", None) or (_mix(self.accent, PAPER_TOP, 0.74) + (255,))
+
+    def _draw_reader(self, frame, pg, t):
+        """Clear text: a soft rounded marker behind the word being read, gliding from word to word on a line."""
+        lines = pg["lines"]
+        if not lines or t < lines[0]["t0"] - 0.05:
+            return
+        a = 1 - prog(t, lines[-1]["t1"] + 0.1, lines[-1]["t1"] + 0.45)
+        if a <= 0.01:
+            return
+        cur = prev = None
+        for pc in pg["pieces"]:
+            if pc.get("dc"):
+                continue
+            t0 = self._wt(pc["i"], pc["f0"])
+            if t0 <= t:
+                prev, cur = cur, (pc, t0)
+            else:
+                break
+        if cur is None:
+            return
+        pc, t0 = cur
+        size = pg["size"]
+        x0, _, x1, _ = pc["box"]
+        yb = pc["yb"]
+        if prev is not None and abs(prev[0]["yb"] - yb) < 2:  # glide from the word before on the same line
+            e = ease_io(prog(t, t0, t0 + 0.16))
+            px0, _, px1, _ = prev[0]["box"]
+            x0, x1 = px0 + (x0 - px0) * e, px1 + (x1 - px1) * e
+        else:  # a new line: it grows in
+            e = 1 - (1 - prog(t, t0, t0 + 0.14)) ** 3
+            cx, hw = (x0 + x1) / 2, (x1 - x0) / 2 * (0.6 + 0.4 * e)
+            x0, x1 = cx - hw, cx + hw
+        y0, y1 = yb - size * 0.84, yb + size * 0.30
+        w, h = int(x1 - x0 + 20), int(y1 - y0)
+        col = self._reader_col()
+        im = Image.new("RGBA", (max(1, w), max(1, h)), (0, 0, 0, 0))
+        ImageDraw.Draw(im).rounded_rectangle([0, 0, w - 1, h - 1], int(h * 0.32),
+                                             fill=col[:3] + (int(col[3] * a),))
+        _comp(frame, im, int(x0 - 10), int(y0))
 
     def _draw_focus_band(self, frame, pg, y, a):
         size = pg["size"]
@@ -2043,6 +2107,7 @@ class StudioVideo(TextVideo):
         self.wave_cols = ((255, 255, 255, 46), "grad")
         self.wave_grad = (self.BLUE, self.GOLD)
         self.focus_col = (255, 255, 255, 15)
+        self.reader_col = (255, 255, 255, 40)
         self.page_back = (26, 34, 66)
 
     def _background(self):
@@ -2246,6 +2311,7 @@ class ExamVideo(TextVideo):
         self.wave_cols = ((216, 212, 204), (22, 22, 22))
         self.wave_grad = ((22, 22, 22), (22, 22, 22))
         self.focus_col = (234, 240, 250, 255)
+        self.reader_col = (212, 224, 246, 255)
         self.page_back = (246, 244, 238)
 
     def show_line_ref(self):
@@ -2416,6 +2482,7 @@ class NotebookVideo(TextVideo):
         self.wave_cols = ((202, 214, 230), self.BLUE)
         self.wave_grad = (self.BLUE, self.BLUE)
         self.focus_col = (255, 244, 160, 120)
+        self.reader_col = (255, 232, 130, 170)
         self.page_back = (243, 240, 229)
 
     def _background(self):

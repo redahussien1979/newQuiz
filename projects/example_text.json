@@ -32,6 +32,8 @@
     "audio_gain": 1.0,
     "lead": 1.0,
     "style": "textbook",
+    "read_style": "clear",
+    "text_size": "normal",
     "brand_name": "LOGOLEPT",
     "logo_shape": "circle",
     "logo_intro": false,
