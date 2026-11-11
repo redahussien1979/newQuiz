@@ -1361,7 +1361,10 @@ def para_tab():
     alias = gr.Textbox(lines=2, max_lines=10, label="🗣️ Say it differently (optional)",
                        placeholder="COP29 = cop twenty-nine\nDr. = doctor",
                        info="The screen shows the left side, the voice reads the right side")
-    gr.Markdown("**🌐 Arabic meanings** — download the sheet, write the Arabic, upload it back")
+    gr.Markdown("**🌐 Arabic meanings** — download the sheet, write the Arabic, upload it back. Uploading a "
+                "sheet also fills an empty paragraph box (tab *paragraphs*: title + English paragraph) and "
+                "highlights the words of tab *words* in the text — written as in the text or in dictionary "
+                "form (*go by the board*, *give (something) a wide berth*); the Word Bank then shows that form.")
     with gr.Row(equal_height=True):
         mk_xl = gr.Button("⬇️ Make the words sheet (Excel)", min_width=200)
         up_xl = gr.UploadButton("⬆️ Upload the filled sheet", file_types=[".xlsx"], min_width=200)
@@ -1453,14 +1456,17 @@ def wire_paragraphs(ui, pv, fields):
         return gr.update(value=path, visible=True)
 
     def read_sheet(file, text, st_js, pick):
+        """The words sheet back: fills meanings / translations, highlights its words in the text and adds the
+        paragraphs the paste box does not have yet (an empty box gets them all)."""
         path = file if isinstance(file, str) else getattr(file, "name", None)
-        paras, k = current(text, pick)
         try:
-            st, msg = para.import_xlsx(path, paras, _store(st_js))
+            st, new_text, msg = para.import_xlsx(path, para.parse(text), _store(st_js), text)
         except Exception as e:
             raise gr.Error(f"Could not read the sheet: {_msg(e)}")
-        gr.Info(msg, duration=6)
-        return json.dumps(st, ensure_ascii=False), para.words_md(paras[k], st) if paras else gr.update()
+        gr.Info(msg, duration=10)
+        paras, k = current(new_text if new_text is not None else text, pick)
+        return (json.dumps(st, ensure_ascii=False), gr.update() if new_text is None else new_text,
+                para.view(paras[k], st) if paras else [], para.words_md(paras[k], st) if paras else gr.update())
 
     def save_voice(*vi):
         s = settings(*vi)
@@ -1613,7 +1619,7 @@ def wire_paragraphs(ui, pv, fields):
     ui["sug"].click(do_suggest, [t, stj, pk, ui["n_sug"]], [stj, ui["ht"], ui["words"]], queue=False)
     ui["clr"].click(do_clear, [t, stj, pk], [stj, ui["ht"], ui["words"]], queue=False)
     ui["mk_xl"].click(make_sheet, [t, stj], ui["xl_file"])
-    ui["up_xl"].upload(read_sheet, [ui["up_xl"], t, stj, pk], [stj, ui["words"]])
+    ui["up_xl"].upload(read_sheet, [ui["up_xl"], t, stj, pk], [stj, t, ui["ht"], ui["words"]])
     ui["save_k"].click(save_voice, voice_in, None)
     ui["load_v"].click(load_voices, [ui["key"], ui["voice"]], ui["voice"])
     ui["listen"].click(do_listen, [t, ui["alias"]] + voice_in, ui["sample"])
