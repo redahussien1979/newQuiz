@@ -95,6 +95,12 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `_BASE` (`pop` default, `breaking`, `studio`, `tv`, `paper`): background / header / caption mode (`page` = 1-2 lines,
   `pop` = 1-3 huge words, too-wide lines shrink: `fit`) / card variant (`_card_pop` / `_card_bar` / `_card_sticker` /
   `_card_clip`) / ticker. Landscape = framed panel under the headline; vertical = full screen.
+  Layout `_place()` measures the cards (`card_box`, solid part) and the subtitle letters (`cap_band`) and only shrinks a
+  landscape panel when the card would cross the safe line. Cards queue (never overlap), give way after `CARD_MIN`,
+  are left out if they would come `CARD_LAG` late (the word stays in the subtitles + recap).
+  App: several clips per project — `news.clips` (JSON list of video / headline / trim / words) + `news.clip_index`
+  (the clip in the editor, mirrored in the editor fields; `wire_news.commit` only writes onto the same file);
+  🎬 Render all clips = `_stream_batch` over `news_project(base, clip)`.
   `engine/news_words.py` = the tab's transcript editor (click to toggle key words / phrases, meanings table, suggest);
   `elevenlabs.transcribe` = speech-to-text (multipart urllib, `scribe_v1`), cached in `DATA_DIR/stt/<file hash>.json`
 - `engine/know_country/` — 🌍 Know a Country tab (not a template class: its own renderer). `video.py` = one Excel
