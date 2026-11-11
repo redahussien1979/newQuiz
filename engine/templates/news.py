@@ -7,11 +7,20 @@ Words box (the project's `news.words`, the same columns as 📖 English Texts):
 one spoken word per line, times in seconds in the uploaded video. A line with something in `highlighted` is a key
 word (`*` = the word itself); neighbouring lines with the same several-word highlighted text are one phrase.
 
-Layout: a landscape / square video sits in a framed panel near the top over a blurred, darkened copy of itself; a
-vertical video fills the screen. Subtitles and the word card stay inside the Shorts safe area (above y 1536).
-The source video is decoded by FFmpeg as it is needed; render(t) depends only on t (frames are drawn on several
-processes, each with its own decoder, in long runs of frames: `chunk`).
+Looks (`news.look`, see LOOKS): one engine, each look only sets colours / fonts and picks its background, header,
+subtitle, card and ending variants:
+    breaking   dark, blurred copy of the clip behind a framed panel, white cards              (default)
+    studio     clean and light, dark word cards
+    tv         broadcast: subtitles on a solid band, lower-third word bar, a ticker of the words
+    pop        creator style: 1-3 huge words at a time, yellow sticker cards
+    paper      newspaper: newsprint, serif type, paper clippings with tape
+
+Layout: a landscape / square video sits in a framed panel near the top; a vertical video fills the screen.
+Subtitles and the word card stay inside the Shorts safe area (above y 1536). The source video is decoded by FFmpeg
+as it is needed; render(t) depends only on t (frames are drawn on several processes, each with its own decoder, in
+long runs of frames: `chunk`).
 """
+import io
 import math
 import os
 import re
@@ -22,24 +31,81 @@ from PIL import Image, ImageDraw, ImageFilter
 
 from ..audio import SR, load_audio
 from ..core import H, ROOT, W, ffmpeg_exe, get_font
-from .text import (DEFAULT_LOGO, LABEL, PLEX_AR, _ar_fit, _comp, _fade, _groups, _shadow_box, _spring, logo_badge,
-                   parse_words)
+from .text import DEFAULT_LOGO, _ar_fit, _comp, _fade, _groups, _shadow_box, _spring, logo_badge, parse_words
 
 NAME = "English in News"
+
+_LIB = os.path.join(ROOT, "fonts", "library")
+
+
+def _lib(*parts):
+    path = os.path.join(_LIB, *parts)
+    return path if os.path.isfile(path) else os.path.join(ROOT, "fonts", "Cairo.ttf")
+
+
+MONT = _lib("Montserrat", "Montserrat[wght].ttf")
+ANTON = _lib("Anton", "Anton-Regular.ttf")
+OSWALD = _lib("Oswald", "Oswald[wght].ttf")
+PLAYFAIR = _lib("PlayfairDisplay", "PlayfairDisplay[wght].ttf")
+LITERATA = _lib("Literata", "Literata[opsz,wght].ttf")
+PLEX_AR = _lib("IBMPlexSansArabic", "IBMPlexSansArabic-Bold.ttf")
+AMIRI = _lib("Amiri", "Amiri-Bold.ttf")
+TAJAWAL = _lib("Tajawal", "Tajawal-Black.ttf")
 
 LEAD = 0.7                  # the header comes in over the first frame before the clip plays
 ENDING_LEN = 5.0
 CARD_MIN, CARD_HOLD = 1.8, 4.2
 SAFE_BOTTOM = 1536
-CAP_SIZE = 62
 CAP_MAX_W = 900
+TICKER_Y = 1470            # the tv ticker (64 px high, ends at the safe-area line)
 ACCENTS = {"red": (228, 30, 48), "blue": (28, 110, 230), "teal": (0, 150, 150), "orange": (240, 120, 20),
            "purple": (126, 64, 210)}
 ACCENT_CHOICES = [("News red", "red"), ("Blue", "blue"), ("Teal", "teal"), ("Orange", "orange"),
                   ("Purple", "purple")]
-MARK = (255, 214, 10)       # the key-word marker in the subtitles
+YELLOW = (255, 214, 10)
 INK = (20, 22, 28)
+WHITE = (255, 255, 255)
 _SENT_END = re.compile(r"[.!?…][\"'”’)\]]*$")
+
+# every look: colours, fonts and which variant of each part it draws
+_BASE = dict(
+    bg="blur",                       # blur (the clip, blurred) | light | paper
+    shade=0.45,                      # darkening over a blurred background
+    header="bar",                    # bar (accent bar left of the headline) | box (tv) | masthead (paper)
+    head_col=WHITE, sub_col=WHITE, head_font=MONT, head_weight="ExtraBold",
+    panel_r=26, panel_rim=(255, 255, 255, 70), panel_shadow=150, track=(255, 255, 255, 60),
+    cap_mode="page", cap_font=MONT, cap_weight="ExtraBold", cap_size=62, upper=False, max_lines=2, max_words=99,
+    cap_col=WHITE, cap_stroke=4, stroke_col=(10, 12, 18), dim=0.55,
+    speak="pill", speak_col=WHITE,   # pill (accent pill behind the spoken word) | color (spoken word recoloured)
+    mark=YELLOW, key_col=INK, key_stroke=None,
+    band=None,                       # a solid band behind the subtitles (tv)
+    card="pop",                      # pop | bar (tv lower third) | sticker (pop) | clip (paper)
+    card_bg=WHITE, card_en=INK, card_ar=None, card_label=None, card_font=MONT, card_weight="ExtraBold",
+    ar_font=PLEX_AR, ticker=False,
+    end_bg=WHITE, end_row=(244, 245, 248), end_en=INK, end_ar=None, end_sub=(120, 126, 136), end_font=MONT,
+    end_text=WHITE,
+)
+LOOKS = {
+    "breaking": dict(),
+    "studio": dict(bg="light", head_col=INK, sub_col=(70, 76, 88), panel_rim=(0, 0, 0, 0), panel_shadow=90,
+                   track=(20, 22, 28, 40), cap_col=INK, cap_stroke=0, dim=0.32, card_bg=INK, card_en=WHITE,
+                   card_ar=YELLOW, end_text=INK),
+    "tv": dict(header="box", head_font=OSWALD, head_weight="Bold", cap_font=OSWALD, cap_weight="SemiBold",
+               cap_size=60, cap_stroke=0, band=(8, 12, 26, 235), dim=0.5, speak="color", speak_col=YELLOW,
+               card="bar", card_font=OSWALD, card_weight="Bold", ticker=True, panel_r=6, end_font=OSWALD),
+    "pop": dict(cap_mode="pop", cap_font=ANTON, cap_weight="Regular", cap_size=112, upper=True, max_lines=1,
+                max_words=3, cap_stroke=8, stroke_col=(0, 0, 0), dim=1.0, speak="color", speak_col=YELLOW,
+                key_col=WHITE, key_stroke=(0, 0, 0), card="sticker", card_bg=YELLOW, card_en=INK, card_font=ANTON,
+                card_weight="Regular", ar_font=TAJAWAL, head_font=ANTON, head_weight="Regular", panel_r=34),
+    "paper": dict(bg="paper", header="masthead", head_col=INK, sub_col=(90, 84, 76), head_font=PLAYFAIR,
+                  head_weight="Bold", panel_r=3, panel_rim=(30, 28, 26, 255), panel_shadow=70,
+                  track=(30, 28, 26, 50), cap_font=LITERATA, cap_weight="SemiBold", cap_size=58, cap_col=INK,
+                  cap_stroke=0, dim=0.38, speak="color", speak_col=None, mark=(255, 226, 90), card="clip",
+                  card_bg=(253, 251, 245), card_font=PLAYFAIR, card_weight="Bold", ar_font=AMIRI,
+                  end_bg=(253, 251, 245), end_row=(244, 239, 228), end_font=PLAYFAIR, end_text=INK),
+}
+LOOK_CHOICES = [("🔴 Breaking (dark)", "breaking"), ("⚪ Studio (light)", "studio"), ("📺 TV broadcast", "tv"),
+                ("💥 Pop (big words)", "pop"), ("📰 Newspaper", "paper")]
 
 EXAMPLE = {
     "template": "news",
@@ -50,6 +116,7 @@ EXAMPLE = {
     "ending": {"intro": "Words from the news", "question": "", "cta": "Follow for English from the news every day"},
     "news": {
         "video": "",
+        "look": "breaking",
         "headline": "Heatwave pushes cities to open cooling centres",
         "tag": "NEWS",
         "label": "ENGLISH IN NEWS",
@@ -83,7 +150,6 @@ def probe(path):
                         "-vcodec", "png", "-"], capture_output=True)
     if p.returncode != 0 or not p.stdout:
         raise RuntimeError(f"Could not read the video: {os.path.basename(str(path))}")
-    import io
     w, h = Image.open(io.BytesIO(p.stdout)).size
     info = subprocess.run([ffmpeg_exe(), "-hide_banner", "-i", path], capture_output=True).stderr.decode(errors="ignore")
     m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", info)
@@ -151,31 +217,27 @@ class _Decoder:
 
 
 # ------------------------------------------------------------------ drawing helpers
-def _font(size, weight="Bold"):
-    return get_font(int(size), weight, LABEL)
-
-
-def _text(txt, size, col, weight="Bold", stroke=0, stroke_col=(0, 0, 0)):
-    """One line of Latin text as a tight RGBA image (+ the pad around the ink box)."""
-    f = _font(size, weight)
+def _text(txt, size, col, weight="Bold", path=MONT, stroke=0, stroke_col=(0, 0, 0)):
+    """One line of Latin text as an RGBA image (6 px + stroke of room around the font box)."""
+    f = get_font(int(size), weight, path)
     asc, desc = f.getmetrics()
     pad = 6 + stroke
     w = int(math.ceil(f.getlength(txt))) + 2 * pad
     im = Image.new("RGBA", (max(1, w), asc + desc + 2 * pad), (0, 0, 0, 0))
-    ImageDraw.Draw(im).text((pad, pad), txt, font=f, fill=tuple(col) + (255,), stroke_width=stroke,
-                            stroke_fill=tuple(stroke_col) + (255,))
+    ImageDraw.Draw(im).text((pad, pad), txt, font=f, fill=tuple(col)[:3] + (255,), stroke_width=stroke,
+                            stroke_fill=tuple(stroke_col)[:3] + (255,))
     return im
 
 
-def _fit_text(txt, size, col, max_w, weight="Bold", min_size=30):
-    im = _text(txt, size, col, weight)
+def _fit_text(txt, size, col, max_w, weight="Bold", path=MONT, min_size=26):
+    im = _text(txt, size, col, weight, path)
     if im.width > max_w:
-        im = _text(txt, max(min_size, int(size * max_w / im.width)), col, weight)
+        im = _text(txt, max(min_size, int(size * max_w / im.width)), col, weight, path)
     return im
 
 
-def _wrap(txt, size, weight, max_w, max_lines=2):
-    f = _font(size, weight)
+def _wrap(txt, size, weight, path, max_w, max_lines=2):
+    f = get_font(int(size), weight, path)
     lines, cur = [], ""
     for w in txt.split():
         test = (cur + " " + w).strip()
@@ -211,6 +273,18 @@ def _back(x):
     return 1 + (c + 1) * (x - 1) ** 3 + c * (x - 1) ** 2
 
 
+def _scaled(im, sc):
+    if abs(sc - 1) < 0.004:
+        return im
+    return im.resize((max(1, int(im.width * sc)), max(1, int(im.height * sc))), Image.BILINEAR)
+
+
+def _noise(size, amount, seed=3):
+    rng = np.random.default_rng(seed)
+    n = rng.normal(0, amount, (max(1, size[1] // 2), max(1, size[0] // 2))).astype(np.float32)
+    return np.array(Image.fromarray(n, "F").resize(size, Image.BILINEAR), np.float32)
+
+
 # ------------------------------------------------------------------ the video
 class NewsVideo:
     chunk = 45                    # frames per job when rendering on several processes (fewer decoder restarts)
@@ -223,6 +297,13 @@ class NewsVideo:
         self.fps = int(s.get("fps") or 30)
         self.handle = str(s.get("handle") or "").strip()
         self.accent = ACCENTS.get(n.get("accent"), ACCENTS["red"])
+        self.look_name = n.get("look") if n.get("look") in LOOKS else "breaking"
+        L = dict(_BASE)
+        L.update(LOOKS[self.look_name])
+        for k in ("card_ar", "card_label", "end_ar", "speak_col"):
+            if L[k] is None:
+                L[k] = self.accent
+        self.L = L
         self.headline = str(n.get("headline") or "").strip()
         self.tag = str(n.get("tag") or "").strip().upper()
         self.label = str(n.get("label") or "").strip().upper()
@@ -246,7 +327,7 @@ class NewsVideo:
             k = max(W / sw, H / sh)
             self.vsize = (int(round(sw * k)) // 2 * 2, int(round(sh * k)) // 2 * 2)
             self.vpos = ((W - self.vsize[0]) // 2, (H - self.vsize[1]) // 2)
-        else:               # a framed panel near the top
+        else:               # a framed panel under the headline (placed in _layout)
             pw = 1000
             ph = min(720, int(round(pw * sh / sw)))
             pw = min(pw, int(round(ph * sw / sh)))
@@ -255,19 +336,17 @@ class NewsVideo:
         self.dec = _Decoder(self.path, self.vsize, self.fps, self.trim0) if self.path else None
 
         # words (times relative to the clip, then to the video)
-        words = parse_words(n.get("words"))
         self.words = []
-        for w in words:
+        for w in parse_words(n.get("words")):
             s0, e0 = w["s"] - self.trim0, w["e"] - self.trim0
             if e0 <= 0 or s0 >= self.clip:
                 continue
             self.words.append(dict(w, s=LEAD + max(0.0, s0), e=LEAD + min(self.clip, e0)))
-        self.groups = [g for g in _groups(self.words)]
-        for g in self.groups:
-            g["t0"] = self.words[g["i0"]]["s"]
-            g["t1"] = self.words[g["i1"]]["e"]
+        self.groups = _groups(self.words)
         self.key_of = {}
         for gi, g in enumerate(self.groups):
+            g["t0"] = self.words[g["i0"]]["s"]
+            g["t1"] = self.words[g["i1"]]["e"]
             for k in range(g["i0"], g["i1"] + 1):
                 self.key_of[k] = gi
 
@@ -275,84 +354,131 @@ class NewsVideo:
         self.ending_on = bool(n.get("ending_on", True)) and bool(self.groups)
         self.base_duration = self.E + (ENDING_LEN if self.ending_on else 0.6)
         self.dur = self.base_duration
-
         self._layout(n)
 
     # -------------------------------------------------------------- layout (once)
     def _layout(self, n):
-        A = self.accent
-        # header: [logo] LABEL / [TAG] headline
-        logo = n.get("logo") or DEFAULT_LOGO
-        self.logo = logo_badge(logo, 92, n.get("logo_shape") or "circle")
-        name = str(n.get("brand_name") or "").strip().upper()
-        self.brand_im = _text(name, 30, (255, 255, 255), "Black") if name else None
-        self.label_im = _text(self.label, 26, (255, 255, 255), "Bold") if self.label else None
+        L, A = self.L, self.accent
+        self.logo = logo_badge(n.get("logo") or DEFAULT_LOGO, 92, n.get("logo_shape") or "circle")
+        self.brand_name = str(n.get("brand_name") or "").strip().upper()
+        self.brand_im = _text(self.brand_name, 30, L["head_col"], "Black") if self.brand_name else None
+        self.label_im = _text(self.label, 26, L["sub_col"], "Bold") if self.label else None
         self.tag_im = None
         if self.tag:
-            t = _text(self.tag, 28, (255, 255, 255), "Black")
+            t = _text(self.tag, 28, WHITE, "Black")
             pill = _rounded((t.width + 44, t.height + 6), (t.height + 6) // 2, A + (255,))
             pill.alpha_composite(t, (30, 3))
-            ImageDraw.Draw(pill).ellipse([12, pill.height // 2 - 6, 24, pill.height // 2 + 6], fill=(255, 255, 255))
             self.tag_im = pill
-        hl_size, lines = 56, None
-        while hl_size >= 36:
-            lines = _wrap(self.headline, hl_size, "ExtraBold", 930, 2)
-            if lines:
-                break
-            hl_size -= 2
-        lines = lines or [self.headline]
-        self.head_lines = [_text(ln, hl_size, (255, 255, 255), "ExtraBold") for ln in lines if ln]
+        self._layout_headline()
 
-        if self.vertical:
-            self.cap_y, self.card_y = 1150, 1290
-        else:
-            self.cap_y = self.vpos[1] + self.vsize[1] + 70
-            self.card_y = max(self.cap_y + 210, 1180)
         self.head_y = 110
-        if not self.vertical:  # the panel goes under the headline
-            head_bottom = self.head_y + 120 + sum(im.height - 12 for im in self.head_lines)
-            self.vpos = (self.vpos[0], max(330, head_bottom + 40))
-            self.cap_y = self.vpos[1] + self.vsize[1] + 70
-            self.card_y = max(self.cap_y + 210, 1180)
+        cap_block = int(L["cap_size"] * (1.10 if L["cap_mode"] == "pop" else 1.32)) * L["max_lines"]
+        if self.vertical:   # subtitles in the middle-low part, the card under them (all above the safe line)
+            self.cap_y = 960 if L["cap_mode"] == "pop" else 880
+            self.card_y = self.cap_y + cap_block + 40
+        else:
+            self.vpos = (self.vpos[0], max(330, self.head_bottom + 40))
+            self.cap_y = self.vpos[1] + self.vsize[1] + (58 if L["band"] else 70)
+            self.card_y = max(self.cap_y + (150 if L["cap_mode"] == "pop" else 210), 1180)
+        if L["card"] == "bar":
+            self.card_y = min(self.card_y, 1250)
 
-        # panel frame (landscape)
+        self._layout_background()
         if not self.vertical:
-            pw, ph = self.vsize
-            self.mask = _round_mask(self.vsize, 26)
-            pad = 40
-            self.shadow = _shadow_box((pw + 2 * pad, ph + 2 * pad), (pad, pad + 10, pad + pw, pad + ph + 10), 30,
-                                      18, 150, 0)
-            self.rim = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
-            S = 3
-            big = Image.new("RGBA", (pw * S, ph * S), (0, 0, 0, 0))
-            ImageDraw.Draw(big).rounded_rectangle([1, 1, pw * S - 2, ph * S - 2], 26 * S,
-                                                  outline=(255, 255, 255, 70), width=3 * S)
-            self.rim = big.resize((pw, ph), Image.LANCZOS)
-        # shading over a full-screen video: dark at the top (header) and the bottom (subtitles)
-        y = np.linspace(0, 1, H)[:, None]
-        a = np.clip((0.30 - y) / 0.30, 0, 1) ** 1.4 * 0.75 + np.clip((y - 0.45) / 0.40, 0, 1) ** 1.3 * 0.82
-        if not self.vertical:
-            a = 0.45 + 0.3 * np.clip((y - 0.5) / 0.5, 0, 1)
-        sh = np.zeros((H, W, 4), np.uint8)
-        sh[..., :3] = (6, 8, 14)
-        sh[..., 3] = np.broadcast_to(np.clip(a, 0, 1) * 255, (H, W)).astype(np.uint8)
-        self.shade = Image.fromarray(sh, "RGBA")
-
+            self._layout_panel()
         self._layout_captions()
         self._layout_cards()
+        if L["ticker"]:
+            self._layout_ticker()
         if self.ending_on:
             self._layout_ending()
 
+    def _layout_headline(self):
+        L = self.L
+        size = 66 if L["head_font"] == ANTON else (60 if L["header"] == "masthead" else 56)
+        width = 880 if L["header"] == "box" else 930
+        txt = self.headline.upper() if L["head_font"] in (ANTON, OSWALD) else self.headline
+        lines = None
+        while size >= 34:
+            lines = _wrap(txt, size, L["head_weight"], L["head_font"], width, 2)
+            if lines:
+                break
+            size -= 2
+        lines = lines or [txt]
+        col = WHITE if L["header"] == "box" else L["head_col"]
+        self.head_lines = [_text(ln, size, col, L["head_weight"], L["head_font"]) for ln in lines if ln]
+        self.head_lh = int(size * 1.22)
+        top = 110 + (150 if L["header"] == "masthead" else 120)
+        self.head_bottom = top + self.head_lh * len(self.head_lines) + (30 if L["header"] == "box" else 0)
+
+    def _layout_background(self):
+        L = self.L
+        y = np.linspace(0, 1, H)[:, None]
+        if L["bg"] == "light":
+            c0, c1 = np.array([250, 250, 252]), np.array([226, 231, 240])
+            arr = np.broadcast_to(c0 * (1 - y[..., None]) + c1 * y[..., None], (H, W, 3)).copy()
+            xx = np.linspace(0, 1, W)[None, :]
+            blob = np.exp(-(((xx - 0.95) / 0.45) ** 2 + ((y - 0.05) / 0.25) ** 2))
+            arr += (np.array(self.accent) - arr) * (blob[..., None] * 0.22)
+            self.static_bg = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB").convert("RGBA")
+        elif L["bg"] == "paper":
+            arr = np.broadcast_to(np.array([243, 238, 226], np.float32), (H, W, 3)).copy()
+            arr += _noise((W, H), 7.0)[..., None]
+            arr -= (np.abs(y - 0.5) * 14)[..., None]
+            self.static_bg = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB").convert("RGBA")
+        else:
+            self.static_bg = None
+        self.shade = None
+        a = None
+        if self.vertical:
+            if L["cap_col"] == INK:   # dark text over a full-screen clip: a light sheet behind header + subtitles
+                y0 = (self.cap_y - 90) / H
+                v = np.clip((0.26 - y) / 0.10, 0, 1) + np.clip((y - y0) / 0.04, 0, 1) * (y < 0.85)
+                veil = np.zeros((H, W, 4), np.uint8)
+                veil[..., :3] = 250
+                veil[..., 3] = np.broadcast_to(np.clip(v, 0, 1) * 225, (H, W)).astype(np.uint8)
+                self.shade = Image.fromarray(veil, "RGBA")
+            else:                     # dark at the top (header) and the bottom (subtitles)
+                a = np.clip((0.30 - y) / 0.30, 0, 1) ** 1.4 * 0.75 + np.clip((y - 0.45) / 0.40, 0, 1) ** 1.3 * 0.82
+        elif self.static_bg is None:  # an even darkening over the blurred clip
+            a = L["shade"] + 0.3 * np.clip((y - 0.5) / 0.5, 0, 1)
+        if a is not None:
+            sh = np.zeros((H, W, 4), np.uint8)
+            sh[..., :3] = (6, 8, 14)
+            sh[..., 3] = np.broadcast_to(np.clip(a, 0, 1) * 255, (H, W)).astype(np.uint8)
+            self.shade = Image.fromarray(sh, "RGBA")
+
+    def _layout_panel(self):
+        L = self.L
+        pw, ph = self.vsize
+        r = L["panel_r"]
+        self.mask = _round_mask(self.vsize, r)
+        pad = 40
+        self.shadow = _shadow_box((pw + 2 * pad, ph + 2 * pad), (pad, pad + 10, pad + pw, pad + ph + 10), r + 4,
+                                  18, L["panel_shadow"], 0)
+        S = 3
+        big = Image.new("RGBA", (pw * S, ph * S), (0, 0, 0, 0))
+        if L["panel_rim"][3]:
+            ImageDraw.Draw(big).rounded_rectangle([1, 1, pw * S - 2, ph * S - 2], r * S, outline=L["panel_rim"],
+                                                  width=3 * S)
+        self.rim = big.resize((pw, ph), Image.LANCZOS)
+
+    # ---------------------------------------------------------- subtitles
+    def _cap_txt(self, i):
+        w = self.words[i]["w"]
+        return w.upper() if self.L["upper"] else w
+
     def _layout_captions(self):
-        """Words -> subtitle pages of one or two lines, each word placed once."""
-        f = _font(CAP_SIZE, "ExtraBold")
+        """Words -> subtitle pages (one or two lines; 1-3 words in the pop look), each word placed once."""
+        L = self.L
+        size = L["cap_size"]
+        f = get_font(size, L["cap_weight"], L["cap_font"])
         space = f.getlength(" ")
-        pages, cur = [], []
 
         def lines_of(idx):
             lines, row, x = [], [], 0.0
             for i in idx:
-                w = f.getlength(self.words[i]["w"])
+                w = f.getlength(self._cap_txt(i))
                 if row and x + space + w > CAP_MAX_W:
                     lines.append(row)
                     row, x = [], 0.0
@@ -362,14 +488,18 @@ class NewsVideo:
                 lines.append(row)
             return lines
 
+        pages, cur = [], []
+        pop = L["cap_mode"] == "pop"
         for i, w in enumerate(self.words):
             if cur:
                 prev = self.words[cur[-1]]
                 gap = w["s"] - prev["e"]
-                too_long = w["e"] - self.words[cur[0]]["s"] > 3.4
-                sent = _SENT_END.search(prev["w"]) and len(cur) >= 3
-                key_split = self.key_of.get(i) is not None and self.key_of.get(i) == self.key_of.get(cur[-1])
-                if not key_split and (gap > 0.7 or too_long or sent or len(lines_of(cur + [i])) > 2):
+                too_long = w["e"] - self.words[cur[0]]["s"] > (1.6 if pop else 3.4)
+                sent = _SENT_END.search(prev["w"]) and (len(cur) >= 3 or pop)
+                comma = pop and prev["w"].endswith(",")
+                same_key = self.key_of.get(i) is not None and self.key_of.get(i) == self.key_of.get(cur[-1])
+                if not same_key and (gap > (0.45 if pop else 0.7) or too_long or sent or comma
+                                     or len(cur) >= L["max_words"] or len(lines_of(cur + [i])) > L["max_lines"]):
                     pages.append(cur)
                     cur = []
             cur.append(i)
@@ -377,97 +507,367 @@ class NewsVideo:
             pages.append(cur)
 
         self.pages = []
-        lh = int(CAP_SIZE * 1.32)
+        lh = int(size * (1.10 if pop else 1.32))
+        lead = 0.04 if pop else 0.12
         for k, idx in enumerate(pages):
-            t0 = self.words[idx[0]]["s"] - 0.12
-            nxt = self.words[pages[k + 1][0]]["s"] - 0.12 if k + 1 < len(pages) else self.E
-            t1 = min(nxt, self.words[idx[-1]]["e"] + 1.2)
+            t0 = self.words[idx[0]]["s"] - lead
+            nxt = self.words[pages[k + 1][0]]["s"] - lead if k + 1 < len(pages) else self.E
+            t1 = min(nxt, self.words[idx[-1]]["e"] + (0.5 if pop else 1.2))
             items = []
             for li, row in enumerate(lines_of(idx)):
                 ims = [self._cap_word(i) for i in row]
-                total = sum(im[0].width - 2 * im[2] for im in ims) + space * (len(row) - 1)
+                total = sum(im["w"] for im in ims) + space * (len(row) - 1)
                 x = (W - total) / 2
-                for i, (white, dark, pad) in zip(row, ims):
-                    items.append(dict(i=i, white=white, dark=dark, pad=pad, x=x, line=li))
-                    x += white.width - 2 * pad + space
+                for i, im in zip(row, ims):
+                    items.append(dict(im, i=i, x=x, line=li))
+                    x += im["w"] + space
             nl = max(it["line"] for it in items) + 1
             self.pages.append(dict(t0=t0, t1=t1, items=items, lines=nl, lh=lh))
+        if L["band"]:
+            self.band_box = (0, self.cap_y - 18, W, self.cap_y - 18 + lh * L["max_lines"] + 30)
 
     def _cap_word(self, i):
-        txt = self.words[i]["w"]
-        white = _text(txt, CAP_SIZE, (255, 255, 255), "ExtraBold", stroke=4, stroke_col=(10, 12, 18))
-        dark = _text(txt, CAP_SIZE, INK, "ExtraBold", stroke=4, stroke_col=MARK)
-        return white, dark, 6 + 4
+        L = self.L
+        txt, size, st = self._cap_txt(i), L["cap_size"], L["cap_stroke"]
 
+        def mk(col, stroke=st, sc=L["stroke_col"]):
+            return _text(txt, size, col, L["cap_weight"], L["cap_font"], stroke, sc)
+
+        norm = mk(L["cap_col"])
+        if L["speak"] == "pill":
+            speak = mk(WHITE) if L["cap_col"] == INK else norm
+        else:
+            speak = mk(L["speak_col"])
+        if L["key_stroke"]:
+            key = mk(L["key_col"], st, L["key_stroke"])
+        else:
+            key = mk(L["key_col"], 3 if st else 0, L["mark"])
+        pad = 6 + st
+        return dict(norm=norm, speak=speak, key=key, pad=pad, w=norm.width - 2 * pad)
+
+    def _draw_captions(self, frame, t, a):
+        L = self.L
+        if L["band"]:
+            self._draw_band(frame, a)
+        page = next((p for p in self.pages if p["t0"] <= t < p["t1"]), None)
+        if page is None:
+            return
+        pop = L["cap_mode"] == "pop"
+        ka = _ease((t - page["t0"]) / (0.08 if pop else 0.15)) * min(1.0, (page["t1"] - t) / 0.1) * a
+        rise = 0 if pop else int((1 - _ease((t - page["t0"]) / 0.2)) * 18)
+        pscale = 0.75 + 0.25 * _back((t - page["t0"]) / 0.22) if pop else 1.0
+        lh = page["lh"]
+        base_y = self.cap_y + (0 if page["lines"] == L["max_lines"] else lh // 2 * (L["max_lines"] - 1)) + rise
+        d = ImageDraw.Draw(frame)
+        for it in page["items"]:
+            w = self.words[it["i"]]
+            y = base_y + it["line"] * lh
+            gi = self.key_of.get(it["i"])
+            spoken = t >= w["s"]
+            speaking = w["s"] <= t < w["e"] + 0.05
+            h = it["norm"].height
+            if gi is not None and spoken:   # the marker swipes in behind the key word
+                p = _ease((t - w["s"]) / max(0.12, min(0.35, w["e"] - w["s"])))
+                im = it["key"] if p > 0.5 else it["norm"]
+                sc = pscale * (1.0 + 0.08 * _spring(t - self.groups[gi]["t0"]))
+                if L["key_stroke"]:         # pop: an accent box springs up behind the word
+                    self._pop_box(frame, it, y, p * ka, pscale)
+                else:
+                    x0 = it["x"] - 10
+                    d.rounded_rectangle([x0, y + 4, x0 + (it["w"] + 20) * p, y + h - 4], 12,
+                                        fill=L["mark"] + (int(255 * ka),))
+                self._put_word(frame, im, it, y, sc, ka)
+                continue
+            im, alpha, sc = it["norm"], (ka if spoken else ka * L["dim"]), pscale
+            if speaking:
+                im = it["speak"]
+                if L["speak"] == "pill":
+                    d.rounded_rectangle([it["x"] - 10, y + 6, it["x"] + it["w"] + 10, y + h - 6], 12,
+                                        fill=self.accent + (int(235 * ka),))
+                else:
+                    sc *= 1.0 + 0.07 * math.sin(math.pi * min(1.0, (t - w["s"]) / 0.25))
+                    if L["bg"] == "paper":  # newspaper: the spoken word is also underlined
+                        d.line([(it["x"], y + h - 12), (it["x"] + it["w"], y + h - 12)], fill=self.accent,
+                               width=4)
+            elif gi is not None:  # a key word not spoken yet: underlined
+                d.rounded_rectangle([it["x"], y + h - 12, it["x"] + it["w"], y + h - 6], 3,
+                                    fill=L["mark"] + (int(220 * alpha),))
+            self._put_word(frame, im, it, y, sc, alpha)
+
+    def _put_word(self, frame, im, it, y, sc, alpha):
+        x = it["x"] - it["pad"]
+        if abs(sc - 1) > 0.004:
+            big = _scaled(im, sc)
+            x -= (big.width - im.width) / 2
+            y -= (big.height - im.height) / 2
+            im = big
+        _comp(frame, _fade(im, alpha), int(x), int(y))
+
+    def _pop_box(self, frame, it, y, k, sc):
+        if k <= 0:
+            return
+        h = it["norm"].height
+        box = _rounded((max(2, int((it["w"] + 28) * sc)), max(2, int((h - 20) * sc))), 16, self.accent + (255,))
+        box = _scaled(box.rotate(-2.5, expand=True, resample=Image.BICUBIC), 0.7 + 0.3 * _back(k))
+        cx, cy = it["x"] + it["w"] / 2, y + h / 2 + 2
+        _comp(frame, _fade(box, min(1.0, k * 1.5)), int(cx - box.width / 2), int(cy - box.height / 2))
+
+    def _draw_band(self, frame, a):
+        x0, y0, x1, y1 = self.band_box
+        band = Image.new("RGBA", (x1 - x0, y1 - y0), self.L["band"][:3] + (int(self.L["band"][3] * a),))
+        frame.alpha_composite(band, (x0, y0))
+        ImageDraw.Draw(frame).rectangle([x0, y0, x1, y0 + 5], fill=self.accent + (int(255 * a),))
+
+    # ---------------------------------------------------------- word cards
     def _layout_cards(self):
-        """The key-word card: KEY WORD n/N · the English · a line · the Arabic. When each is on screen."""
-        A = self.accent
         self.cards = []
         n = len(self.groups)
+        make = {"pop": self._card_pop, "bar": self._card_bar, "sticker": self._card_sticker,
+                "clip": self._card_clip}[self.L["card"]]
         for gi, g in enumerate(self.groups):
-            cw = 860
-            label = _text(f"KEY WORD  {gi + 1}/{n}", 26, A, "Black")
-            en = _fit_text(g["text"], 88, INK, cw - 80, "ExtraBold")
-            ar = _ar_fit(g["ar"], 76, A, PLEX_AR, cw - 80) if g["ar"] else None
-            ch = 40 + label.height + en.height - 4 + (24 + ar.height if ar is not None else 0) + 34
-            card = Image.new("RGBA", (cw + 80, ch + 80), (0, 0, 0, 0))
-            card.alpha_composite(_shadow_box(card.size, (40, 48, 40 + cw, 48 + ch), 36, 20, 120, 0))
-            body = _rounded((cw, ch), 36, (255, 255, 255, 255))
-            band = Image.new("RGBA", (cw, 10), A + (255,))
-            body.paste(band, (0, 0), _round_mask((cw, 40), 36).crop((0, 0, cw, 10)))
-            card.alpha_composite(body, (40, 40))
-            y = 40 + 34
-            card.alpha_composite(label, (40 + (cw - label.width) // 2, y))
-            y += label.height - 4
-            card.alpha_composite(en, (40 + (cw - en.width) // 2, y))
-            y += en.height
-            if ar is not None:
-                d = ImageDraw.Draw(card)
-                d.line([(40 + cw / 2 - 60, y + 6), (40 + cw / 2 + 60, y + 6)], fill=(225, 228, 232), width=3)
-                y += 24
-                card.alpha_composite(ar, (40 + (cw - ar.width) // 2, y))
             t0 = g["t0"]
             nxt = self.groups[gi + 1]["t0"] if gi + 1 < n else self.E + 0.3
             t1 = min(nxt - 0.27, t0 + CARD_HOLD, self.E + 0.2)  # gone (0.25 s exit) before the next one comes
             t1 = max(t1, t0 + min(CARD_MIN, max(0.6, nxt - 0.27 - t0)))
-            self.cards.append(dict(im=card, t0=t0, t1=t1, gi=gi))
+            self.cards.append(dict(im=make(gi, g, n), t0=t0, t1=t1, gi=gi))
+        if self.L["card"] == "bar" and self.cards:  # the lower third sits just above the ticker
+            low = max(c["im"].height for c in self.cards) - 20
+            self.card_y = min(self.card_y, TICKER_Y - 14 - low)
 
+    def _card_pop(self, gi, g, n):
+        """breaking / studio: a rounded card, KEY WORD n/N, the English, a short line, the Arabic."""
+        L = self.L
+        cw = 860
+        label = _text(f"KEY WORD  {gi + 1}/{n}", 26, L["card_label"], "Black")
+        en = _fit_text(g["text"], 88, L["card_en"], cw - 80, L["card_weight"], L["card_font"])
+        ar = _ar_fit(g["ar"], 76, L["card_ar"], L["ar_font"], cw - 80) if g["ar"] else None
+        ch = 40 + label.height + en.height - 4 + (24 + ar.height if ar is not None else 0) + 34
+        card = Image.new("RGBA", (cw + 80, ch + 80), (0, 0, 0, 0))
+        card.alpha_composite(_shadow_box(card.size, (40, 48, 40 + cw, 48 + ch), 36, 20, 120, 0))
+        body = _rounded((cw, ch), 36, L["card_bg"] + (255,))
+        body.paste(Image.new("RGBA", (cw, 10), self.accent + (255,)), (0, 0),
+                   _round_mask((cw, 40), 36).crop((0, 0, cw, 10)))
+        card.alpha_composite(body, (40, 40))
+        y = 40 + 34
+        card.alpha_composite(label, (40 + (cw - label.width) // 2, y))
+        y += label.height - 4
+        card.alpha_composite(en, (40 + (cw - en.width) // 2, y))
+        y += en.height
+        if ar is not None:
+            line = (225, 228, 232) if L["card_bg"] == WHITE else (70, 74, 84)
+            ImageDraw.Draw(card).line([(40 + cw / 2 - 60, y + 6), (40 + cw / 2 + 60, y + 6)], fill=line, width=3)
+            y += 24
+            card.alpha_composite(ar, (40 + (cw - ar.width) // 2, y))
+        return card
+
+    def _card_bar(self, gi, g, n):
+        """tv: a lower third — accent block (KEY WORD n/N), white bar with the English, dark bar with the Arabic."""
+        L = self.L
+        bw = 960
+        tag = _text("KEY WORD", 26, WHITE, "Bold", OSWALD)
+        num = _text(f"{gi + 1}/{n}", 40, WHITE, "Bold", OSWALD)
+        en = _fit_text(g["text"].upper(), 74, INK, bw - 260, L["card_weight"], OSWALD)
+        ar = _ar_fit(g["ar"], 54, WHITE, L["ar_font"], bw - 260) if g["ar"] else None
+        if ar is not None:  # only the ink + a little room (the font box is tall)
+            box = ar.getchannel("A").getbbox() or (0, 0, ar.width, ar.height)
+            ar = ar.crop((0, max(0, box[1] - 12), ar.width, min(ar.height, box[3] + 14)))
+        h1 = 108
+        h2 = (ar.height + 8) if ar is not None else 0
+        im = Image.new("RGBA", (bw + 40, h1 + h2 + 40), (0, 0, 0, 0))
+        im.alpha_composite(_shadow_box(im.size, (20, 26, 20 + bw, 26 + h1 + h2), 4, 12, 120, 0))
+        d = ImageDraw.Draw(im)
+        d.rectangle([20, 20, 20 + bw, 20 + h1], fill=WHITE)
+        d.rectangle([20, 20, 20 + 190, 20 + h1], fill=self.accent)
+        im.alpha_composite(tag, (20 + (190 - tag.width) // 2, 20 + 12))
+        im.alpha_composite(num, (20 + (190 - num.width) // 2, 20 + 42))
+        im.alpha_composite(en, (20 + 220, 20 + (h1 - en.height) // 2))
+        if ar is not None:
+            d.rectangle([20 + 190, 20 + h1, 20 + bw, 20 + h1 + h2], fill=(10, 14, 28))
+            im.alpha_composite(ar, (20 + bw - 30 - ar.width, 20 + h1 + 2))
+        return im
+
+    def _card_sticker(self, gi, g, n):
+        """pop: a tilted yellow sticker with the English, and the Arabic on a black pill under it."""
+        L = self.L
+        en = _fit_text(g["text"].upper(), 104, INK, 760, "Regular", ANTON)
+        ar = _ar_fit(g["ar"], 70, WHITE, L["ar_font"], 720) if g["ar"] else None
+        sw, sh = en.width + 90, en.height + 40
+        im = Image.new("RGBA", (max(sw, (ar.width + 100) if ar is not None else 0) + 80,
+                                sh + (ar.height + 30 if ar is not None else 0) + 100), (0, 0, 0, 0))
+        cx = im.width // 2
+        st = _rounded((sw, sh), 30, YELLOW + (255,))
+        ImageDraw.Draw(st).rounded_rectangle([3, 3, sw - 4, sh - 4], 28, outline=INK, width=6)
+        st.alpha_composite(en, ((sw - en.width) // 2, (sh - en.height) // 2 - 4))
+        st = st.rotate(3, expand=True, resample=Image.BICUBIC)
+        im.alpha_composite(_shadow_box(im.size, (cx - sw // 2, 50, cx + sw // 2, 50 + sh), 30, 14, 140, 6))
+        im.alpha_composite(st, (cx - st.width // 2, 40 - (st.height - sh) // 2))
+        if ar is not None:
+            pw, ph = ar.width + 70, ar.height + 14
+            pill = _rounded((pw, ph), ph // 2, (0, 0, 0, 255))
+            pill.alpha_composite(ar, ((pw - ar.width) // 2, (ph - ar.height) // 2))
+            pill = pill.rotate(-2, expand=True, resample=Image.BICUBIC)
+            im.alpha_composite(pill, (cx - pill.width // 2, 40 + sh + 6))
+        return im
+
+    def _card_clip(self, gi, g, n):
+        """paper: a newspaper clipping with a strip of tape: No. n · the English (serif) · the Arabic (naskh)."""
+        L = self.L
+        cw = 820
+        label = _text(f"VOCABULARY  ·  No. {gi + 1}", 24, self.accent, "Bold", MONT)
+        en = _fit_text(g["text"], 92, INK, cw - 90, "Bold", PLAYFAIR)
+        ar = _ar_fit(g["ar"], 80, self.accent, AMIRI, cw - 90) if g["ar"] else None
+        ch = 46 + label.height + en.height + (16 + ar.height if ar is not None else 0) + 34
+        arr = np.empty((ch, cw, 4), np.float32)
+        arr[..., :3] = L["card_bg"]
+        arr[..., 3] = 255
+        arr[..., :3] += _noise((cw, ch), 4.0, gi + 7)[..., None]
+        paper = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
+        d = ImageDraw.Draw(paper)
+        d.rectangle([14, 14, cw - 15, ch - 15], outline=(40, 36, 32), width=2)
+        y = 40
+        paper.alpha_composite(label, ((cw - label.width) // 2, y))
+        y += label.height + 2
+        d.line([(cw / 2 - 150, y), (cw / 2 + 150, y)], fill=(40, 36, 32), width=2)
+        y += 6
+        paper.alpha_composite(en, ((cw - en.width) // 2, y))
+        y += en.height + 6
+        if ar is not None:
+            paper.alpha_composite(ar, ((cw - ar.width) // 2, y))
+        im = Image.new("RGBA", (cw + 80, ch + 120), (0, 0, 0, 0))
+        im.alpha_composite(_shadow_box(im.size, (40, 66, 40 + cw, 66 + ch), 2, 14, 110, 0))
+        im.alpha_composite(paper, (40, 60))
+        tape = Image.new("RGBA", (200, 52), (236, 226, 190, 190)).rotate(-4, expand=True, resample=Image.BICUBIC)
+        im.alpha_composite(tape, ((im.width - tape.width) // 2, 34))
+        return im.rotate(-1.4 if gi % 2 == 0 else 1.4, expand=True, resample=Image.BICUBIC)
+
+    def _draw_card(self, frame, t, a):
+        kind = self.L["card"]
+        for c in self.cards:
+            if not (c["t0"] - 0.05 <= t < c["t1"] + 0.25):
+                continue
+            tin = t - c["t0"]
+            out = _ease((t - c["t1"]) / 0.25) if t >= c["t1"] else 0.0
+            al = min(1.0, max(0.0, tin / 0.15)) * (1 - out) * a
+            if al <= 0:
+                continue
+            im = c["im"]
+            if kind == "bar":      # slides in from the left, out to the left
+                k = _ease(tin / 0.35)
+                x0 = (W - im.width) // 2
+                _comp(frame, _fade(im, al), int(-im.width + (x0 + im.width) * k - out * 120), self.card_y)
+                continue
+            if kind == "sticker":
+                im = _scaled(im, 0.6 + 0.4 * _back(tin / 0.32))
+                dy = 0
+            elif kind == "clip":   # drops onto the page
+                k = _ease(tin / 0.4)
+                im = _scaled(im, 1.12 - 0.12 * k)
+                dy = -int((1 - k) * 30)
+            else:
+                im = _scaled(im, 0.82 + 0.18 * _back(tin / 0.42))
+                dy = 0
+            x = (W - im.width) // 2
+            y = self.card_y + (c["im"].height - im.height) // 2 + dy + int(out * 40)
+            _comp(frame, _fade(im, al), x, y)
+
+    # ---------------------------------------------------------- tv ticker
+    def _layout_ticker(self):
+        parts = []
+        for g in self.groups:
+            parts.append(_text(g["text"].upper(), 34, WHITE, "SemiBold", OSWALD))
+            if g["ar"]:
+                parts.append(_ar_fit(g["ar"], 34, YELLOW, self.L["ar_font"], 600))
+            parts.append(_text("•", 34, self.accent, "Bold", OSWALD))
+        h = max(p.height for p in parts) if parts else 40
+        w = sum(p.width + 18 for p in parts) or 1
+        strip = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        x = 0
+        for p in parts:
+            strip.alpha_composite(p, (x, (h - p.height) // 2))
+            x += p.width + 18
+        self.ticker = strip
+        self.ticker_lbl = _text("TODAY'S WORDS", 30, WHITE, "Bold", OSWALD)
+        self.ticker_y = TICKER_Y
+
+    def _draw_ticker(self, frame, t, a):
+        if not self.groups:
+            return
+        y, h = self.ticker_y, 64
+        lw = self.ticker_lbl.width + 30
+        bar = Image.new("RGBA", (W, h), (8, 12, 26, int(240 * a)))
+        x = lw + 20 - int((t * 110) % self.ticker.width)
+        while x < W:
+            _comp(bar, _fade(self.ticker, a), x, (h - self.ticker.height) // 2)
+            x += self.ticker.width
+        ImageDraw.Draw(bar).rectangle([0, 0, lw, h], fill=self.accent + (int(255 * a),))
+        _comp(bar, _fade(self.ticker_lbl, a), 15, (h - self.ticker_lbl.height) // 2)
+        frame.alpha_composite(bar, (0, y))
+
+    # ---------------------------------------------------------- ending
     def _layout_ending(self):
-        A = self.accent
+        L = self.L
         rows = [(g["text"], g["ar"]) for g in self.groups]
         n = len(rows)
         cw = 900
         row_h = max(84, min(124, int(880 / max(1, n))))
         es = int(row_h * 0.44)
-        title = _fit_text(self.ending_title.upper(), 44, INK, cw - 100, "Black")
-        sub = _text(f"{n} word{'s' if n != 1 else ''} from this news", 28, (120, 126, 136), "SemiBold")
+        tf = L["end_font"]
+        title = _fit_text(("GLOSSARY" if L["bg"] == "paper" else self.ending_title.upper()), 46, INK, cw - 100,
+                          "Black" if tf == MONT else "Bold", tf)
+        sub = _text(f"{n} word{'s' if n != 1 else ''} from this news", 28, L["end_sub"], "SemiBold")
         top = 54 + title.height + sub.height + 26
         ch = top + n * row_h + 40
+        r = 4 if L["bg"] == "paper" else 40
         card = Image.new("RGBA", (cw + 80, ch + 80), (0, 0, 0, 0))
-        card.alpha_composite(_shadow_box(card.size, (40, 50, 40 + cw, 50 + ch), 40, 24, 140, 0))
-        card.alpha_composite(_rounded((cw, ch), 40, (255, 255, 255, 255)), (40, 40))
+        card.alpha_composite(_shadow_box(card.size, (40, 50, 40 + cw, 50 + ch), r, 24, 140, 0))
+        card.alpha_composite(_rounded((cw, ch), r, L["end_bg"] + (255,)), (40, 40))
+        card.alpha_composite(Image.new("RGBA", (cw - 2 * r, 8), self.accent + (255,)), (40 + r, 40))
         card.alpha_composite(title, (40 + (cw - title.width) // 2, 40 + 40))
         card.alpha_composite(sub, (40 + (cw - sub.width) // 2, 40 + 40 + title.height - 6))
         self.end_card = card
         self.end_rows = []
         for k, (en, ar) in enumerate(rows):
-            r = Image.new("RGBA", (cw - 60, row_h - 14), (0, 0, 0, 0))
-            r.alpha_composite(_rounded(r.size, 22, (244, 245, 248, 255)))
-            num = _rounded((row_h - 44, row_h - 44), (row_h - 44) // 2, A + (255,))
-            nt = _text(str(k + 1), int(row_h * 0.32), (255, 255, 255), "Black")
+            rim = Image.new("RGBA", (cw - 60, row_h - 14), (0, 0, 0, 0))
+            rim.alpha_composite(_rounded(rim.size, 22 if r > 4 else 3, L["end_row"] + (255,)))
+            num = _rounded((row_h - 44, row_h - 44), (row_h - 44) // 2, self.accent + (255,))
+            nt = _text(str(k + 1), int(row_h * 0.32), WHITE, "Black")
             num.alpha_composite(nt, ((num.width - nt.width) // 2, (num.height - nt.height) // 2 - 2))
-            r.alpha_composite(num, (14, (r.height - num.height) // 2))
-            half = (r.width - num.width - 60) // 2
-            et = _fit_text(en, es, INK, half, "ExtraBold", 22)
-            r.alpha_composite(et, (num.width + 30, (r.height - et.height) // 2 - 2))
+            rim.alpha_composite(num, (14, (rim.height - num.height) // 2))
+            half = (rim.width - num.width - 60) // 2
+            et = _fit_text(en, es, L["end_en"], half, "ExtraBold" if tf == MONT else "Bold", tf, 22)
+            rim.alpha_composite(et, (num.width + 30, (rim.height - et.height) // 2 - 2))
             if ar:
-                at = _ar_fit(ar, int(es * 0.95), A, PLEX_AR, half, 22)
-                r.alpha_composite(at, (r.width - at.width - 20, (r.height - at.height) // 2))
-            self.end_rows.append((r, 40 + 30, 40 + top + k * row_h))
+                at = _ar_fit(ar, int(es * 0.95), L["end_ar"], L["ar_font"], half, 22)
+                rim.alpha_composite(at, (rim.width - at.width - 20, (rim.height - at.height) // 2))
+            self.end_rows.append((rim, 40 + 30, 40 + top + k * row_h))
         self.end_pos = ((W - card.width) // 2, max(140, (SAFE_BOTTOM - card.height) // 2 + 30))
-        h = _text(self.handle, 34, (255, 255, 255), "Bold") if self.handle else None
-        self.end_handle = h
-        self.end_cta = _fit_text(self.cta, 32, (255, 255, 255), 900, "SemiBold") if self.cta else None
+        col = WHITE if self.vertical else L["end_text"]
+        self.end_handle = _text(self.handle, 34, col, "Bold") if self.handle else None
+        self.end_cta = _fit_text(self.cta, 32, col, 900, "SemiBold") if self.cta else None
+
+    def _draw_ending(self, frame, te):
+        k = _back((te - 0.25) / 0.55)
+        if k <= 0:
+            return
+        card = self.end_card.copy()
+        for n, (rim, rx, ry) in enumerate(self.end_rows):
+            kk = _ease((te - 0.55 - 0.16 * n) / 0.35)
+            if kk > 0:
+                _comp(card, _fade(rim, kk), rx + int((1 - kk) * 60), ry)
+        im = _scaled(card, 0.86 + 0.14 * k)
+        x, y = self.end_pos
+        x += (card.width - im.width) // 2
+        y += (card.height - im.height) // 2 + int((1 - min(1.0, k)) * 80)
+        _comp(frame, _fade(im, min(1.0, (te - 0.25) / 0.25)), x, y)
+        yb = self.end_pos[1] + card.height + 10
+        nr = len(self.end_rows)
+        for im2, delay in ((self.end_cta, 0.9 + 0.16 * nr), (self.end_handle, 1.1 + 0.16 * nr)):
+            if im2 is None:
+                continue
+            kk = _ease((te - delay) / 0.4)
+            if kk > 0:
+                _comp(frame, _fade(im2, kk), (W - im2.width) // 2, yb + int((1 - kk) * 20))
+            yb += im2.height + 6
 
     # -------------------------------------------------------------- per frame
     def _video_frame(self, t):
@@ -488,14 +888,16 @@ class NewsVideo:
             self._ph = im
         return self._ph
 
-    def _background(self, vf, blur_more=0.0):
+    def _background(self, vf, end_p):
         if self.vertical:
             frame = Image.new("RGB", (W, H), (0, 0, 0))
             frame.paste(vf, self.vpos)
             frame = frame.convert("RGBA")
-            if blur_more > 0:
-                frame = frame.filter(ImageFilter.GaussianBlur(28 * blur_more))
+            if end_p > 0:
+                frame = frame.filter(ImageFilter.GaussianBlur(28 * end_p))
             return frame
+        if self.static_bg is not None:
+            return self.static_bg.copy()
         k = max(W / vf.width, H / vf.height)
         sw, sh = max(1, int(vf.width * k / 16)), max(1, int(vf.height * k / 16))
         small = vf.resize((sw, sh), Image.BILINEAR).filter(ImageFilter.GaussianBlur(2.2))
@@ -507,16 +909,20 @@ class NewsVideo:
         vf = self._video_frame(t)
         end_p = _ease((t - self.E) / 0.6) if self.ending_on else 0.0
         frame = self._background(vf, end_p)
-        frame.alpha_composite(self.shade)
+        if self.shade is not None:
+            frame.alpha_composite(self.shade)
         if not self.vertical:
             self._draw_panel(frame, vf, t, end_p)
         if end_p > 0:
-            dim = Image.new("RGBA", (W, H), (6, 8, 14, int(150 * end_p)))
-            frame.alpha_composite(dim)
+            dark = self.static_bg is None or self.vertical
+            veil = (6, 8, 14, int(150 * end_p)) if dark else (250, 249, 246, int(170 * end_p))
+            frame.alpha_composite(Image.new("RGBA", (W, H), veil))
         if end_p < 1:
             self._draw_header(frame, t, 1 - end_p)
             self._draw_captions(frame, t, 1 - end_p)
             self._draw_card(frame, t, 1 - end_p)
+            if self.L["ticker"]:
+                self._draw_ticker(frame, t, 1 - end_p)
         if self.ending_on and t >= self.E:
             self._draw_ending(frame, t - self.E)
         if t > self.dur - 0.35:  # fade out
@@ -534,23 +940,42 @@ class NewsVideo:
         im.putalpha(self.mask if a >= 0.999 else self.mask.point(lambda v: int(v * a)))
         frame.alpha_composite(im, (x, y))
         frame.alpha_composite(_fade(self.rim, a), (x, y))
-        # progress line under the panel
-        p = max(0.0, min(1.0, (t - LEAD) / self.clip))
+        p = max(0.0, min(1.0, (t - LEAD) / self.clip))      # progress line under the panel
         bar_y = y + self.vsize[1] + 18
+        tr = self.L["track"]
         d = ImageDraw.Draw(frame)
-        d.rounded_rectangle([x, bar_y, x + self.vsize[0], bar_y + 6], 3, fill=(255, 255, 255, int(60 * a)))
+        d.rounded_rectangle([x, bar_y, x + self.vsize[0], bar_y + 6], 3, fill=tr[:3] + (int(tr[3] * a),))
         if p > 0:
             d.rounded_rectangle([x, bar_y, x + max(6, int(self.vsize[0] * p)), bar_y + 6], 3,
                                 fill=self.accent + (int(255 * a),))
 
     def _draw_header(self, frame, t, a):
+        L = self.L
         k = _ease(t / 0.5)
         if k <= 0:
             return
-        y = self.head_y
+        y, dy, al = self.head_y, int((1 - k) * -30), a * k
+        d = ImageDraw.Draw(frame)
+        if L["header"] == "masthead":   # newspaper: name between rules, a dateline, then the headline centred
+            big = _text(self.label or "ENGLISH IN NEWS", 64, INK, "Black", PLAYFAIR)
+            _comp(frame, _fade(big, al), (W - big.width) // 2, y + dy - 6)
+            yl = y + dy + big.height + 4
+            rule = (30, 28, 26, int(255 * al))
+            d.line([(60, yl), (W - 60, yl)], fill=rule, width=3)
+            d.line([(60, yl + 7), (W - 60, yl + 7)], fill=rule, width=1)
+            bits = [b for b in (self.brand_name, self.tag) if b]
+            if bits:
+                line = _text("  ·  ".join(bits), 22, (90, 84, 76), "Bold")
+                _comp(frame, _fade(line, al), (W - line.width) // 2, yl + 12)
+            d.line([(60, yl + 52), (W - 60, yl + 52)], fill=rule, width=1)
+            hy = y + 150
+            for li, im in enumerate(self.head_lines):
+                kk = _ease((t - 0.12 - 0.08 * li) / 0.5)
+                if kk > 0:
+                    _comp(frame, _fade(im, a * kk), (W - im.width) // 2, hy + int((1 - kk) * 16))
+                hy += self.head_lh
+            return
         x = 70
-        dy = int((1 - k) * -30)
-        al = a * k
         if self.logo is not None:
             _comp(frame, _fade(self.logo, al), x - 10, y + dy - 10)
             tx = x + self.logo.width + 6
@@ -563,108 +988,34 @@ class NewsVideo:
         if self.tag_im is not None:
             pulse = 0.65 + 0.35 * math.sin(t * 5.5)
             tag = self.tag_im.copy()
-            d = ImageDraw.Draw(tag)
             cy = tag.height // 2
-            d.ellipse([12, cy - 6, 24, cy + 6], fill=(255, 255, 255, int(255 * pulse)))
+            ImageDraw.Draw(tag).ellipse([12, cy - 6, 24, cy + 6], fill=(255, 255, 255, int(255 * pulse)))
             _comp(frame, _fade(tag, al), W - 70 - tag.width, y + dy + 26)
         hy = y + 120
+        if L["header"] == "box" and self.head_lines:   # tv: the headline on a dark box with an accent edge
+            kk = _ease((t - 0.1) / 0.45)
+            bh = self.head_lh * len(self.head_lines) + 30
+            bw = int((W - 80) * kk)
+            if bw > 0:
+                d.rectangle([40, hy - 6, 40 + bw, hy - 6 + bh], fill=(8, 12, 26, int(235 * a)))
+                d.rectangle([40, hy - 6, 52, hy - 6 + bh], fill=self.accent + (int(255 * a),))
+            hy += 8
+            for li, im in enumerate(self.head_lines):
+                k2 = _ease((t - 0.25 - 0.08 * li) / 0.4)
+                if k2 > 0:
+                    _comp(frame, _fade(im, a * k2), 74, hy - 8)
+                hy += self.head_lh
+            return
+        top = hy
         for li, im in enumerate(self.head_lines):
             kk = _ease((t - 0.12 - 0.08 * li) / 0.5)
-            if kk <= 0:
-                continue
-            _comp(frame, _fade(im, a * kk), 64 + int((1 - kk) * 40), hy)
-            hy += im.height - 12
-        # an accent bar left of the headline
-        if self.head_lines:
+            if kk > 0:
+                _comp(frame, _fade(im, a * kk), 64 + int((1 - kk) * 40), hy - 8)
+            hy += self.head_lh
+        if self.head_lines:   # an accent bar left of the headline
             kk = _ease((t - 0.1) / 0.45)
-            ImageDraw.Draw(frame).rounded_rectangle(
-                [44, y + 128, 52, y + 128 + int((hy - y - 128 - 6) * kk)], 4, fill=self.accent + (int(255 * a),))
-
-    def _draw_captions(self, frame, t, a):
-        page = next((p for p in self.pages if p["t0"] <= t < p["t1"]), None)
-        if page is None:
-            return
-        ka = _ease((t - page["t0"]) / 0.15) * min(1.0, (page["t1"] - t) / 0.12) * a
-        rise = int((1 - _ease((t - page["t0"]) / 0.2)) * 18)
-        lh = page["lh"]
-        base_y = self.cap_y + (0 if page["lines"] == 2 else lh // 2) + rise
-        d = ImageDraw.Draw(frame)
-        for it in page["items"]:
-            w = self.words[it["i"]]
-            y = base_y + it["line"] * lh
-            x = it["x"] - it["pad"]
-            gi = self.key_of.get(it["i"])
-            spoken = t >= w["s"]
-            speaking = w["s"] <= t < w["e"] + 0.05
-            ww = it["white"].width - 2 * it["pad"]
-            if gi is not None and spoken:   # the marker swipes in behind the key word
-                g = self.groups[gi]
-                p = _ease((t - w["s"]) / max(0.12, min(0.35, w["e"] - w["s"])))
-                if p > 0:
-                    x0 = it["x"] - 10
-                    x1 = x0 + (ww + 20) * p
-                    d.rounded_rectangle([x0, y + 4, x1, y + it["white"].height - 4], 12,
-                                        fill=MARK + (int(255 * ka),))
-                im = it["dark"] if p > 0.5 else it["white"]
-                pop = 1.0 + 0.08 * _spring(t - g["t0"]) if it["i"] == g["i0"] else 1.0
-                if abs(pop - 1) > 0.005:
-                    im = im.resize((int(im.width * pop), int(im.height * pop)), Image.BILINEAR)
-                    x -= (im.width - it["white"].width) // 2
-                    y -= (im.height - it["white"].height) // 2
-                _comp(frame, _fade(im, ka), int(x), int(y))
-                continue
-            alpha = ka if spoken else ka * 0.55
-            im = it["white"]
-            if speaking:
-                d.rounded_rectangle([it["x"] - 10, y + 6, it["x"] + ww + 10, y + im.height - 6], 12,
-                                    fill=self.accent + (int(235 * ka),))
-            if gi is not None:  # a key word not spoken yet: underline it
-                d.rounded_rectangle([it["x"], y + im.height - 12, it["x"] + ww, y + im.height - 6], 3,
-                                    fill=MARK + (int(200 * alpha),))
-            _comp(frame, _fade(im, alpha), int(x), int(y))
-
-    def _draw_card(self, frame, t, a):
-        for c in self.cards:
-            if not (c["t0"] - 0.05 <= t < c["t1"] + 0.25):
-                continue
-            tin = t - c["t0"]
-            k = _back(tin / 0.42)
-            out = _ease((t - c["t1"]) / 0.25) if t >= c["t1"] else 0.0
-            al = min(1.0, max(0.0, tin / 0.18)) * (1 - out) * a
-            if al <= 0:
-                continue
-            im = c["im"]
-            sc = 0.82 + 0.18 * k
-            if abs(sc - 1) > 0.004:
-                im = im.resize((max(1, int(im.width * sc)), max(1, int(im.height * sc))), Image.BILINEAR)
-            x = (W - im.width) // 2
-            y = self.card_y + (c["im"].height - im.height) // 2 + int(out * 40)
-            _comp(frame, _fade(im, al), x, y)
-
-    def _draw_ending(self, frame, te):
-        k = _back((te - 0.25) / 0.55)
-        if k <= 0:
-            return
-        card = self.end_card.copy()
-        for n, (r, rx, ry) in enumerate(self.end_rows):
-            kk = _ease((te - 0.55 - 0.16 * n) / 0.35)
-            if kk > 0:
-                _comp(card, _fade(r, kk), rx + int((1 - kk) * 60), ry)
-        sc = 0.86 + 0.14 * k
-        im = card if abs(sc - 1) < 0.004 else card.resize((int(card.width * sc), int(card.height * sc)),
-                                                         Image.BILINEAR)
-        x, y = self.end_pos
-        x += (card.width - im.width) // 2
-        y += (card.height - im.height) // 2 + int((1 - min(1.0, k)) * 80)
-        _comp(frame, _fade(im, min(1.0, (te - 0.25) / 0.25)), x, y)
-        yb = self.end_pos[1] + card.height + 10
-        for im2, delay in ((self.end_cta, 0.9 + 0.16 * len(self.end_rows)), (self.end_handle, 1.1 + 0.16 * len(self.end_rows))):
-            if im2 is None:
-                continue
-            kk = _ease((te - delay) / 0.4)
-            if kk > 0:
-                _comp(frame, _fade(im2, kk), (W - im2.width) // 2, yb + int((1 - kk) * 20))
-            yb += im2.height + 6
+            d.rounded_rectangle([44, top + 4, 52, top + 4 + int((hy - top - 14) * kk)], 4,
+                                fill=self.accent + (int(255 * a),))
 
     # -------------------------------------------------------------- sound
     def sound(self, mx):
