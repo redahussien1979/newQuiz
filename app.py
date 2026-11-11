@@ -646,13 +646,13 @@ def font_picker():
     return dict(font=font)
 
 
-def ending_tab(note=""):
+def ending_tab(note="", rtl=True):
     with gr.Tab("🔚 Ending"):
         with gr.Column(elem_classes="pane"):
             gr.Markdown("**Ending card** — teases the next episode" + (f"\n\n{note}" if note else ""))
-            e_intro = gr.Textbox(label="Small intro line", rtl=True)
-            e_q = gr.Textbox(lines=3, max_lines=4, label="Question (1–3 lines, tags allowed)", rtl=True)
-            e_cta = gr.Textbox(label="Call to action", rtl=True)
+            e_intro = gr.Textbox(label="Small intro line", rtl=rtl)
+            e_q = gr.Textbox(lines=3, max_lines=4, label="Question (1–3 lines, tags allowed)", rtl=rtl)
+            e_cta = gr.Textbox(label="Call to action", rtl=rtl)
     return e_intro, e_q, e_cta
 
 
@@ -2101,7 +2101,10 @@ def build_ui():
                                     t_endon = gr.Checkbox(value=True, label="Ending card (texts in 🔚 Ending)")
                                     t_lend = gr.Checkbox(value=True, label="Logo on the ending card")
                         tx_st = style_tab()
-                        tx_end = ending_tab()
+                        tx_end = ending_tab("The card shows: your logo · the small line as — NEXT READING — · the "
+                                            "question, word by word (a line starting with [gold] is in the accent "
+                                            "colour) · the call to action as a button that gets tapped · your handle "
+                                            "(🎨 Style & sound).", rtl=False)
                     tx_fields = shared_fields(tx_st, tx_end) + [t_title, t_sub, t_tag, t_words, t_audio, t_gain,
                                                                  t_lead, t_band, t_marker, t_style, t_level, t_trans,
                                                                  t_logo, t_bname, t_lshape, t_lintro, t_lend, t_endon,
