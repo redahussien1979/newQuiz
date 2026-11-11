@@ -1585,7 +1585,9 @@ class TextVideo:
             S = 2
             z = self.gsize[gi]
             pad = 40 * S
-            t = _Txt(g["text"], z * S, self.en_col, self.W_KEY, self.BODY)
+            # the words as the text writes them (the Word Bank may show a dictionary form: go by the board)
+            said = " ".join(_clean(self.words[k]["w"]) for k in range(g["i0"], g["i1"] + 1))
+            t = _Txt(said, z * S, self.en_col, self.W_KEY, self.BODY)
             t.pad += pad  # room around the text for the shadow / glow
             big = Image.new("RGBA", (t.im.width + 2 * pad, t.im.height + 2 * pad), (0, 0, 0, 0))
             big.alpha_composite(t.im, (pad, pad))

@@ -79,7 +79,9 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   (`parse`), click-to-highlight on a gr.HighlightedText (`toggle`, select events with queue=False), choices in the
   project's `text.para_store` JSON (marks as phrase + occurrence, meanings, translations, keyed by title / first
   words), `suggest` (rarity from `data/english_freq.txt`, CC BY-SA from wordfreq), aliases (`spoken`), meanings Excel
-  round trip, `meter` (uses `make_video(..., layout_only=True)`), `project_for` -> normal text project.
+  round trip (`import_xlsx` also adds paragraphs missing from the box and highlights the sheet's words via
+  `find_phrase`: inflections `_bases`/`_IRREG`, `(something)` = gap; a dictionary form is kept in `heads` = Word Bank
+  label, the flight shows the words as written), `meter` (uses `make_video(..., layout_only=True)`), `project_for` -> normal text project.
   `engine/elevenlabs.py`: settings in DATA_DIR/elevenlabs.json (key never in projects), `/with-timestamps` TTS (urllib),
   cache DATA_DIR/tts/<hash>.mp3+.json, `word_times` maps character times to screen words. Takes: `regenerate` keeps
   the replaced take as <hash>.prev.*, `swap_takes` switches back (no credits); the tab's 🔊 player shows the
