@@ -76,6 +76,7 @@ TURN = 0.85                 # page turn (a real page curl)
 FLY = 0.85                  # word flight
 REVEAL = 0.6                # Arabic writes in
 ENDING_LEN = 4.5
+STACK = 0.8                 # extra height of a two-line word bank row (English over Arabic), x row height
 END_LOGO = 0.42             # when the logo pops onto the ending card (s after it starts)
 STING = 0.9                 # the logo opening (when switched on)
 LOGO = 118                  # the logo in the header, px
@@ -657,6 +658,7 @@ class TextVideo:
     STYLE_LIGHT = True          # a light page (the logo opening writes the name in colour, not white)
     MIN_SIZE = 44               # smallest comfortable reading size on a phone (longer texts get more pages)
     GAP_MAX = 2.0               # widest justified word gap (in spaces) before a page takes a smaller size
+    RECAP_RESERVE = 0           # room kept under the recap word list (Exam: the LEARNED stamp)
 
     def __init__(self, project, layout_only=False):
         s = project.get("settings", {})
@@ -1181,11 +1183,33 @@ class TextVideo:
         cap = 108 if n <= 4 else 96 if n <= 6 else 80 if n <= 8 else 64
         return max(58, min(cap, int((size or self.size) * 1.6)))
 
-    def _bank_h(self, n, size=None):
-        return 0 if n == 0 else 64 + 82 + n * self._row_h(n, size)  # gap + header + rows
+    def _bank_h(self, n, size=None, keys=None):
+        if n == 0:
+            return 0
+        rh = self._row_h(n, size)
+        extra = sum(int(rh * STACK) for gi in (keys or []) if self._row_fit(gi, rh)[0] == "stack")
+        return 64 + 82 + n * rh + extra  # gap + header + rows (a two-line row is taller)
+
+    def _row_fit(self, gi, row_h):
+        """How a word bank row holds its word: ("one", 1.0) on one line; ("one", k) on one line with English and
+        Arabic both scaled by k (>= 0.85); ("stack", 1.0) English on top and the Arabic under it (a long phrase)."""
+        key = ("fit", gi, row_h)
+        if key in self._misc:
+            return self._misc[key]
+        g = self.groups[gi]
+        en_size = int(min(48, row_h * 0.6))
+        need = int(en_size * 1.15) + _font(en_size, self.W_KEY, self.BODY).getlength(g["text"]) + 60
+        if self.show_line_ref():
+            need += _font(max(20, int(en_size * 0.5)), "Medium", LABEL).getlength("(line 00)") + 14
+        if g["ar"]:
+            need += _ar_img(g["ar"], en_size + 6, self.ar_col, self.ar_font).width
+        k = min(1.0, self.width / max(1.0, need))
+        self._misc[key] = ("one", k) if k >= 0.85 else ("stack", 1.0)
+        return self._misc[key]
 
     def _need(self, idx, size):
-        return len(self._break(idx, size)) * int(size * self.LINE) + self._bank_h(len(self._keys_in(idx)), size)
+        keys = self._keys_in(idx)
+        return len(self._break(idx, size)) * int(size * self.LINE) + self._bank_h(len(keys), size, keys)
 
     def _keys_in(self, idx):
         s = set(idx)
@@ -1461,7 +1485,8 @@ class TextVideo:
         self._band_layer(base)
         keys = list(range(len(self.groups)))
         n = len(keys)
-        slots = self._bank_rows(base, keys, self.p_top + 10, avail=SAFE_BOTTOM - self.p_top - 10,
+        slots = self._bank_rows(base, keys, self.p_top + 10,
+                                avail=SAFE_BOTTOM - self.p_top - 10 - self.RECAP_RESERVE,
                                 label=f"{self.bank_label} · {n}")
         self._page_extras(base, slots)
         return dict(kind="recap", k=len(self.page_words), base=base, slots=slots, keys=keys, size=self.size)
@@ -1481,30 +1506,57 @@ class TextVideo:
         """Word bank header + empty numbered rows; returns the slot geometry of each key."""
         d = ImageDraw.Draw(img)
         n = len(keys)
-        row_h = max(58, min(108, (avail - 82) // max(1, n))) if avail else self._row_h(n, size)
+        if avail:  # the recap page: rows share the room (two-line rows count 1 + STACK)
+            row_h = max(58, min(108, (avail - 82) // max(1, n)))
+            for _ in range(3):
+                m = sum(1 for gi in keys if self._row_fit(gi, row_h)[0] == "stack")
+                row_h = max(52, min(108, int((avail - 82) / max(1.0, n + STACK * m))))
+        else:
+            row_h = self._row_h(n, size)
         d.rectangle([self.x0, top, self.x1, top + 4], fill=self.bank_col + (255,))
         self._bank_header(img, top, label or self.bank_label, max(26, min(34, int(row_h * 0.34))))
-        en_size = int(min(48, row_h * 0.6))
         slots = []
         y = top + 82
+        fits = [self._row_fit(gi, row_h) for gi in keys]
+        k_all = min([k for mode, k in fits if mode == "one"] + [1.0])  # one size for every row of the list
         for j, gi in enumerate(keys):
             g = self.groups[gi]
+            mode, k = fits[j][0], k_all
+            en_size = int(min(48, row_h * 0.6) * k)
+            h = row_h + (int(row_h * STACK) if mode == "stack" else 0)
             base = y + int(row_h * 0.66)
-            num = _Txt(str(gi + 1) if self.SUP else str(j + 1), max(26, int(en_size * 0.6)), self.bank_col, "Bold",
-                       LABEL)  # Textbook: the same number as the footnote in the text
+            num = _Txt(str(gi + 1) if self.SUP else str(j + 1), max(26, int(min(48, row_h * 0.6) * 0.6)),
+                       self.bank_col, "Bold", LABEL)  # Textbook: the same number as the footnote in the text
             num.put(img, self.x0, base)
-            d.line([(self.x0, y + row_h - 1), (self.x1, y + row_h - 1)], fill=self.rule_col + (255,), width=2)
+            d.line([(self.x0, y + h - 1), (self.x1, y + h - 1)], fill=self.rule_col + (255,), width=2)
+            en_x = self.x0 + int(min(48, row_h * 0.6) * 1.15)
             en = _Txt(g["text"], en_size, self.en_col, self.W_KEY, self.BODY)
-            en_x = self.x0 + int(en_size * 1.15)
+            if en.w > self.x1 - en_x:  # a very long phrase still fits its row
+                en = _Txt(g["text"], max(22, int(en_size * (self.x1 - en_x) / en.w)), self.en_col, self.W_KEY,
+                          self.BODY)
             ref = None
             if self.show_line_ref() and gi in self.key_line:
                 ref = _Txt(f"(line {self.key_line[gi]})", max(20, int(en_size * 0.5)), (150, 150, 150), "Medium", LABEL)
-            used = en_x - self.x0 + en.w + (ref.w + 14 if ref else 0) + 60
-            ar_im = _ar_fit(g["ar"], en_size + 6, self.ar_col, self.ar_font, self.width - used) if g["ar"] else None
-            slots.append(dict(gi=gi, num_x=self.x0 + 15, y=y, h=row_h, base=base, en=en, en_x=en_x, en_size=en_size,
-                              ref=ref, ar=ar_im, ar_x=self.x1 - (ar_im.width if ar_im is not None else 0),
-                              ar_y=base - int(ar_im.height * 0.64) if ar_im is not None else 0))
-            y += row_h
+            slot = dict(gi=gi, num_x=self.x0 + 15, y=y, h=h, base=base, en=en, en_x=en_x, en_size=en_size, ref=ref)
+            ar_im = None
+            if mode == "stack":
+                if ref is not None and en_x + en.w + 14 + ref.w > self.x1:
+                    slot["ref"] = None  # no room for the line number next to a very long phrase
+                lead_y = base + int(row_h * STACK)  # the Arabic line, under the English, right-aligned
+                if g["ar"]:
+                    ar_im = _ar_fit(g["ar"], en_size + 2, self.ar_col, self.ar_font, self.x1 - en_x - 80)
+                slot.update(lead_y=lead_y, lead_x0=en_x + 6)
+                slot.update(ar=ar_im, ar_x=self.x1 - (ar_im.width if ar_im is not None else 0),
+                            ar_y=lead_y - int(ar_im.height * 0.64) if ar_im is not None else 0)
+            else:
+                used = en_x - self.x0 + en.w + (ref.w + 14 if ref else 0) + 60
+                if g["ar"]:
+                    ar_im = _ar_fit(g["ar"], int((min(48, row_h * 0.6) + 6) * k), self.ar_col, self.ar_font,
+                                    self.width - used)
+                slot.update(ar=ar_im, ar_x=self.x1 - (ar_im.width if ar_im is not None else 0),
+                            ar_y=base - int(ar_im.height * 0.64) if ar_im is not None else 0)
+            slots.append(slot)
+            y += h
         return slots
 
     def show_line_ref(self):
@@ -1522,10 +1574,11 @@ class TextVideo:
             x_after += s["ref"].w + 4
         q = ease_io(prog(t, t_land + 0.12, t_land + 0.12 + REVEAL))
         if s["ar"] is not None and q > 0:
-            lead_x0, lead_x1 = x_after + 4, s["ar_x"] - 14
+            lead_x0, lead_x1 = s.get("lead_x0", x_after + 4), s["ar_x"] - 14
+            ly = s.get("lead_y", s["base"])  # a two-line row: the leaders run along the Arabic line
             d = ImageDraw.Draw(frame)
             for x in range(int(lead_x0), int(lead_x0 + (lead_x1 - lead_x0) * q), 12):
-                d.ellipse([x, s["base"] - 3, x + 3, s["base"]], fill=self.leader_col + (255,))
+                d.ellipse([x, ly - 3, x + 3, ly], fill=self.leader_col + (255,))
             self._put_ar(frame, s["ar"], s["ar_x"], s["ar_y"], q)
         self._draw_check(frame, s, t)
 
@@ -2494,7 +2547,7 @@ class StudioVideo(TextVideo):
     def _card_h(self, n, size):
         return max(132, min(184, int(size * 3.0) - (14 if n > 6 else 0)))
 
-    def _bank_h(self, n, size=None):
+    def _bank_h(self, n, size=None, keys=None):
         if n == 0:
             return 0
         rows = (n + 1) // 2
@@ -2610,11 +2663,13 @@ class ExamVideo(TextVideo):
         self.reader_col = (212, 224, 246, 255)
         self.page_back = (246, 244, 238)
 
+    RECAP_RESERVE = 110
+
     def show_line_ref(self):
         return True
 
-    def _bank_h(self, n, size=None):
-        return 0 if n == 0 else super()._bank_h(n, size) + 96  # + the LEARNED stamp
+    def _bank_h(self, n, size=None, keys=None):
+        return 0 if n == 0 else super()._bank_h(n, size, keys) + 96  # + the LEARNED stamp
 
     def _background(self):
         yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
@@ -2901,7 +2956,7 @@ class NotebookVideo(TextVideo):
     def _note_h(self, n, size):
         return max(128, min(186, int(size * 2.9)))
 
-    def _bank_h(self, n, size=None):
+    def _bank_h(self, n, size=None, keys=None):
         if n == 0:
             return 0
         rows = (n + 2) // 3
