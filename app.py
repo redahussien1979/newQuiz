@@ -32,6 +32,7 @@ from engine.templates.vocab import TITLE_STYLES as VC_TITLE_STYLES
 from engine.templates.text import BAND_CHOICES as TX_BANDS, MARKER_CHOICES as TX_MARKERS, words_report
 from engine.templates.text import LEVEL_CHOICES as TX_LEVELS, STYLE_CHOICES as TX_STYLES
 from engine.templates.text import DEFAULT_LOGO as TX_LOGO, LOGO_SHAPES as TX_LOGO_SHAPES
+from engine.templates.news import ACCENT_CHOICES as NW_ACCENTS, LOOK_CHOICES as NW_LOOKS, probe as nw_probe
 from engine import batch
 from engine import countries
 from engine import tl_batch
@@ -39,6 +40,7 @@ from engine import userdata
 from engine import fonts as fontlib
 from engine import elevenlabs as el
 from engine import paragraphs as para
+from engine import news_words as nw
 from engine import text_batch
 from engine import vocab_batch
 from engine.word_list import BOARD_CHOICES, CHALK_COLOR_CHOICES, HIGHLIGHTS, MARKS
@@ -75,8 +77,11 @@ TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "
            "level", "translation", "logo", "brand_name", "logo_shape", "logo_intro", "logo_end", "ending_on",
            "para_text", "para_store", "para_alias", "read_style",
            "text_size"]
-KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS}
-MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo"}
+NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", "logo", "logo_shape", "trim_start",
+           "trim_end", "video_gain", "ending_on", "words"]
+KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS}
+MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
+                "video"}
 MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
 DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": "", "maps": False, "guess": False,
             "guess_q": "", "intro": "hook", "map_style": "auto", "polish": False, "finish": False,
@@ -97,7 +102,7 @@ the countdown starts after the last one. The music gets quieter while a clip pla
 
 HELP = """
 ### How to use
-1. Pick a tab (**Timeline Collision**, **Clue Quiz**, **Multiple Choice** or **English Words**), or press **Load example** to start from a finished video.
+1. Pick a tab (**Timeline Collision**, **Clue Quiz**, **Multiple Choice**, **English Words**, **English Texts** or **English in News**), or press **Load example** to start from a finished video.
 2. Fill in the fields. They are grouped in small tabs on the left (content, 🎨 Style & sound, 🔚 Ending), so everything fits on one screen.
    The preview on the right **updates by itself** as you type. Move the time slider to check any moment.
 3. Press **Render video**. The MP4 appears on the right (🎞️ Video tab) and is also saved in **Documents\\Video Studio\\outputs**.
@@ -191,6 +196,20 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   logo on the ending card if you want them. "Logolept red" is the page colour that matches the logo.
 - The text is sized to fill the Shorts safe area; long paragraphs turn into pages (the voice waits for the page
   turn) and end with a Word Bank recap. Each render also saves a cover picture.
+
+### English in News tips
+- **📰 English in News**: upload a short news clip — ElevenLabs writes its transcript with the time of every word
+  (your API key needs the *Speech to Text* permission; each clip is transcribed once and kept, so re-opening it
+  costs nothing). Click words in the transcript to make them key words (click the next word to make a phrase, click
+  again to remove; ✨ Suggest marks the less common words), then type their Arabic in the meanings table.
+- The video: big subtitles that follow the speech word by word, each key word marked when it is said, a card with the
+  word and its Arabic meaning, and a recap card of all the key words at the end (🔚 Ending: its title, call to action).
+- Five looks (⏱️ Design): **Pop** (1–3 huge words at a time, yellow stickers), Breaking (dark), Studio (light),
+  TV broadcast (lower thirds + ticker) and Newspaper; five accent colours. Trim the clip with *Start / End the clip at*.
+- **Landscape (16:9) clips work best**: the video keeps its own frame and nothing covers it. A vertical clip fills the
+  screen and the subtitles and cards go over its lower half. Keep it 15–60 s, one clear speaker, no subtitles burned
+  into the picture, 4–6 key words. A misheard word can be fixed in ✏️ Words (advanced).
+- News footage is usually copyrighted: use clips you have the right to use.
 
 ### Sound
 - Built-in music moods are generated, so there are no copyright issues. You can also upload your own music file.
@@ -429,7 +448,7 @@ def make_actions(tpl):
         except Exception as e:
             raise gr.Error(str(e))
         msg = f"Video length: **{dur:.1f} s**"
-        if tpl in ("vocab", "text") and dur > 60:
+        if tpl in ("vocab", "text", "news") and dur > 60:
             msg += " — ⚠️ over 60 s: fine for YouTube Shorts and Instagram Reels, but keep Facebook Reels under 60 s"
         return img, msg, gr.update(maximum=max(1.0, round(dur, 1)))
 
@@ -474,6 +493,10 @@ def make_actions(tpl):
             p["text"]["reading_audio"] = _keep_media(p["text"].get("reading_audio"))
             logo = p["text"].get("logo") or ""
             p["text"]["logo"] = logo if os.path.abspath(logo) == os.path.abspath(TX_LOGO) else _keep_media(logo)
+        elif tpl == "news":
+            p["news"]["video"] = _keep_media(p["news"].get("video"))
+            logo = p["news"].get("logo") or ""
+            p["news"]["logo"] = logo if os.path.abspath(logo) == os.path.abspath(TX_LOGO) else _keep_media(logo)
         stamp = _stamp()
         if tpl == "vocab":
             p["vocab"]["audio"] = _keep_media_list(p["vocab"].get("audio"), os.path.join(MEDIA_DIR, f"words_audio_{stamp}"))
@@ -523,6 +546,8 @@ button {user-select: none; -webkit-user-select: none;}
 @media (max-width: 900px) { .pane {max-height: none;} .preview-col {position: static;} }
 .font-gal .thumbnail-item {aspect-ratio: 3 / 1 !important; height: auto !important;}  /* cards are 900 x 300 */
 .font-gal .grid-wrap {height: auto !important; max-height: 640px;}
+.nw-meanings span, .nw-meanings input, .nw-meanings textarea {font-family: "Segoe UI", Tahoma, Arial, sans-serif !important;
+  font-size: 1rem !important;}  /* Arabic reads badly in the table's monospace font */
 """
 PREVIEW_H = "calc(100vh - 404px)"
 
@@ -1633,6 +1658,141 @@ def wire_paragraphs(ui, pv, fields):
                 **_progress_on(dep, pv["vid"]))
 
 
+# ------------------------------------------------------------------ English in News
+NEWS_HELP = """**Upload a short news clip → its transcript appears → click the key words → write their Arabic meanings →
+render.** ElevenLabs writes the transcript with the time of every word (once per video: the same clip is never paid
+for twice). The look, colour and headline are in ⏱️ Design; the recap card texts in 🔚 Ending."""
+NEWS_WORDS_HELP = ("One spoken word per line: `word | start | end | key | arabic` (times in seconds in the video). "
+                   "Fix a misheard word here; `*` in key = a key word, the same text on neighbouring lines = a phrase.")
+NEWS_TIPS = """💡 **Landscape (16:9) clips work best**: the video keeps its own frame and the subtitles and word cards
+never cover it. A vertical clip fills the screen (subtitles and cards go over its lower half). 15–60 s, one clear
+speaker, no subtitles burned into the picture, 4–6 key words."""
+
+
+def news_tab():
+    s = el.load_settings(DATA_DIR)
+    gr.Markdown(NEWS_HELP)
+    with gr.Accordion("🔑 ElevenLabs — the API key is saved on this computer only, never in projects or videos",
+                      open=not s["api_key"]):
+        key = gr.Textbox(value=s["api_key"], type="password", label="ElevenLabs API key",
+                         info="elevenlabs.io → your profile → API keys (it needs the Speech to Text permission). "
+                              "The same key as 📖 English Texts.")
+        with gr.Row(equal_height=True):
+            model = gr.Dropdown(el.STT_MODELS, value="scribe_v1", label="Transcription model")
+            lang = gr.Dropdown(el.STT_LANGS, value="en", label="Language spoken in the clip")
+            save_k = gr.Button("💾 Save key", min_width=120)
+    video = gr.File(label="📼 News clip (mp4 / mov / webm …) — the transcript appears when it is uploaded",
+                    file_types=[".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"], type="filepath", height=110)
+    with gr.Row(equal_height=True):
+        again = gr.Button("📝 Transcribe (again)", min_width=160)
+        sug = gr.Button("✨ Suggest key words", min_width=160)
+        n_sug = gr.Slider(1, 10, value=5, step=1, label="How many", scale=2)
+        clr = gr.Button("🧹 Clear", min_width=90)
+    status = gr.Markdown()
+    join = gr.Checkbox(value=True, label="Click the next word to make a phrase (e.g. cooling → centres)")
+    ht = gr.HighlightedText([], label="👆 Transcript — click words to make them key words (click again to remove)",
+                            combine_adjacent=False, show_legend=False, interactive=False)
+    params = inspect.signature(gr.Dataframe.__init__).parameters  # Gradio 5 and 6 name these differently
+    kw = {"static_columns": [0, 1]} if "static_columns" in params else {}
+    kw["column_count" if "column_count" in params else "col_count"] = (3, "fixed")
+    meanings = gr.Dataframe(headers=["#", "Key word", "Arabic meaning (type here)"], datatype=["number", "str", "str"],
+                            interactive=True, wrap=True, label="🌐 Arabic meanings", elem_classes="nw-meanings", **kw)
+    with gr.Accordion("✏️ Words (advanced) — fix a misheard word or a time", open=False):
+        words = gr.Textbox(lines=12, max_lines=40, label="Words", info=NEWS_WORDS_HELP)
+    gr.Markdown(NEWS_TIPS)
+    return dict(key=key, model=model, lang=lang, save_k=save_k, video=video, again=again, sug=sug, n_sug=n_sug,
+                clr=clr, status=status, join=join, ht=ht, meanings=meanings, words=words)
+
+
+def news_design_tab():
+    with gr.Tab("⏱️ Design"):
+        with gr.Column(elem_classes="pane"):
+            look = gr.Radio(NW_LOOKS, value="pop", label="Look",
+                            info="Pop = 1-3 huge words + yellow stickers · Breaking = dark, framed video · Studio = "
+                                 "light · TV broadcast = lower thirds + ticker · Newspaper = newsprint + clippings")
+            accent = gr.Dropdown(NW_ACCENTS, value="red", label="Accent colour")
+            headline = gr.Textbox(label="Headline (top of the video)", placeholder="Heatwave pushes cities to open "
+                                  "cooling centres")
+            with gr.Row():
+                tag = gr.Textbox(label="Tag (top right)", placeholder="NEWS")
+                label = gr.Textbox(label="Small line under the name", placeholder="ENGLISH IN NEWS")
+            with gr.Row():
+                trim0 = gr.Number(value=0, label="Start the clip at (s)", minimum=0)
+                trim1 = gr.Number(value=0, label="End the clip at (s)", minimum=0, info="0 = the end of the video")
+            gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Clip volume")
+            ending_on = gr.Checkbox(value=True, label="Recap card of all key words at the end (texts in 🔚 Ending)")
+            gr.Markdown("**🏷️ Your logo** (remove the picture for no logo)")
+            with gr.Row():
+                logo = gr.Image(value=TX_LOGO, type="filepath", label="Logo (square PNG)", height=170, scale=1)
+                with gr.Column(scale=2):
+                    bname = gr.Textbox(value="LOGOLEPT", label="Name beside the logo", info="Empty = the logo alone")
+                    lshape = gr.Radio(TX_LOGO_SHAPES, value="circle", label="Logo shape")
+    return dict(look=look, accent=accent, headline=headline, tag=tag, label=label, trim0=trim0, trim1=trim1,
+                gain=gain, ending_on=ending_on, logo=logo, bname=bname, lshape=lshape)
+
+
+def _clip_len(path):
+    try:
+        return nw_probe(path)[2] if path and os.path.isfile(path) else None
+    except Exception:
+        return None
+
+
+def wire_news(ui):
+    def refresh(text, path):
+        words = nw.load(text)
+        return nw.view(words), nw.table(words), nw.report(words, _clip_len(path))
+
+    def do_transcribe(path, key, model, lang, progress=gr.Progress()):
+        if not path:
+            return gr.update(), "_Upload a video first._", 0, 0
+        key = (key or "").strip() or el.load_settings(DATA_DIR)["api_key"]
+        progress(0.2, desc="ElevenLabs is writing the transcript…")
+        try:
+            stt = el.transcribe(path, os.path.join(DATA_DIR, "stt"), key, model, lang)
+        except Exception as e:
+            gr.Warning(_msg(e))
+            return gr.update(), f"⚠️ {_msg(e)}", gr.update(), gr.update()
+        gr.Info(f"Transcript ready: {len(stt)} words. Click the key words.", duration=6)
+        return nw.from_stt(stt), gr.update(), 0, 0
+
+    def click(text, join, evt: gr.SelectData):
+        words = nw.load(text)
+        if not words:
+            return gr.update()
+        return nw.dump(nw.toggle(words, int(evt.index), bool(join)))
+
+    def do_suggest(text, n):
+        words = nw.load(text)
+        if not words:
+            raise gr.Error("Upload a video first (or paste the words).")
+        return nw.dump(nw.suggest(words, int(n)))
+
+    def do_clear(text):
+        return nw.dump(nw.clear(nw.load(text)))
+
+    def meanings_in(text, rows):
+        words = nw.load(text)
+        rows = rows.values.tolist() if hasattr(rows, "values") else (rows or [])
+        return nw.dump(nw.set_meanings(words, rows))
+
+    def save_key(key):
+        el.save_settings(DATA_DIR, api_key=(key or "").strip())
+        gr.Info("ElevenLabs key saved on this computer.", duration=4)
+
+    tr_in = [ui["video"], ui["key"], ui["model"], ui["lang"]]
+    tr_out = [ui["words"], ui["status"], ui["trim0"], ui["trim1"]]
+    ui["video"].upload(do_transcribe, tr_in, tr_out)
+    ui["again"].click(do_transcribe, tr_in, tr_out)
+    gr.on(triggers=[ui["words"].change, ui["video"].change], fn=refresh, inputs=[ui["words"], ui["video"]],
+          outputs=[ui["ht"], ui["meanings"], ui["status"]], trigger_mode="always_last", show_progress="hidden")
+    ui["ht"].select(click, [ui["words"], ui["join"]], ui["words"], queue=False, show_progress="hidden")
+    ui["sug"].click(do_suggest, [ui["words"], ui["n_sug"]], ui["words"])
+    ui["clr"].click(do_clear, ui["words"], ui["words"])
+    ui["meanings"].input(meanings_in, [ui["words"], ui["meanings"]], ui["words"], show_progress="hidden")
+    ui["save_k"].click(save_key, ui["key"], None)
+
+
 # ------------------------------------------------------------------ Know a Country
 KC_TEMPLATE = os.path.join(APP_PROJ_DIR, "know_country_template.xlsx")
 KC_CACHE = os.path.join(DATA_DIR, "cache")
@@ -2123,6 +2283,28 @@ def build_ui():
             gr.on(triggers=[t_words.change, t_audio.change], fn=words_report, inputs=[t_words, t_audio],
                   outputs=t_info, trigger_mode="always_last", show_progress="hidden")
 
+        with gr.Tab("📰 English in News"):
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=3, min_width=420):
+                    nw_proj = project_bar()
+                    with gr.Tabs():
+                        with gr.Tab("🎬 Video & words"):
+                            with gr.Column(elem_classes="pane"):
+                                nwu = news_tab()
+                        nwd = news_design_tab()
+                        nw_st = style_tab()
+                        nw_end = ending_tab("The recap card shows the small intro line as its title (e.g. *Words from "
+                                            "the news*), every key word with its Arabic, then the call to action and "
+                                            "your handle (🎨 Style & sound).", rtl=False)
+                    nwu.update(trim0=nwd["trim0"], trim1=nwd["trim1"])
+                    nw_fields = shared_fields(nw_st, nw_end) + [
+                        nwu["video"], nwd["look"], nwd["accent"], nwd["headline"], nwd["tag"], nwd["label"],
+                        nwd["bname"], nwd["logo"], nwd["lshape"], nwd["trim0"], nwd["trim1"], nwd["gain"],
+                        nwd["ending_on"], nwu["words"]]
+                nw_pv = preview_panel("news")
+            wire(nw_proj, nw_pv, nw_fields)
+            wire_news(nwu)
+
         with gr.Tab("🌍 Know a Country"):
             know_country_tab()
 
@@ -2134,6 +2316,7 @@ def build_ui():
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["mcq"][2]), "mcq"), None, mq_fields)
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["vocab"][2]), "vocab"), None, vc_fields)
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["text"][2]), "text"), None, tx_fields)
+        demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["news"][2]), "news"), None, nw_fields)
     return demo
 
 

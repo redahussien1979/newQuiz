@@ -9,10 +9,10 @@ word (`*` = the word itself); neighbouring lines with the same several-word high
 
 Looks (`news.look`, see LOOKS): one engine, each look only sets colours / fonts and picks its background, header,
 subtitle, card and ending variants:
-    breaking   dark, blurred copy of the clip behind a framed panel, white cards              (default)
+    pop        creator style: 1-3 huge words at a time, yellow sticker cards                  (default)
+    breaking   dark, blurred copy of the clip behind a framed panel, white cards
     studio     clean and light, dark word cards
     tv         broadcast: subtitles on a solid band, lower-third word bar, a ticker of the words
-    pop        creator style: 1-3 huge words at a time, yellow sticker cards
     paper      newspaper: newsprint, serif type, paper clippings with tape
 
 Layout: a landscape / square video sits in a framed panel near the top; a vertical video fills the screen.
@@ -57,6 +57,7 @@ ENDING_LEN = 5.0
 CARD_MIN, CARD_HOLD = 1.8, 4.2
 SAFE_BOTTOM = 1536
 CAP_MAX_W = 900
+POP_MAX_W = 820            # pop: the widest a line of huge words may be (1080 - 2 x 130)
 TICKER_Y = 1470            # the tv ticker (64 px high, ends at the safe-area line)
 ACCENTS = {"red": (228, 30, 48), "blue": (28, 110, 230), "teal": (0, 150, 150), "orange": (240, 120, 20),
            "purple": (126, 64, 210)}
@@ -104,8 +105,9 @@ LOOKS = {
                   card_bg=(253, 251, 245), card_font=PLAYFAIR, card_weight="Bold", ar_font=AMIRI,
                   end_bg=(253, 251, 245), end_row=(244, 239, 228), end_font=PLAYFAIR, end_text=INK),
 }
-LOOK_CHOICES = [("🔴 Breaking (dark)", "breaking"), ("⚪ Studio (light)", "studio"), ("📺 TV broadcast", "tv"),
-                ("💥 Pop (big words)", "pop"), ("📰 Newspaper", "paper")]
+LOOK_CHOICES = [("💥 Pop (big words)", "pop"), ("🔴 Breaking (dark)", "breaking"), ("⚪ Studio (light)", "studio"),
+                ("📺 TV broadcast", "tv"), ("📰 Newspaper", "paper")]
+DEFAULT_LOOK = "pop"
 
 EXAMPLE = {
     "template": "news",
@@ -116,7 +118,7 @@ EXAMPLE = {
     "ending": {"intro": "Words from the news", "question": "", "cta": "Follow for English from the news every day"},
     "news": {
         "video": "",
-        "look": "breaking",
+        "look": DEFAULT_LOOK,
         "headline": "Heatwave pushes cities to open cooling centres",
         "tag": "NEWS",
         "label": "ENGLISH IN NEWS",
@@ -292,12 +294,13 @@ class NewsVideo:
     def __init__(self, project):
         s = project.get("settings", {}) or {}
         n = dict(EXAMPLE["news"])
-        n.update({k: v for k, v in (project.get("news", {}) or {}).items() if v is not None})
+        self.given = project.get("news", {}) or {}
+        n.update({k: v for k, v in self.given.items() if v is not None})
         e = project.get("ending", {}) or {}
         self.fps = int(s.get("fps") or 30)
         self.handle = str(s.get("handle") or "").strip()
         self.accent = ACCENTS.get(n.get("accent"), ACCENTS["red"])
-        self.look_name = n.get("look") if n.get("look") in LOOKS else "breaking"
+        self.look_name = n.get("look") if n.get("look") in LOOKS else DEFAULT_LOOK
         L = dict(_BASE)
         L.update(LOOKS[self.look_name])
         for k in ("card_ar", "card_label", "end_ar", "speak_col"):
@@ -359,7 +362,10 @@ class NewsVideo:
     # -------------------------------------------------------------- layout (once)
     def _layout(self, n):
         L, A = self.L, self.accent
-        self.logo = logo_badge(n.get("logo") or DEFAULT_LOGO, 92, n.get("logo_shape") or "circle")
+        # no "logo" in the project = the bundled logo; a removed picture (empty) = no logo
+        given = self.given
+        logo = given.get("logo") if "logo" in given else DEFAULT_LOGO
+        self.logo = logo_badge(logo, 92, n.get("logo_shape") or "circle") if logo else None
         self.brand_name = str(n.get("brand_name") or "").strip().upper()
         self.brand_im = _text(self.brand_name, 30, L["head_col"], "Black") if self.brand_name else None
         self.label_im = _text(self.label, 26, L["sub_col"], "Bold") if self.label else None
@@ -522,7 +528,10 @@ class NewsVideo:
                     items.append(dict(im, i=i, x=x, line=li))
                     x += im["w"] + space
             nl = max(it["line"] for it in items) + 1
-            self.pages.append(dict(t0=t0, t1=t1, items=items, lines=nl, lh=lh))
+            widest = max(sum(it["w"] for it in items if it["line"] == li) + space * (sum(
+                1 for it in items if it["line"] == li) - 1) for li in range(nl))
+            fit = min(1.0, POP_MAX_W / widest) if pop else 1.0   # a long word group shrinks to stay clear of the
+            self.pages.append(dict(t0=t0, t1=t1, items=items, lines=nl, lh=lh, fit=fit))  # Shorts buttons
         if L["band"]:
             self.band_box = (0, self.cap_y - 18, W, self.cap_y - 18 + lh * L["max_lines"] + 30)
 
@@ -555,11 +564,15 @@ class NewsVideo:
         pop = L["cap_mode"] == "pop"
         ka = _ease((t - page["t0"]) / (0.08 if pop else 0.15)) * min(1.0, (page["t1"] - t) / 0.1) * a
         rise = 0 if pop else int((1 - _ease((t - page["t0"]) / 0.2)) * 18)
-        pscale = 0.75 + 0.25 * _back((t - page["t0"]) / 0.22) if pop else 1.0
+        fit = page["fit"]
+        pscale = (0.75 + 0.25 * _back((t - page["t0"]) / 0.22)) * fit if pop else 1.0
         lh = page["lh"]
         base_y = self.cap_y + (0 if page["lines"] == L["max_lines"] else lh // 2 * (L["max_lines"] - 1)) + rise
         d = ImageDraw.Draw(frame)
         for it in page["items"]:
+            if fit < 1:   # move the word towards the centre as the whole line shrinks
+                cx = it["x"] + it["w"] / 2
+                it = dict(it, x=it["x"] + (W / 2 + (cx - W / 2) * fit - cx))
             w = self.words[it["i"]]
             y = base_y + it["line"] * lh
             gi = self.key_of.get(it["i"])
