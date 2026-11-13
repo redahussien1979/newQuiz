@@ -32,6 +32,7 @@ from engine.templates.vocab import TITLE_STYLES as VC_TITLE_STYLES
 from engine.templates.text import BAND_CHOICES as TX_BANDS, MARKER_CHOICES as TX_MARKERS, words_report
 from engine.templates.text import LEVEL_CHOICES as TX_LEVELS, STYLE_CHOICES as TX_STYLES
 from engine.templates.text import DEFAULT_LOGO as TX_LOGO, LOGO_SHAPES as TX_LOGO_SHAPES
+from engine.templates.news import ACCENT_CHOICES as NW_ACCENTS, LOOK_CHOICES as NW_LOOKS, probe as nw_probe
 from engine import batch
 from engine import countries
 from engine import tl_batch
@@ -39,6 +40,7 @@ from engine import userdata
 from engine import fonts as fontlib
 from engine import elevenlabs as el
 from engine import paragraphs as para
+from engine import news_words as nw
 from engine import text_batch
 from engine import vocab_batch
 from engine.word_list import BOARD_CHOICES, CHALK_COLOR_CHOICES, HIGHLIGHTS, MARKS
@@ -75,8 +77,11 @@ TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "
            "level", "translation", "logo", "brand_name", "logo_shape", "logo_intro", "logo_end", "ending_on",
            "para_text", "para_store", "para_alias", "read_style",
            "text_size"]
-KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS}
-MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo"}
+NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", "logo", "logo_shape", "trim_start",
+           "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index"]
+KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS}
+MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
+                "video"}
 MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
 DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": "", "maps": False, "guess": False,
             "guess_q": "", "intro": "hook", "map_style": "auto", "polish": False, "finish": False,
@@ -88,7 +93,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
             "para_text": "", "para_store": "{}", "para_alias": "",
-            "read_style": "clear", "text_size": "normal"}  # for projects saved before these options existed
+            "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -97,7 +102,7 @@ the countdown starts after the last one. The music gets quieter while a clip pla
 
 HELP = """
 ### How to use
-1. Pick a tab (**Timeline Collision**, **Clue Quiz**, **Multiple Choice** or **English Words**), or press **Load example** to start from a finished video.
+1. Pick a tab (**Timeline Collision**, **Clue Quiz**, **Multiple Choice**, **English Words**, **English Texts** or **English in News**), or press **Load example** to start from a finished video.
 2. Fill in the fields. They are grouped in small tabs on the left (content, 🎨 Style & sound, 🔚 Ending), so everything fits on one screen.
    The preview on the right **updates by itself** as you type. Move the time slider to check any moment.
 3. Press **Render video**. The MP4 appears on the right (🎞️ Video tab) and is also saved in **Documents\\Video Studio\\outputs**.
@@ -191,6 +196,23 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   logo on the ending card if you want them. "Logolept red" is the page colour that matches the logo.
 - The text is sized to fill the Shorts safe area; long paragraphs turn into pages (the voice waits for the page
   turn) and end with a Word Bank recap. Each render also saves a cover picture.
+
+### English in News tips
+- **📰 English in News**: upload one or many short news clips — ElevenLabs writes each transcript with the time of
+  every word (your API key needs the *Speech to Text* permission; each clip is transcribed once and kept, so adding it
+  again costs nothing). Pick a clip in 🎞️ Clip to edit, click words in its transcript to make them key words (click
+  the next word to make a phrase, click again to remove; ✨ Suggest marks the less common words), type their Arabic in
+  the meanings table and give it a headline. 🎬 Render video makes the clip in the editor; 🎬 Render all clips makes
+  every clip (one MP4 each + a .zip). Save project keeps all the clips.
+- The video: big subtitles that follow the speech word by word, each key word marked when it is said, a card with the
+  word and its Arabic meaning, and a recap card of all the key words at the end (🔚 Ending: its title, call to action).
+- Five looks (⏱️ Design): **Pop** (1–3 huge words at a time, yellow stickers), Breaking (dark), Studio (light),
+  TV broadcast (lower thirds + ticker) and Newspaper; five accent colours, shared by all the clips. Trim a clip with
+  *Start / End the clip at*. The 🔚 Ending *Question* line (optional) becomes the recap card's subtitle.
+- **Landscape (16:9) clips work best**: the video keeps its own frame and nothing covers it. A vertical clip fills the
+  screen and the subtitles and cards go over its lower half. Keep it 15–60 s, one clear speaker, no subtitles burned
+  into the picture, 4–6 key words. A misheard word can be fixed in ✏️ Words (advanced).
+- News footage is usually copyrighted: use clips you have the right to use.
 
 ### Sound
 - Built-in music moods are generated, so there are no copyright issues. You can also upload your own music file.
@@ -429,7 +451,7 @@ def make_actions(tpl):
         except Exception as e:
             raise gr.Error(str(e))
         msg = f"Video length: **{dur:.1f} s**"
-        if tpl in ("vocab", "text") and dur > 60:
+        if tpl in ("vocab", "text", "news") and dur > 60:
             msg += " — ⚠️ over 60 s: fine for YouTube Shorts and Instagram Reels, but keep Facebook Reels under 60 s"
         return img, msg, gr.update(maximum=max(1.0, round(dur, 1)))
 
@@ -474,6 +496,20 @@ def make_actions(tpl):
             p["text"]["reading_audio"] = _keep_media(p["text"].get("reading_audio"))
             logo = p["text"].get("logo") or ""
             p["text"]["logo"] = logo if os.path.abspath(logo) == os.path.abspath(TX_LOGO) else _keep_media(logo)
+        elif tpl == "news":
+            kept = {}  # every clip's file copied once into projects/media (the editor's clip is one of them)
+
+            def keep(path):
+                if path and path not in kept:
+                    kept[path] = _keep_media(path)
+                return kept.get(path, "") if path else ""
+            clips = _clips(p["news"].get("clips"))
+            for c in clips:
+                c["video"] = keep(c.get("video"))
+            p["news"]["clips"] = json.dumps(clips, ensure_ascii=False)
+            p["news"]["video"] = keep(p["news"].get("video"))
+            logo = p["news"].get("logo") or ""
+            p["news"]["logo"] = logo if os.path.abspath(logo) == os.path.abspath(TX_LOGO) else _keep_media(logo)
         stamp = _stamp()
         if tpl == "vocab":
             p["vocab"]["audio"] = _keep_media_list(p["vocab"].get("audio"), os.path.join(MEDIA_DIR, f"words_audio_{stamp}"))
@@ -493,6 +529,12 @@ def make_actions(tpl):
             raise gr.Error(f"This is a '{p.get('template')}' project — open it in its own tab.")
         # pictures / audio that moved (older versions kept them inside the app folder): find them by name
         userdata.relink(p, MEDIA_DIR, MEDIA_FIELDS | MEDIA_LISTS)
+        if tpl == "news":  # the clip list is stored as text: find its files by name too
+            clips = _clips(p["news"].get("clips"))
+            for c in clips:
+                c["video"] = _media_path(c.get("video"))
+            p["news"]["clips"] = json.dumps(clips, ensure_ascii=False)
+            p["news"]["video"] = _media_path(p["news"].get("video"))
         return project_to_values(p, tpl)
 
     def example():
@@ -523,6 +565,8 @@ button {user-select: none; -webkit-user-select: none;}
 @media (max-width: 900px) { .pane {max-height: none;} .preview-col {position: static;} }
 .font-gal .thumbnail-item {aspect-ratio: 3 / 1 !important; height: auto !important;}  /* cards are 900 x 300 */
 .font-gal .grid-wrap {height: auto !important; max-height: 640px;}
+.nw-meanings span, .nw-meanings input, .nw-meanings textarea {font-family: "Segoe UI", Tahoma, Arial, sans-serif !important;
+  font-size: 1rem !important;}  /* Arabic reads badly in the table's monospace font */
 """
 PREVIEW_H = "calc(100vh - 404px)"
 
@@ -1633,6 +1677,342 @@ def wire_paragraphs(ui, pv, fields):
                 **_progress_on(dep, pv["vid"]))
 
 
+# ------------------------------------------------------------------ English in News
+NEWS_HELP = """**Upload one or many short news clips → each transcript appears → click the key words → type their Arabic
+→ render one, or all of them.** ElevenLabs writes every transcript with the time of each word (once per clip: the same
+clip is never paid for twice). Each clip keeps its own words, meanings, headline and trim; the look, logo, music and
+recap texts (⏱️ Design, 🎨 Style & sound, 🔚 Ending) are shared by all of them."""
+NEWS_WORDS_HELP = ("One spoken word per line: `word | start | end | key | arabic` (times in seconds in the video). "
+                   "Fix a misheard word here; `*` in key = a key word, the same text on neighbouring lines = a phrase.")
+NEWS_TIPS = """💡 **Landscape (16:9) clips work best**: the video keeps its own frame and the subtitles and word cards
+never cover it. A vertical clip fills the screen (subtitles and cards go over its lower half). 15–60 s, one clear
+speaker, no subtitles burned into the picture, 4–6 key words. News footage is usually copyrighted: use clips you have
+the right to use."""
+NEWS_TYPES = [".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"]
+
+
+def news_tab():
+    s = el.load_settings(DATA_DIR)
+    gr.Markdown(NEWS_HELP)
+    with gr.Accordion("🔑 ElevenLabs — the API key is saved on this computer only, never in projects or videos",
+                      open=not s["api_key"]):
+        key = gr.Textbox(value=s["api_key"], type="password", label="ElevenLabs API key",
+                         info="elevenlabs.io → your profile → API keys (it needs the Speech to Text permission). "
+                              "The same key as 📖 English Texts.")
+        with gr.Row(equal_height=True):
+            model = gr.Dropdown(el.STT_MODELS, value="scribe_v1", label="Transcription model")
+            lang = gr.Dropdown(el.STT_LANGS, value="en", label="Language spoken in the clips")
+            save_k = gr.Button("💾 Save key", min_width=120)
+    uploads = gr.File(label="📼 Add news clips (mp4 / mov / webm …) — one or many; each is transcribed on upload",
+                      file_types=NEWS_TYPES, file_count="multiple", type="filepath", height=110)
+    with gr.Row(equal_height=True):
+        pick = gr.Dropdown([], label="🎞️ Clip to edit", scale=4, info="Each clip has its own words, headline and trim")
+        remove = gr.Button("🗑️ Remove this clip", scale=1, min_width=150)
+    headline = gr.Textbox(label="Headline of this clip (top of the video)",
+                          placeholder="Heatwave pushes cities to open cooling centres")
+    with gr.Row():
+        trim0 = gr.Number(value=0, label="Start the clip at (s)", minimum=0)
+        trim1 = gr.Number(value=0, label="End the clip at (s)", minimum=0, info="0 = the end of the video")
+    with gr.Row(equal_height=True):
+        again = gr.Button("📝 Transcribe again", min_width=150)
+        sug = gr.Button("✨ Suggest key words", min_width=160)
+        n_sug = gr.Slider(1, 10, value=5, step=1, label="How many", scale=2)
+        clr = gr.Button("🧹 Clear", min_width=90)
+    status = gr.Markdown()
+    join = gr.Checkbox(value=True, label="Click the next word to make a phrase (e.g. cooling → centres)")
+    ht = gr.HighlightedText([], label="👆 Transcript — click words to make them key words (click again to remove)",
+                            combine_adjacent=False, show_legend=False, interactive=False)
+    params = inspect.signature(gr.Dataframe.__init__).parameters  # Gradio 5 and 6 name these differently
+    kw = {"static_columns": [0, 1]} if "static_columns" in params else {}
+    kw["column_count" if "column_count" in params else "col_count"] = (3, "fixed")
+    meanings = gr.Dataframe(headers=["#", "Key word", "Arabic meaning (type here)"], datatype=["number", "str", "str"],
+                            interactive=True, wrap=True, label="🌐 Arabic meanings", elem_classes="nw-meanings", **kw)
+    with gr.Accordion("✏️ Words (advanced) — fix a misheard word or a time", open=False):
+        words = gr.Textbox(lines=12, max_lines=40, label="Words", info=NEWS_WORDS_HELP)
+    with gr.Row(equal_height=True):
+        go = gr.Button("🎬 Render all clips", variant="primary", min_width=180)
+    info = gr.Markdown()
+    zipb = gr.DownloadButton("📦 Download all (.zip)", visible=False, variant="primary")
+    files = gr.File(label="Rendered videos", file_count="multiple", visible=False, height=220)
+    gr.Markdown(NEWS_TIPS)
+    video = gr.Textbox(visible=False)            # the clip being edited (its file)
+    clips = gr.Textbox(value="[]", visible=False)  # every clip: [{video, headline, trim_start, trim_end, words}]
+    cur = gr.Number(value=0, precision=0, visible=False)  # which one is in the editor
+    clips._no_preview = cur._no_preview = True
+    return dict(key=key, model=model, lang=lang, save_k=save_k, uploads=uploads, pick=pick, remove=remove,
+                headline=headline, trim0=trim0, trim1=trim1, again=again, sug=sug, n_sug=n_sug, clr=clr,
+                status=status, join=join, ht=ht, meanings=meanings, words=words, go=go, info=info, zip=zipb,
+                files=files, video=video, clips=clips, cur=cur)
+
+
+def news_design_tab():
+    with gr.Tab("⏱️ Design"):
+        with gr.Column(elem_classes="pane"):
+            look = gr.Radio(NW_LOOKS, value="pop", label="Look (all clips)",
+                            info="Pop = 1-3 huge words + yellow stickers · Breaking = dark, framed video · Studio = "
+                                 "light · TV broadcast = lower thirds + ticker · Newspaper = newsprint + clippings")
+            accent = gr.Dropdown(NW_ACCENTS, value="red", label="Accent colour")
+            with gr.Row():
+                tag = gr.Textbox(label="Tag (top right)", placeholder="NEWS")
+                label = gr.Textbox(label="Small line under the name", placeholder="ENGLISH IN NEWS",
+                                   info="Newspaper look: the paper's name")
+            gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Clip volume")
+            ending_on = gr.Checkbox(value=True, label="Recap card of all key words at the end (texts in 🔚 Ending)")
+            gr.Markdown("**🏷️ Your logo** (remove the picture for no logo)")
+            with gr.Row():
+                logo = gr.Image(value=TX_LOGO, type="filepath", label="Logo (square PNG)", height=170, scale=1)
+                with gr.Column(scale=2):
+                    bname = gr.Textbox(value="LOGOLEPT", label="Name beside the logo", info="Empty = the logo alone")
+                    lshape = gr.Radio(TX_LOGO_SHAPES, value="circle", label="Logo shape")
+    return dict(look=look, accent=accent, tag=tag, label=label, gain=gain, ending_on=ending_on, logo=logo,
+                bname=bname, lshape=lshape)
+
+
+def _clips(js):
+    try:
+        v = json.loads(js or "[]")
+    except ValueError:
+        return []
+    return [c for c in v if isinstance(c, dict)] if isinstance(v, list) else []
+
+
+def _clip(video, headline, t0, t1, words):
+    return {"video": video or "", "headline": headline or "", "trim_start": float(t0 or 0),
+            "trim_end": float(t1 or 0), "words": words or ""}
+
+
+def _clip_label(i, c):
+    name = os.path.basename(c.get("video") or "") or "(no video)"
+    words = nw.load(c.get("words"))
+    if not words:
+        return f"{i + 1}. {name} — ⚠️ no transcript yet"
+    gs = nw.groups(words)
+    miss = sum(1 for g in gs if not g["ar"])
+    return f"{i + 1}. {name} — {len(gs)} key word{'s' if len(gs) != 1 else ''}" + (f" (⚠️ {miss} without Arabic)"
+                                                                                     if miss else "")
+
+
+def _clip_len(path):
+    try:
+        return nw_probe(path)[2] if path and os.path.isfile(path) else None
+    except Exception:
+        return None
+
+
+def _media_path(path):
+    """A saved clip whose file moved (older save, another computer): find it by name in projects/media."""
+    if not path or os.path.isfile(path):
+        return path
+    alt = os.path.join(MEDIA_DIR, os.path.basename(path))
+    return alt if os.path.isfile(alt) else path
+
+
+def news_project(base, c):
+    """The project of one clip: the shared design + this clip's file, headline, trim and words."""
+    p = copy.deepcopy(base)
+    p["news"].update(video=c.get("video") or "", headline=c.get("headline") or "",
+                     trim_start=float(c.get("trim_start") or 0), trim_end=float(c.get("trim_end") or 0),
+                     words=c.get("words") or "", clips="[]", clip_index=0)
+    return p
+
+
+def wire_news(ui, pv, fields):
+    clip_in = [ui["video"], ui["headline"], ui["trim0"], ui["trim1"], ui["words"]]
+    clip_out = [ui["video"], ui["headline"], ui["trim0"], ui["trim1"], ui["words"]]
+
+    def stt(path, key, model, lang):
+        key = (key or "").strip() or el.load_settings(DATA_DIR)["api_key"]
+        return nw.from_stt(el.transcribe(path, os.path.join(DATA_DIR, "stt"), key, model, lang))
+
+    def commit(clips, i, *cur):
+        """The editor's clip back into the list — only onto the same file (never onto another clip)."""
+        rec = _clip(*cur)
+        if 0 <= i < len(clips) and clips[i].get("video") == rec["video"]:
+            clips[i] = rec
+        elif not clips and rec["video"]:
+            clips.append(rec)
+        return clips
+
+    def sync(js, cur, *vals):
+        clips = _clips(js)
+        new = commit([dict(c) for c in clips], int(cur or 0), *vals)
+        return gr.update() if new == clips else json.dumps(new, ensure_ascii=False)
+
+    def show(js, cur):
+        clips = _clips(js)
+        choices = [(_clip_label(i, c), str(i)) for i, c in enumerate(clips)]
+        i = int(cur or 0)
+        return gr.update(choices=choices, value=str(i) if 0 <= i < len(clips) else None)
+
+    def load_clip(clips, i):
+        if 0 <= i < len(clips):
+            c = clips[i]
+            return (_media_path(c.get("video")), c.get("headline") or "", c.get("trim_start") or 0,
+                    c.get("trim_end") or 0, c.get("words") or "")
+        return "", "", 0, 0, ""
+
+    def switch(pick, js, cur, *vals):
+        clips = commit(_clips(js), int(cur or 0), *vals)
+        i = int(pick) if pick is not None and str(pick).isdigit() else 0
+        return (json.dumps(clips, ensure_ascii=False), i, *load_clip(clips, i))
+
+    def add(files, js, cur, *rest, progress=gr.Progress()):
+        vals, (key, model, lang) = rest[:5], rest[5:]
+        clips = commit(_clips(js), int(cur or 0), *vals)
+        paths = [f if isinstance(f, str) else getattr(f, "name", None) for f in (files or [])]
+        have = {(os.path.basename(c["video"]), os.path.getsize(c["video"]) if os.path.isfile(c["video"]) else -1)
+                for c in clips}
+        first, errors, skipped = None, [], 0
+        for k, path in enumerate(p for p in paths if p):
+            if (os.path.basename(path), os.path.getsize(path)) in have:
+                skipped += 1
+                continue
+            progress(k / max(1, len(paths)), desc=f"Transcribing {os.path.basename(path)}…")
+            try:
+                nw_probe(path)   # a real video, with a length?
+            except Exception as e:
+                errors.append(_msg(e))
+                continue
+            try:
+                words = stt(path, key, model, lang)
+            except Exception as e:  # the clip is added; 📝 Transcribe again once the problem is fixed
+                errors.append(f"{os.path.basename(path)}: {_msg(e)}")
+                words = ""
+            clips.append(_clip(path, "", 0, 0, words))
+            first = len(clips) - 1 if first is None else first
+        msg = []
+        if first is not None:
+            n_new = len(clips) - first
+            msg.append(f"✅ Added {n_new} clip{'s' if n_new != 1 else ''} — pick one in 🎞️ Clip to edit, click its "
+                       "key words and type their Arabic.")
+        if skipped:
+            msg.append(f"{skipped} already in the list (skipped).")
+        if errors:
+            gr.Warning("⚠️ " + " · ".join(errors[:3]), duration=12)
+            msg.append("⚠️ " + " · ".join(errors))
+        i = first if first is not None else int(cur or 0)
+        return (json.dumps(clips, ensure_ascii=False), i, *load_clip(clips, i), None, "  \n".join(msg) or gr.update())
+
+    def remove(js, cur, *vals):
+        clips = commit(_clips(js), int(cur or 0), *vals)
+        i = int(cur or 0)
+        if 0 <= i < len(clips):
+            clips.pop(i)
+        i = max(0, min(i, len(clips) - 1))
+        return (json.dumps(clips, ensure_ascii=False), i, *load_clip(clips, i))
+
+    def retranscribe(path, words, key, model, lang, progress=gr.Progress()):
+        if not path:
+            raise gr.Error("Add a clip first.")
+        progress(0.2, desc="ElevenLabs is writing the transcript…")
+        try:
+            new = stt(path, key, model, lang)
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        if nw.groups(nw.load(words)):
+            gr.Info("New transcript: the key words of this clip were cleared — click them again.", duration=8)
+        return new
+
+    def refresh(text, path, t0, t1):
+        words = nw.load(text)
+        rep = nw.report(words, _clip_len(path))
+        if path and words:
+            ln = _clip_len(path) or 0
+            if ln and float(t0 or 0) > ln - 0.5:
+                rep += f" · ⚠️ the start ({float(t0):.1f} s) is past the end of the video — the whole clip is used"
+            elif float(t1 or 0) and float(t1) <= float(t0 or 0) + 0.5:
+                rep += " · ⚠️ the end is before the start — the clip runs to the end of the video"
+        return nw.view(words), nw.table(words), rep
+
+    def click(text, join, evt: gr.SelectData):
+        words = nw.load(text)
+        if not words:
+            return gr.update()
+        return nw.dump(nw.toggle(words, int(evt.index), bool(join)))
+
+    def do_suggest(text, n):
+        words = nw.load(text)
+        if not words:
+            raise gr.Error("Add a clip first (or paste the words).")
+        return nw.dump(nw.suggest(words, int(n)))
+
+    def do_clear(text):
+        return nw.dump(nw.clear(nw.load(text)))
+
+    def meanings_in(text, rows):
+        words = nw.load(text)
+        rows = rows.values.tolist() if hasattr(rows, "values") else (rows or [])
+        return nw.dump(nw.set_meanings(words, rows))
+
+    def save_key(key):
+        el.save_settings(DATA_DIR, api_key=(key or "").strip())
+        gr.Info("ElevenLabs key saved on this computer.", duration=4)
+
+    def start(request: gr.Request):
+        if not _claim(request):
+            raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+        return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
+                gr.update(interactive=False), "⏳ Rendering all clips… each video appears below as soon as it is done.",
+                gr.update(value=None, visible=False), gr.update(value=None, visible=False))
+
+    def render_all(request: gr.Request, *vals, progress=gr.Progress()):
+        def plan():
+            base = values_to_project("news", vals)
+            n = base["news"]
+            clips = commit(_clips(n.get("clips")), int(n.get("clip_index") or 0),
+                           n.get("video"), n.get("headline"), n.get("trim_start"), n.get("trim_end"), n.get("words"))
+            ready = [c for c in clips if os.path.isfile(_media_path(c.get("video")) or "") and nw.load(c.get("words"))]
+            left = len(clips) - len(ready)
+            if not ready:
+                raise ValueError("No clip is ready — add clips and wait for their transcripts.")
+            if left:
+                gr.Warning(f"{left} clip{'s' if left != 1 else ''} skipped (no transcript, or the file is missing).",
+                           duration=8)
+            bare = [os.path.basename(c.get("video") or "") for c in ready if not nw.groups(nw.load(c.get("words")))]
+            if bare:
+                gr.Warning("No key words yet (subtitles only): " + ", ".join(bare[:4]), duration=8)
+            out_dir = os.path.join(OUT_DIR, f"batch_news_{_stamp()}")
+            os.makedirs(out_dir, exist_ok=True)
+
+            def jobs():
+                taken = set()
+                for k, c in enumerate(ready, 1):
+                    c = dict(c, video=_media_path(c.get("video")))
+                    stem = re.sub(r"[^\w\- ]+", "", os.path.splitext(os.path.basename(c["video"]))[0]).strip() or "clip"
+                    name = f"{k:02d} {stem}"[:80]
+                    while name in taken:
+                        name += "_"
+                    taken.add(name)
+                    yield name, news_project(base, c)
+            return out_dir, len(ready), jobs()
+
+        yield from _stream_batch(request, plan, progress)
+
+    keys = [ui["key"], ui["model"], ui["lang"]]
+    ui["uploads"].upload(add, [ui["uploads"], ui["clips"], ui["cur"]] + clip_in + keys,
+                         [ui["clips"], ui["cur"]] + clip_out + [ui["uploads"], ui["info"]])
+    ui["pick"].input(switch, [ui["pick"], ui["clips"], ui["cur"]] + clip_in, [ui["clips"], ui["cur"]] + clip_out)
+    ui["remove"].click(remove, [ui["clips"], ui["cur"]] + clip_in, [ui["clips"], ui["cur"]] + clip_out)
+    gr.on(triggers=[c.change for c in clip_in], fn=sync, inputs=[ui["clips"], ui["cur"]] + clip_in,
+          outputs=ui["clips"], trigger_mode="always_last", show_progress="hidden")
+    gr.on(triggers=[ui["clips"].change, ui["cur"].change], fn=show, inputs=[ui["clips"], ui["cur"]],
+          outputs=ui["pick"], trigger_mode="always_last", show_progress="hidden")
+    gr.on(triggers=[ui["words"].change, ui["video"].change, ui["trim0"].change, ui["trim1"].change], fn=refresh,
+          inputs=[ui["words"], ui["video"], ui["trim0"], ui["trim1"]],
+          outputs=[ui["ht"], ui["meanings"], ui["status"]], trigger_mode="always_last", show_progress="hidden")
+    ui["again"].click(retranscribe, [ui["video"], ui["words"]] + keys, ui["words"])
+    ui["ht"].select(click, [ui["words"], ui["join"]], ui["words"], queue=False, show_progress="hidden")
+    ui["sug"].click(do_suggest, [ui["words"], ui["n_sug"]], ui["words"])
+    ui["clr"].click(do_clear, ui["words"], ui["words"])
+    ui["meanings"].input(meanings_in, [ui["words"], ui["meanings"]], ui["words"], show_progress="hidden")
+    ui["save_k"].click(save_key, ui["key"], None)
+    dep = ui["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"], pv["info"],
+                                       ui["files"], ui["zip"]], queue=False)
+    dep.success(render_all, fields,
+                [pv["vid"], pv["info"], ui["files"], ui["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"]],
+                **_progress_on(dep, pv["vid"]))
+
+
 # ------------------------------------------------------------------ Know a Country
 KC_TEMPLATE = os.path.join(APP_PROJ_DIR, "know_country_template.xlsx")
 KC_CACHE = os.path.join(DATA_DIR, "cache")
@@ -2123,6 +2503,27 @@ def build_ui():
             gr.on(triggers=[t_words.change, t_audio.change], fn=words_report, inputs=[t_words, t_audio],
                   outputs=t_info, trigger_mode="always_last", show_progress="hidden")
 
+        with gr.Tab("📰 English in News"):
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=3, min_width=420):
+                    nw_proj = project_bar()
+                    with gr.Tabs():
+                        with gr.Tab("🎬 Video & words"):
+                            with gr.Column(elem_classes="pane"):
+                                nwu = news_tab()
+                        nwd = news_design_tab()
+                        nw_st = style_tab()
+                        nw_end = ending_tab("The recap card shows the small intro line as its title (e.g. *Words from "
+                                            "the news*), every key word with its Arabic, then the call to action and "
+                                            "your handle (🎨 Style & sound).", rtl=False)
+                    nw_fields = shared_fields(nw_st, nw_end) + [
+                        nwu["video"], nwd["look"], nwd["accent"], nwu["headline"], nwd["tag"], nwd["label"],
+                        nwd["bname"], nwd["logo"], nwd["lshape"], nwu["trim0"], nwu["trim1"], nwd["gain"],
+                        nwd["ending_on"], nwu["words"], nwu["clips"], nwu["cur"]]
+                nw_pv = preview_panel("news")
+            wire(nw_proj, nw_pv, nw_fields)
+            wire_news(nwu, nw_pv, nw_fields)
+
         with gr.Tab("🌍 Know a Country"):
             know_country_tab()
 
@@ -2134,6 +2535,7 @@ def build_ui():
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["mcq"][2]), "mcq"), None, mq_fields)
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["vocab"][2]), "vocab"), None, vc_fields)
         demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["text"][2]), "text"), None, tx_fields)
+        demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["news"][2]), "news"), None, nw_fields)
     return demo
 
 

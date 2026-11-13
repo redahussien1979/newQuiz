@@ -135,7 +135,7 @@ def render_video(project, out_path, progress=None):
     try:
         n = int(round(video.dur * video.fps))
         encode(video.render, n, video.fps, wav, out_path, progress,
-               frames=frame_stream(project, video, n, video.fps))
+               frames=frame_stream(project, video, n, video.fps, chunk=getattr(video, "chunk", 6)))
     finally:
         if os.path.exists(wav):
             os.remove(wav)

@@ -88,6 +88,21 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   selected paragraph's current take (never calls ElevenLabs on its own).
   Font `fonts/library/Literata`. `engine/text_batch.py` — workbook: every tab = one video (title / subtitle columns,
   recording named like the tab); template `projects/texts_template.xlsx`
+- `engine/templates/news.py` — 📰 English in News: the user's clip (`news.video`, decoded on demand by `_Decoder` =
+  one FFmpeg pipe per process; `chunk` = longer frame runs per render worker) with word-timed subtitles, key-word cards
+  (word + Arabic) and a recap card. `news.words` = the English Texts word lines (`word | start | end | key | arabic`,
+  times in the source video; `trim_start` / `trim_end` cut it). Looks `news.look` = parameter sets in `LOOKS` over
+  `_BASE` (`pop` default, `breaking`, `studio`, `tv`, `paper`): background / header / caption mode (`page` = 1-2 lines,
+  `pop` = 1-3 huge words, too-wide lines shrink: `fit`) / card variant (`_card_pop` / `_card_bar` / `_card_sticker` /
+  `_card_clip`) / ticker. Landscape = framed panel under the headline; vertical = full screen.
+  Layout `_place()` measures the cards (`card_box`, solid part) and the subtitle letters (`cap_band`) and only shrinks a
+  landscape panel when the card would cross the safe line. Cards queue (never overlap), give way after `CARD_MIN`,
+  are left out if they would come `CARD_LAG` late (the word stays in the subtitles + recap).
+  App: several clips per project — `news.clips` (JSON list of video / headline / trim / words) + `news.clip_index`
+  (the clip in the editor, mirrored in the editor fields; `wire_news.commit` only writes onto the same file);
+  🎬 Render all clips = `_stream_batch` over `news_project(base, clip)`.
+  `engine/news_words.py` = the tab's transcript editor (click to toggle key words / phrases, meanings table, suggest);
+  `elevenlabs.transcribe` = speech-to-text (multipart urllib, `scribe_v1`), cached in `DATA_DIR/stt/<file hash>.json`
 - `engine/know_country/` — 🌍 Know a Country tab (not a template class: its own renderer). `video.py` = one Excel
   row -> one MP4 (scenes = list of (name, dur, cam_fn, draw_fn, sound cues); `render()` draws scenes on a spawn
   Pool, the main process only reads the row), `globe.py` = orthographic globe + vector borders (world raster cached

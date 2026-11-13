@@ -10,6 +10,7 @@ Four ready templates:
 | **✅ Multiple Choice** | Up to 10 questions with 2–4 options each, a countdown timer with ticking, then the correct answer turns green with a "ding" and an optional explanation. Optional narration clips, and many videos at once from an Excel sheet. |
 | **❓ Clue Quiz** | One mystery answer revealed after 1–8 clues, each with a countdown bar and ticking sound, then a big reveal with confetti and an optional photo. |
 | **🔤 English Words** | English lessons for Arabic speakers in groups (General words, Political words, Proverbs, Idioms, Common mistakes or your own), each with its own badge, colour and theme. Word cards with IPA, guess-the-meaning quizzes, common mistakes, proverbs with their Arabic equivalent and idioms, your own pronunciation audio per word, a recap and a cover picture. **📊 Excel batch:** one row per word, split into one video per group. |
+| **📰 English in News** | Upload a short news clip: ElevenLabs writes its transcript, you click the key words and type their Arabic meanings. The video shows big word-by-word subtitles, a card with each key word and its meaning when it is said, and a recap of all the words. Five looks (Pop, Breaking, Studio, TV broadcast, Newspaper). Landscape clips work best. |
 
 ---
 
@@ -234,7 +235,8 @@ engine/vocab_batch.py English Words videos from an Excel sheet (one row = one it
 engine/globe.py      real-Earth globe intro (data/earth.jpg)
 engine/finish.py     motion polish (camera drift, push-ins) + cinematic finish (glow, grain, vignette, light leaks)
 engine/strings.py    Arabic/English wording, year & number formatting
-engine/templates/    timeline.py, quiz.py, mcq.py, vocab.py (add yours here)
+engine/templates/    timeline.py, quiz.py, mcq.py, vocab.py, text.py, news.py (add yours here)
+engine/news_words.py 📰 English in News transcript editor (key words, phrases, Arabic meanings)
 engine/know_country/ 🌍 Know a Country: video.py (scenes), globe.py (3D map), sound.py, template.py, data/
 fonts/               Cairo.ttf, NotoSans-Bold.ttf (IPA) + licences
 data/                countries.json (outlines) + flags/ — rebuilt with tools/build_countries.py

@@ -177,3 +177,101 @@ def word_times(spans, spoken, al):
         if out[k][0] < out[k - 1][0]:
             out[k] = (out[k - 1][0], max(out[k][1], out[k - 1][0] + 0.05))
     return out
+
+
+# ------------------------------------------------------------------ speech to text (📰 English in News)
+STT_MODELS = [("Scribe v1", "scribe_v1"), ("Scribe v2 (newer — if your account has it)", "scribe_v2")]
+STT_LANGS = [("Detect automatically", ""), ("English", "en")]
+
+
+def _file_hash(path, extra=""):
+    h = hashlib.sha1(extra.encode("utf-8"))
+    h.update(str(os.path.getsize(path)).encode())
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(1 << 20)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()[:20]
+
+
+def _multipart(fields, file_field, file_name, file_bytes, mime):
+    boundary = "----VideoStudio" + hashlib.sha1(file_bytes[:4096] + os.urandom(8)).hexdigest()[:16]
+    out = bytearray()
+    for k, v in fields.items():
+        out += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").encode("utf-8")
+    out += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{file_field}\"; filename=\"{file_name}\"\r\n"
+            f"Content-Type: {mime}\r\n\r\n").encode("utf-8")
+    out += file_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    return bytes(out), f"multipart/form-data; boundary={boundary}"
+
+
+def _audio_for_stt(path):
+    """The sound of a video as a small mono MP3 (uploads fast; the speech is all ElevenLabs needs)."""
+    import subprocess
+    from .core import ffmpeg_exe
+    p = subprocess.run([ffmpeg_exe(), "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
+                        "-f", "mp3", "-"], capture_output=True)
+    if p.returncode != 0 or not p.stdout:
+        raise RuntimeError("This video has no sound track (or FFmpeg could not read it).")
+    return p.stdout
+
+
+def transcribe(path, cache_dir, key, model="scribe_v1", language=""):
+    """[dict(text, start, end)] — every spoken word of a video / audio file with its time in seconds, from ElevenLabs
+    speech-to-text. Cached per file content + model + language (DATA_DIR/stt): the same video is never paid twice."""
+    if not path or not os.path.isfile(path):
+        raise RuntimeError("Upload a video first.")
+    model = model or "scribe_v1"
+    k = _file_hash(path, f"{model}|{language}")
+    js = os.path.join(cache_dir, k + ".json")
+    if os.path.isfile(js):
+        try:
+            with open(js, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            pass
+    if not key:
+        raise RuntimeError("Add your ElevenLabs API key first (🔑 ElevenLabs).")
+    fields = {"model_id": model, "timestamps_granularity": "word", "tag_audio_events": "false", "diarize": "false"}
+    if language:
+        fields["language_code"] = language
+    body, ctype = _multipart(fields, "file", "audio.mp3", _audio_for_stt(path), "audio/mpeg")
+    req = urllib.request.Request(API + "/v1/speech-to-text", data=body, method="POST",
+                                 headers={"xi-api-key": key, "Content-Type": ctype, "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=600) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read().decode("utf-8")).get("detail")
+            msg = detail.get("message") if isinstance(detail, dict) else detail
+        except Exception:
+            msg = ""
+        if e.code == 401:
+            raise RuntimeError("ElevenLabs refused the API key — it may not have the Speech to Text permission, or "
+                               f"your plan / credits do not allow it ({msg or 'unauthorized'}).") from e
+        if e.code in (400, 422):
+            raise RuntimeError(f"ElevenLabs could not transcribe this file ({msg or e.reason}). If you chose Scribe "
+                               "v2, try Scribe v1.") from e
+        if e.code == 429:
+            raise RuntimeError("ElevenLabs is busy or your quota is used up — try again in a minute.") from e
+        raise RuntimeError(f"ElevenLabs error {e.code}: {msg or e.reason}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Could not reach ElevenLabs — check the internet connection ({e.reason}).") from e
+    words = []
+    for w in data.get("words") or []:
+        if w.get("type", "word") != "word":
+            continue
+        t = str(w.get("text") or "").strip()
+        if not t:
+            continue
+        s = float(w.get("start") or 0.0)
+        words.append(dict(text=t, start=round(s, 3), end=round(max(float(w.get("end") or s), s + 0.05), 3)))
+    if not words:
+        raise RuntimeError("ElevenLabs heard no words in this video.")
+    os.makedirs(cache_dir, exist_ok=True)
+    with open(js, "w", encoding="utf-8") as f:
+        json.dump(words, f, ensure_ascii=False)
+    return words
