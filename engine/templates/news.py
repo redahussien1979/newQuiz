@@ -20,6 +20,7 @@ Subtitles and the word card stay inside the Shorts safe area (above y 1536). The
 as it is needed; render(t) depends only on t (frames are drawn on several processes, each with its own decoder, in
 long runs of frames: `chunk`).
 """
+import bisect
 import io
 import math
 import os
@@ -29,7 +30,7 @@ import subprocess
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from ..audio import SR, load_audio
+from ..audio import SR
 from ..core import H, ROOT, W, ffmpeg_exe, get_font
 from .text import DEFAULT_LOGO, _ar_fit, _comp, _fade, _groups, _shadow_box, _spring, logo_badge, parse_words
 
@@ -53,6 +54,10 @@ AMIRI = _lib("Amiri", "Amiri-Bold.ttf")
 TAJAWAL = _lib("Tajawal", "Tajawal-Black.ttf")
 
 LEAD = 0.7                  # the header comes in over the first frame before the clip plays
+SPEED_MIN, SPEED_MAX = 0.5, 1.5
+REP_MAX = 10                # a key word is replayed at most this many extra times
+REP_PRE, REP_POST = 0.18, 0.15   # a replay starts this much before the key word and ends this much after it
+REP_GAP = 0.45              # the held frame (with REPEAT k/n) before each replay
 ENDING_LEN = 5.0
 CARD_MIN, CARD_HOLD = 1.0, 4.2   # a word card stays at least / at most this long (s): it gives way to the next
                                  # key word's card, but only after CARD_MIN
@@ -131,6 +136,7 @@ EXAMPLE = {
         "trim_start": 0.0,
         "trim_end": 0.0,
         "video_gain": 1.0,
+        "speed": 1.0,
         "ending_on": True,
         "words": "\n".join([
             "Officials | 0.20 | 0.72 | * | المسؤولون",
@@ -142,10 +148,88 @@ EXAMPLE = {
             "opening | 4.08 | 4.46 | * | تفتح",
             "cooling | 4.52 | 4.90 | cooling centres | مراكز تبريد",
             "centres | 4.94 | 5.40 | cooling centres",
-            "for | 5.46 | 5.58", "people | 5.62 | 5.94", "most | 6.00 | 6.24", "at | 6.28 | 6.36",
+            "for | 5.46 | 5.58", "people | 5.62 | 5.94", "most | 6.00 | 6.24", "at | 6.28 | 6.36 | at risk",
             "risk. | 6.40 | 6.86 | at risk | معرّضون للخطر"]),
     },
 }
+
+
+# ------------------------------------------------------------------ timing: speed + repeated key words
+def _rep(v):
+    """A repeat count from the words box: 0-10 extra replays."""
+    try:
+        return max(0, min(REP_MAX, int(float(str(v).strip() or 0))))
+    except ValueError:
+        return 0
+
+
+def timing(n, sdur):
+    """(trim start, clip length, speed, words, key words, segments) of a clip, from the news settings `n` and the
+    video's length. Words / key words carry clip times (0 = the trim start). The video plays as a list of segments
+    dict(o0, o1, c0, c1, kind, gi, k, n): its time o0..o1 shows the clip from c0 to c1 —
+      lead    the first frame held while the header comes in
+      play    the clip at `speed` (0.5-1: slower, the voice keeps its pitch)
+      freeze  a held frame before a replay ("REPEAT k/n")
+      replay  a key word said again: from just before it to just after it, as many times as its `rep`."""
+    trim0 = max(0.0, float(n.get("trim_start") or 0.0))
+    if trim0 > sdur - 0.5:  # a start past the end of the video: use the whole video
+        trim0 = 0.0
+    end = float(n.get("trim_end") or 0.0)
+    end = sdur if end <= trim0 + 0.5 or end > sdur else end
+    clip = max(0.5, end - trim0)
+    try:
+        speed = float(n.get("speed") or 1.0)
+    except ValueError:
+        speed = 1.0
+    speed = max(SPEED_MIN, min(SPEED_MAX, speed))
+    words = []
+    for w in parse_words(n.get("words")):
+        s0, e0 = w["s"] - trim0, w["e"] - trim0
+        if e0 <= 0 or s0 >= clip:
+            continue
+        words.append(dict(w, s=max(0.0, s0), e=min(clip, e0)))
+    groups = _groups(words)
+    for g in groups:
+        g["c0"], g["c1"] = words[g["i0"]]["s"], words[g["i1"]]["e"]
+        g["rep"] = max((_rep(words[k].get("rep")) for k in range(g["i0"], g["i1"] + 1)), default=0)
+    segs, o = [], 0.0
+
+    def add(kind, c0, c1, dur, gi=None, k=0, cnt=0):
+        nonlocal o
+        if dur > 1e-6:
+            segs.append(dict(o0=o, o1=o + dur, c0=c0, c1=c1, kind=kind, gi=gi, k=k, n=cnt))
+            o += dur
+    add("lead", 0.0, 0.0, LEAD)
+    pos = 0.0
+    for gi in sorted((gi for gi, g in enumerate(groups) if g["rep"]), key=lambda i: groups[i]["c1"]):
+        g = groups[gi]
+        cut = max(pos, min(clip, g["c1"] + REP_POST))
+        add("play", pos, cut, (cut - pos) / speed)
+        pos = cut
+        a = max(0.0, g["c0"] - REP_PRE)
+        if g["i0"] > 0:  # never from inside the word before (its subtitle page / highlight would flash)
+            a = min(g["c0"], max(a, words[g["i0"] - 1]["e"] + 0.06))
+        b = cut
+        for k in range(1, g["rep"] + 1):
+            add("freeze", a, a, REP_GAP, gi, k, g["rep"])
+            add("replay", a, b, (b - a) / speed, gi, k, g["rep"])
+    add("play", pos, clip, (clip - pos) / speed)
+    return trim0, clip, speed, words, groups, segs
+
+
+def length_report(n, sdur):
+    """One line for the editor: how long the clip part of the video is, with the speed and the repeats."""
+    trim0, clip, speed, words, groups, segs = timing(n, sdur)
+    played = sum(sg["o1"] - sg["o0"] for sg in segs if sg["kind"] == "play")
+    rep = sum(sg["o1"] - sg["o0"] for sg in segs if sg["kind"] in ("freeze", "replay"))
+    n_rep = sum(g["rep"] for g in groups)
+    txt = f"⏱️ clip {clip:.1f} s"
+    if abs(speed - 1) > 1e-3:
+        txt += f" → **{played:.1f} s at {speed:g}×**"
+    if n_rep:
+        txt += f" + {rep:.1f} s of repeats ({n_rep} replay{'s' if n_rep != 1 else ''})"
+    return txt + f" = **{segs[-1]['o1'] - LEAD:.1f} s** (+ {LEAD:g} s intro" + \
+        (f", + {ENDING_LEN:g} s recap)" if groups else ")")
 
 
 # ------------------------------------------------------------------ the source video
@@ -180,6 +264,19 @@ def probe(path):
     out = (w, h, dur, bool(re.search(r"Stream #.*Audio:", info)))
     _probed[key] = out
     return out
+
+
+def _clip_sound(path, trim0, clip, speed=1.0):
+    """The clip's sound (stereo float, 44.1 kHz) from trim0 for `clip` seconds, slowed / sped up to `speed` with its
+    pitch kept (FFmpeg atempo). None when the video has no sound."""
+    cmd = [ffmpeg_exe(), "-v", "error", "-ss", f"{trim0:.3f}", "-t", f"{clip:.3f}", "-i", path, "-vn"]
+    if abs(speed - 1.0) > 1e-3:
+        cmd += ["-af", f"atempo={speed:.4f}"]
+    cmd += ["-f", "s16le", "-acodec", "pcm_s16le", "-ac", "2", "-ar", str(SR), "-"]
+    p = subprocess.run(cmd, capture_output=True)
+    if p.returncode != 0 or not p.stdout:
+        return None
+    return np.frombuffer(p.stdout, np.int16).reshape(-1, 2).astype(np.float64) / 32768.0
 
 
 class _Decoder:
@@ -361,16 +458,11 @@ class NewsVideo:
 
         # the source
         self.path = str(n.get("video") or "")
-        self.trim0 = max(0.0, float(n.get("trim_start") or 0.0))
         if self.path and os.path.isfile(self.path):
             sw, sh, sdur, self.has_audio = probe(self.path)
         else:
             self.path, sw, sh, sdur, self.has_audio = "", 16, 9, 8.0, False
-        if self.trim0 > sdur - 0.5:  # a start past the end of the video: use the whole video
-            self.trim0 = 0.0
-        end = float(n.get("trim_end") or 0.0)
-        end = sdur if end <= self.trim0 + 0.5 or end > sdur else end
-        self.clip = max(0.5, end - self.trim0)
+        self.trim0, self.clip, self.speed, self.words, self.groups, self.segs = timing(n, sdur)
         self.vertical = sh > sw * 1.05
         if self.vertical:   # fills the screen (cover)
             k = max(W / sw, H / sh)
@@ -383,22 +475,18 @@ class NewsVideo:
             self.vsize = (pw // 2 * 2, ph // 2 * 2)
             self.vpos = ((W - self.vsize[0]) // 2, 360)
 
-        # words (times relative to the clip, then to the video)
-        self.words = []
-        for w in parse_words(n.get("words")):
-            s0, e0 = w["s"] - self.trim0, w["e"] - self.trim0
-            if e0 <= 0 or s0 >= self.clip:
-                continue
-            self.words.append(dict(w, s=LEAD + max(0.0, s0), e=LEAD + min(self.clip, e0)))
-        self.groups = _groups(self.words)
+        # words / key words: times in the clip (c); the video's own time (t) maps onto it through self.segs
+        self.seg_o0 = [sg["o0"] for sg in self.segs]
         self.key_of = {}
         for gi, g in enumerate(self.groups):
-            g["t0"] = self.words[g["i0"]]["s"]
-            g["t1"] = self.words[g["i1"]]["e"]
+            g["t0"] = self._out(g["c0"])           # when the key word is first said in the video
+            reps = [sg for sg in self.segs if sg["gi"] == gi]
+            g["rep_end"] = reps[-1]["o1"] if reps else self._out(g["c1"])
             for k in range(g["i0"], g["i1"] + 1):
                 self.key_of[k] = gi
 
-        self.E = LEAD + self.clip                     # the clip ends
+        self.E = self.segs[-1]["o1"]                  # the clip (with its repeats) ends
+        self._rep_ims = {}
         self.ending_on = bool(n.get("ending_on", True)) and bool(self.groups)
         self.base_duration = self.E + (ENDING_LEN if self.ending_on else 0.6)
         self.dur = self.base_duration
@@ -590,7 +678,7 @@ class NewsVideo:
         lead = 0.04 if pop else 0.12
         for k, idx in enumerate(pages):
             t0 = self.words[idx[0]]["s"] - lead
-            nxt = self.words[pages[k + 1][0]]["s"] - lead if k + 1 < len(pages) else self.E
+            nxt = self.words[pages[k + 1][0]]["s"] - lead if k + 1 < len(pages) else self.clip
             t1 = min(nxt, self.words[idx[-1]]["e"] + (0.5 if pop else 1.2))
             items = []
             for li, row in enumerate(lines_of(idx)):
@@ -629,18 +717,20 @@ class NewsVideo:
         pad = 6 + st
         return dict(norm=norm, speak=speak, key=key, pad=pad, w=norm.width - 2 * pad)
 
-    def _draw_captions(self, frame, t, a):
+    def _draw_captions(self, frame, c, a):
+        """The subtitles at clip time c (animations in the video's own seconds: / speed)."""
         L = self.L
+        spd = self.speed
         if L["band"]:
             self._draw_band(frame, a)
-        page = next((p for p in self.pages if p["t0"] <= t < p["t1"]), None)
+        page = next((p for p in self.pages if p["t0"] <= c < p["t1"]), None)
         if page is None:
             return
         pop = L["cap_mode"] == "pop"
-        ka = _ease((t - page["t0"]) / (0.08 if pop else 0.15)) * min(1.0, (page["t1"] - t) / 0.1) * a
-        rise = 0 if pop else int((1 - _ease((t - page["t0"]) / 0.2)) * 18)
+        ka = _ease((c - page["t0"]) / spd / (0.08 if pop else 0.15)) * min(1.0, (page["t1"] - c) / spd / 0.1) * a
+        rise = 0 if pop else int((1 - _ease((c - page["t0"]) / spd / 0.2)) * 18)
         fit = page["fit"]
-        pscale = (0.75 + 0.25 * _back((t - page["t0"]) / 0.22)) * fit if pop else 1.0
+        pscale = (0.75 + 0.25 * _back((c - page["t0"]) / spd / 0.22)) * fit if pop else 1.0
         lh = page["lh"]
         base_y = self.cap_y + (0 if page["lines"] == L["max_lines"] else lh // 2 * (L["max_lines"] - 1)) + rise
         d = ImageDraw.Draw(frame)
@@ -653,22 +743,22 @@ class NewsVideo:
             spans = {}
             for it in items:
                 gi, w = self.key_of.get(it["i"]), self.words[it["i"]]
-                if gi is not None and t >= w["s"]:
+                if gi is not None and c >= w["s"]:
                     cx, half = it["x"] + it["w"] / 2, it["w"] * pscale / 2   # the word as it is drawn
                     sp = spans.setdefault((gi, it["line"]), [cx - half, cx + half, w["s"], 0])
                     sp[0], sp[1] = min(sp[0], cx - half), max(sp[1], cx + half)
             for (gi, li), (x0, x1, ts, _) in spans.items():
-                self._pop_box(frame, x0, x1, base_y + li * lh, _ease((t - ts) / 0.18) * ka, pscale)
+                self._pop_box(frame, x0, x1, base_y + li * lh, _ease((c - ts) / spd / 0.18) * ka, pscale)
         for it in items:
             w = self.words[it["i"]]
             y = base_y + it["line"] * lh
             gi = self.key_of.get(it["i"])
-            spoken = t >= w["s"]
-            speaking = w["s"] <= t < w["e"] + 0.05
+            spoken = c >= w["s"]
+            speaking = w["s"] <= c < w["e"] + 0.05
             if gi is not None and spoken:   # the marker swipes in behind the key word
-                p = _ease((t - w["s"]) / max(0.12, min(0.35, w["e"] - w["s"])))
+                p = _ease((c - w["s"]) / max(0.12, min(0.35, w["e"] - w["s"])))
                 im = it["key"] if p > 0.5 else it["norm"]
-                sc = pscale * (1.0 + 0.08 * _spring(t - self.groups[gi]["t0"]))
+                sc = pscale * (1.0 + 0.08 * _spring((c - self.groups[gi]["c0"]) / spd))
                 if not L["key_stroke"]:     # a marker swipes in behind the word
                     x0 = it["x"] - 10
                     d.rounded_rectangle([x0, y + b0 - 9, x0 + (it["w"] + 20) * p, y + b1 + 9], 12,
@@ -682,7 +772,7 @@ class NewsVideo:
                     d.rounded_rectangle([it["x"] - 10, y + b0 - 7, it["x"] + it["w"] + 10, y + b1 + 7], 12,
                                         fill=self.accent + (int(235 * ka),))
                 else:
-                    sc *= 1.0 + 0.07 * math.sin(math.pi * min(1.0, (t - w["s"]) / 0.25))
+                    sc *= 1.0 + 0.07 * math.sin(math.pi * min(1.0, (c - w["s"]) / spd / 0.25))
                     if L["bg"] == "paper":  # newspaper: the spoken word is also underlined
                         d.line([(it["x"], y + b1 + 4), (it["x"] + it["w"], y + b1 + 4)], fill=self.accent,
                                width=4)
@@ -728,7 +818,8 @@ class NewsVideo:
             if t0 - g["t0"] > CARD_LAG or t0 > self.E - 0.6:
                 continue  # key words too close together / too late: this one is marked in the subtitles + recap
             nxt = self.groups[gi + 1]["t0"] if gi + 1 < n else self.E + 0.3
-            t1 = min(max(nxt - CARD_OUT - 0.02, t0 + CARD_MIN), t0 + CARD_HOLD, self.E + 0.2)
+            hold = max(t0 + CARD_HOLD, g["rep_end"] + 0.5)   # a repeated word keeps its card through the replays
+            t1 = min(max(nxt - CARD_OUT - 0.02, t0 + CARD_MIN), hold, self.E + 0.2)
             free = t1 + CARD_OUT + 0.02
             self.cards.append(dict(im=make(gi, g, n), t0=t0, t1=t1, gi=gi))
         # the solid card only (its soft shadow is at most 140 opaque)
@@ -993,12 +1084,77 @@ class NewsVideo:
                 _comp(frame, _fade(im2, kk), (W - im2.width) // 2, yb + int((1 - kk) * 20))
             yb += im2.height + 6
 
+    # -------------------------------------------------------------- time: the video <-> the clip
+    def _seg(self, t):
+        i = bisect.bisect_right(self.seg_o0, t) - 1
+        return self.segs[max(0, min(i, len(self.segs) - 1))]
+
+    def _c(self, t):
+        """The clip time shown at video time t (held at the end once the clip is over)."""
+        if t >= self.E:
+            return self.clip
+        sg = self._seg(t)
+        d = sg["o1"] - sg["o0"]
+        return sg["c0"] + (sg["c1"] - sg["c0"]) * max(0.0, min(1.0, (t - sg["o0"]) / d)) if d > 0 else sg["c0"]
+
+    def _out(self, c):
+        """The video time at which clip time c is first played."""
+        for sg in self.segs:
+            if sg["kind"] == "play" and sg["c0"] <= c <= sg["c1"] and sg["c1"] > sg["c0"]:
+                return sg["o0"] + (c - sg["c0"]) / self.speed
+        return LEAD if c <= 0 else self.segs[-1]["o1"]
+
+    def _draw_repeat(self, frame, t, a):
+        """REPEAT k/n badge while a key word is replayed (with the held frame before it)."""
+        sg = self._seg(t)
+        if sg["kind"] not in ("freeze", "replay") or t >= self.E:
+            return
+        same = [x for x in self.segs if x["gi"] == sg["gi"]]
+        t0, t1 = same[0]["o0"], same[-1]["o1"]
+        k = _back((t - t0) / 0.3) * min(1.0, (t1 - t) / 0.2) * a
+        if k <= 0:
+            return
+        key = (sg["k"], sg["n"])
+        if key not in self._rep_ims:
+            self._rep_ims[key] = self._repeat_badge(*key)
+        im = _scaled(self._rep_ims[key], 0.6 + 0.4 * min(1.0, k))
+        if sg["kind"] == "freeze":   # a soft pulse while the frame is held
+            im = _scaled(im, 1.0 + 0.05 * math.sin(math.pi * (t - sg["o0"]) / max(1e-6, sg["o1"] - sg["o0"])))
+        if self.vertical:
+            x, y = (W - im.width) // 2, int(self.cap_y + self.cap_box[0]) - im.height - 24
+        else:
+            x, y = self.vpos[0] + self.vsize[0] - im.width - 16, self.vpos[1] + 16
+        _comp(frame, _fade(im, min(1.0, k)), int(x), int(y))
+
+    def _repeat_badge(self, k, n):
+        """An accent pill: a circular 'replay' arrow + REPEAT k/n."""
+        txt = _tight_text(f"REPEAT {k}/{n}" if n > 1 else "REPEAT", 34, WHITE, 600, "Black", MONT, pad=4)
+        h = txt.height + 26
+        icon = h - 22
+        S = 4
+        ic = Image.new("RGBA", (icon * S, icon * S), (0, 0, 0, 0))
+        d = ImageDraw.Draw(ic)
+        m, wdt = int(icon * S * 0.14), int(icon * S * 0.12)
+        d.arc([m, m, icon * S - m, icon * S - m], 40, 330, fill=WHITE + (255,), width=wdt)
+        cx, cy, r = icon * S / 2, icon * S / 2, icon * S / 2 - m
+        ax, ay = cx + r * math.cos(math.radians(330)), cy + r * math.sin(math.radians(330))
+        tri = [(ax + wdt * 1.3, ay - wdt * 0.4), (ax - wdt * 0.9, ay - wdt * 1.4), (ax - wdt * 0.2, ay + wdt * 1.2)]
+        d.polygon(tri, fill=WHITE + (255,))
+        ic = ic.resize((icon, icon), Image.LANCZOS)
+        pill = _rounded((icon + txt.width + 52, h), h // 2, self.accent + (255,))
+        pill.alpha_composite(ic, (20, 11))
+        pill.alpha_composite(txt, (20 + icon + 10, (h - txt.height) // 2))
+        out = Image.new("RGBA", (pill.width + 30, pill.height + 30), (0, 0, 0, 0))
+        out.alpha_composite(_shadow_box(out.size, (15, 19, 15 + pill.width, 19 + pill.height), h // 2, 8, 120, 0))
+        out.alpha_composite(pill, (15, 15))
+        return out
+
     # -------------------------------------------------------------- per frame
     def _video_frame(self, t):
         if self.dec is None:
             return self._placeholder()
-        idx = int(round(max(0.0, min(t, self.E) - LEAD) * self.fps))
-        idx = min(idx, max(0, int(self.clip * self.fps) - 1))
+        idx = int(round(self._c(t) * self.fps))
+        idx = max(0, min(idx, int(self.clip * self.fps) - 1))
         return self.dec.frame(idx)
 
     def _placeholder(self):
@@ -1044,7 +1200,8 @@ class NewsVideo:
             frame.alpha_composite(Image.new("RGBA", (W, H), veil))
         if end_p < 1:
             self._draw_header(frame, t, 1 - end_p)
-            self._draw_captions(frame, t, 1 - end_p)
+            self._draw_captions(frame, self._c(t), 1 - end_p)
+            self._draw_repeat(frame, t, 1 - end_p)
             self._draw_card(frame, t, 1 - end_p)
             if self.L["ticker"]:
                 self._draw_ticker(frame, t, 1 - end_p)
@@ -1065,7 +1222,7 @@ class NewsVideo:
         im.putalpha(self.mask if a >= 0.999 else self.mask.point(lambda v: int(v * a)))
         frame.alpha_composite(im, (x, y))
         frame.alpha_composite(_fade(self.rim, a), (x, y))
-        p = max(0.0, min(1.0, (t - LEAD) / self.clip))      # progress line under the panel
+        p = max(0.0, min(1.0, (t - LEAD) / max(1e-6, self.E - LEAD)))   # progress line under the panel
         bar_y = y + self.vsize[1] + 18
         tr = self.L["track"]
         d = ImageDraw.Draw(frame)
@@ -1147,25 +1304,28 @@ class NewsVideo:
 
     # -------------------------------------------------------------- sound
     def sound(self, mx):
-        if self.path and self.has_audio:
-            try:
-                a = load_audio(self.path)
-            except Exception:
-                a = None
-            if a is not None and len(a):
-                seg = a[int(self.trim0 * SR):int((self.trim0 + self.clip) * SR)].copy()
-                peak = np.abs(seg).max() if len(seg) else 0.0
-                seg = seg / (peak + 1e-9) * 0.9 * self.video_gain   # same level whatever the clip (like a voice)
-                f = min(len(seg) // 4, int(0.02 * SR))
-                if f > 1:
+        a = _clip_sound(self.path, self.trim0, self.clip, self.speed) if self.path and self.has_audio else None
+        if a is not None and len(a):
+            peak = np.abs(a).max()
+            a = a / (peak + 1e-9) * 0.9 * self.video_gain   # same level whatever the clip (like a voice)
+            f = int(0.012 * SR)                             # short fades: no click where the clip is cut
+            for sg in self.segs:
+                if sg["kind"] not in ("play", "replay"):
+                    continue
+                seg = a[int(sg["c0"] / self.speed * SR):int(sg["c1"] / self.speed * SR)].copy()
+                if len(seg) > 4 * f:
                     ramp = np.linspace(0, 1, f)[:, None]
                     seg[:f] *= ramp
                     seg[-f:] *= ramp[::-1]
-                at = int(LEAD * SR)
+                at = int(sg["o0"] * SR)
                 n = min(len(seg), mx.n - at)
                 if n > 0:
                     mx.voice[at:at + n] += seg[:n]
                     mx.has_voice = True
+        for sg in self.segs:   # a soft rewind swish as each replay begins
+            if sg["kind"] == "freeze":
+                sig, pan = mx.whoosh(0.35)
+                mx.add(sg["o0"], sig[::-1].copy(), 0.07, pan)
         sig, pan = mx.whoosh(0.5)
         mx.add(0.02, sig, 0.08, pan)
         for c in self.cards:
