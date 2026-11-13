@@ -103,6 +103,9 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   words column `repeat` (extra replays of a key word, `REP_MAX`) build them; render maps t -> clip time with `_c(t)`
   (captions / video frame), cards + header + ending stay in video time (`g["t0"]` = `_out(c0)`, a repeated word's card
   lasts to `rep_end`); `length_report` = the editor's length line. Text template's `parse_words` keeps `rep` too.
+  Recap (`_layout_ending`): ONE English and ONE Arabic size for all rows (measured on the widest, columns split by
+  need, floor `REC_MIN`; only an outlier shrinks alone); English cut to its font band (`_tight_text`), Arabic on a
+  fixed baseline (`_ar_row` = text.`_ar_line`, placed with `_ar_ref`) so rows line up; 2 columns from 9 words.
   Key-words Excel: `news_words.export_xlsx(clips)` / `import_xlsx(path, clips)` (Clip · # · Key word · Arabic · Repeat
   · Sentence; matched by clip file name + key word, then #).
   App: several clips per project — `news.clips` (JSON list of video / headline / trim / words / speed) + `news.clip_index`

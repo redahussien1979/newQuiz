@@ -32,7 +32,8 @@ from PIL import Image, ImageDraw, ImageFilter
 
 from ..audio import SR
 from ..core import H, ROOT, W, ffmpeg_exe, get_font
-from .text import DEFAULT_LOGO, _ar_fit, _comp, _fade, _groups, _shadow_box, _spring, logo_badge, parse_words
+from .text import (_AR_PAD, DEFAULT_LOGO, _ar_fit, _ar_font_for, _ar_line, _comp, _fade, _groups, _shadow_box, _spring,
+                   logo_badge, parse_words)
 
 NAME = "English in News"
 
@@ -61,6 +62,7 @@ REP_GAP = 0.45              # the held frame (with REPEAT k/n) before each repla
 ENDING_LEN = 5.0
 CARD_MIN, CARD_HOLD = 1.0, 4.2   # a word card stays at least / at most this long (s): it gives way to the next
                                  # key word's card, but only after CARD_MIN
+REC_MIN = 0.72                   # the recap's common text size may go down to this share of its full size
 CARD_LAG = 1.0                   # a card may come at most this late after its word (else it is left out)
 CARD_OUT = 0.25                  # its exit
 SAFE_BOTTOM = 1536
@@ -1011,8 +1013,8 @@ class NewsVideo:
         cols = 2 if n > 8 else 1   # many words: two columns, each word over its Arabic (big enough on a phone)
         per = -(-n // cols)
         if cols == 2:
-            row_h = max(70, min(104, room // max(1, per)))
-            es = int(row_h * 0.36)
+            row_h = max(70, min(110, room // max(1, per)))
+            es = int(row_h * 0.38)
         elif n * row_h > room:
             row_h = max(60, room // max(1, n))
             es = int(row_h * 0.44)
@@ -1028,37 +1030,77 @@ class NewsVideo:
         self.end_rows = []
         en_weight = "ExtraBold" if tf == MONT else "Bold"
         rw = (cw - 60 - (20 if cols == 2 else 0)) // cols
+        # ONE English size and ONE Arabic size for every row (a table, not a ransom note): measured on the widest
+        # word / meaning, the columns split where those need it; only a phrase too long even at REC_MIN of the size
+        # gets smaller on its own.
+        d = min(row_h - 44, 52)
+        tx = d + 30
+        ar0 = int(es * 0.95)
+        f_en = get_font(es, en_weight, tf)
+        w_en = max((f_en.getlength(en) + 12 for en, _ in rows), default=1.0)
+        w_ar = max((_ar_line(ar, ar0, L["end_ar"], L["ar_font"]).width - 2 * _AR_PAD for _, ar in rows if ar),
+                   default=0)
+        if cols == 2:     # stacked: each has the row's full width
+            room = rw - tx - 14
+            k = max(REC_MIN, min(1.0, room / w_en, room / w_ar if w_ar else 1.0))
+            col_en = col_ar = room
+        else:             # side by side
+            room = rw - tx - 20 - 36
+            k = max(REC_MIN, min(1.0, room / (w_en + w_ar)))
+            col_en = w_en * k if (w_en + w_ar) * k <= room else room * w_en / (w_en + w_ar)
+            col_ar = room - col_en
+        es_c, ar_c = max(18, int(es * k)), max(18, int(ar0 * k))
+        if cols == 2:     # both lines must fit the row's height too: the letters' real band, the same for all rows
+            for _ in range(8):
+                eh = _tight_text("Hg", es_c, INK, 10 ** 6, en_weight, tf, pad=2).height
+                up, dn = self._ar_ref(ar_c)
+                if eh + 6 + up + dn <= row_h - 14 - 12:
+                    break
+                es_c, ar_c = max(16, int(es_c * 0.92)), max(16, int(ar_c * 0.92))
+        up, dn = self._ar_ref(ar_c)
         for k, (en, ar) in enumerate(rows):
             col, row = divmod(k, per)
             rim = Image.new("RGBA", (rw, row_h - 14), (0, 0, 0, 0))
             rim.alpha_composite(_rounded(rim.size, 22 if r > 4 else 3, L["end_row"] + (255,)))
-            d = min(row_h - 44, 52)
             num = _rounded((d, d), d // 2, self.accent + (255,))
             nt = _text(str(k + 1), int(d * 0.55), WHITE, "Black")
             num.alpha_composite(nt, ((num.width - nt.width) // 2, (num.height - nt.height) // 2 - 2))
             rim.alpha_composite(num, (12, (rim.height - num.height) // 2))
-            tx = num.width + 24
+            # the English cut to its font's letter band; the Arabic on one baseline — so every row lines up
+            et = _tight_text(en, es_c, L["end_en"], col_en, en_weight, tf, 16, pad=2)
+            at, base = self._ar_row(ar, ar_c, L["end_ar"], col_ar) if ar else (None, 0)
             if cols == 2:   # the English over the Arabic (right-aligned)
-                et = _fit_text(en, es, L["end_en"], rw - tx - 14, en_weight, tf, 20)
-                at = _ar_fit(ar, int(es * 0.95), L["end_ar"], L["ar_font"], rw - tx - 14, 20) if ar else None
-                hh = et.height - 14 + (at.height - 10 if at is not None else 0)
-                y0 = (rim.height - hh) // 2 - 6
-                rim.alpha_composite(et, (tx, y0))
+                y0 = (rim.height - (eh + 6 + up + dn)) // 2
+                rim.alpha_composite(et, (tx, y0 + (eh - et.height) // 2))
                 if at is not None:
-                    rim.alpha_composite(at, (rw - at.width - 14, y0 + et.height - 18))
+                    _comp(rim, at, rw - at.width + _AR_PAD - 14, y0 + eh + 6 + up - base)
             else:
-                half = (rw - tx - 40) // 2
-                et = _fit_text(en, es, L["end_en"], half, en_weight, tf, 22)
-                rim.alpha_composite(et, (tx, (rim.height - et.height) // 2 - 2))
-                if ar:
-                    at = _ar_fit(ar, int(es * 0.95), L["end_ar"], L["ar_font"], half, 22)
-                    rim.alpha_composite(at, (rw - at.width - 20, (rim.height - at.height) // 2))
+                rim.alpha_composite(et, (tx, (rim.height - et.height) // 2))
+                if at is not None:   # the letters' band centred in the row
+                    _comp(rim, at, rw - at.width + _AR_PAD - 20, rim.height // 2 + (up - dn) // 2 - base)
             self.end_rows.append((rim, 40 + 30 + col * (rw + 20), 40 + top + row * row_h))
         self.end_step = min(0.16, 1.6 / max(1, n))   # rows come in one after another (all within 1.6 s)
         self.end_pos = ((W - card.width) // 2, max(140, (SAFE_BOTTOM - card.height) // 2 + 30))
         col = WHITE if self.vertical else L["end_text"]
         self.end_handle = _text(self.handle, 34, col, "Bold") if self.handle else None
         self.end_cta = _fit_text(self.cta, 32, col, 900, "SemiBold") if self.cta else None
+
+    def _ar_ref(self, size):
+        """(above, below): how far the recap's Arabic letters reach above / below their baseline at a size (tall
+        letters with hamza / shadda to the lowest descenders) — every meaning is placed by its baseline with it."""
+        font = self.L["ar_font"]
+        im = _ar_line("أإلكجـيظ", size, INK, font)
+        box = im.getchannel("A").getbbox() or (0, 0, im.width, im.height)
+        base = int(size * 0.25) + get_font(int(size), "Bold", _ar_font_for(font, "أ")).getmetrics()[0]
+        return base - box[1], box[3] - base
+
+    def _ar_row(self, txt, size, col, max_w):
+        """A meaning on a FIXED baseline (+ where that baseline is in the image), smaller only if it is too wide."""
+        font = self.L["ar_font"]
+        while size > 16 and _ar_line(txt, size, col, font).width - 2 * _AR_PAD > max_w:
+            size = max(16, int(size * 0.94))
+        im = _ar_line(txt, size, col, font)
+        return im, int(size * 0.25) + get_font(int(size), "Bold", _ar_font_for(font, txt)).getmetrics()[0]
 
     def _draw_ending(self, frame, te):
         k = _back((te - 0.25) / 0.55)
