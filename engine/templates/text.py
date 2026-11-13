@@ -155,13 +155,14 @@ def parse_words(text):
         if len(parts) >= 4 and parts[0].isdigit() and _num(parts[1]) is None and _num(parts[2]) is not None:
             parts = parts[1:]
         if len(parts) == 1:  # a plain paragraph line: every word of it, no times
-            out += [dict(w=w, s=None, e=None, mark="", ar="") for w in parts[0].split()]
+            out += [dict(w=w, s=None, e=None, mark="", ar="", rep="") for w in parts[0].split()]
             continue
-        parts += [""] * (5 - len(parts))
+        parts += [""] * (6 - len(parts))
         w = parts[0]
         if not w:
             continue
-        out.append(dict(w=w, s=_num(parts[1]), e=_num(parts[2]), mark=parts[3], ar=parts[4]))
+        # a 6th column (📰 English in News): how many extra times the key word is replayed
+        out.append(dict(w=w, s=_num(parts[1]), e=_num(parts[2]), mark=parts[3], ar=parts[4], rep=parts[5]))
     _fill_times(out)
     return out
 

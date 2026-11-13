@@ -98,7 +98,17 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   Layout `_place()` measures the cards (`card_box`, solid part) and the subtitle letters (`cap_band`) and only shrinks a
   landscape panel when the card would cross the safe line. Cards queue (never overlap), give way after `CARD_MIN`,
   are left out if they would come `CARD_LAG` late (the word stays in the subtitles + recap).
-  App: several clips per project — `news.clips` (JSON list of video / headline / trim / words) + `news.clip_index`
+  Time: `timing(n, sdur)` -> words / key words in CLIP time + `segs` (lead / play / freeze / replay; `o0..o1` video
+  time shows clip `c0..c1`); `news.speed` (0.5-1.5, audio via FFmpeg `atempo` = same pitch, `_clip_sound`) and a 6th
+  words column `repeat` (extra replays of a key word, `REP_MAX`) build them; render maps t -> clip time with `_c(t)`
+  (captions / video frame), cards + header + ending stay in video time (`g["t0"]` = `_out(c0)`, a repeated word's card
+  lasts to `rep_end`); `length_report` = the editor's length line. Text template's `parse_words` keeps `rep` too.
+  Recap (`_layout_ending`): ONE English and ONE Arabic size for all rows (measured on the widest, columns split by
+  need, floor `REC_MIN`; only an outlier shrinks alone); English cut to its font band (`_tight_text`), Arabic on a
+  fixed baseline (`_ar_row` = text.`_ar_line`, placed with `_ar_ref`) so rows line up; 2 columns from 9 words.
+  Key-words Excel: `news_words.export_xlsx(clips)` / `import_xlsx(path, clips)` (Clip · # · Key word · Arabic · Repeat
+  · Sentence; matched by clip file name + key word, then #).
+  App: several clips per project — `news.clips` (JSON list of video / headline / trim / words / speed) + `news.clip_index`
   (the clip in the editor, mirrored in the editor fields; `wire_news.commit` only writes onto the same file);
   🎬 Render all clips = `_stream_batch` over `news_project(base, clip)`.
   `engine/news_words.py` = the tab's transcript editor (click to toggle key words / phrases, meanings table, suggest);

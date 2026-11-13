@@ -33,6 +33,7 @@ from engine.templates.text import BAND_CHOICES as TX_BANDS, MARKER_CHOICES as TX
 from engine.templates.text import LEVEL_CHOICES as TX_LEVELS, STYLE_CHOICES as TX_STYLES
 from engine.templates.text import DEFAULT_LOGO as TX_LOGO, LOGO_SHAPES as TX_LOGO_SHAPES
 from engine.templates.news import ACCENT_CHOICES as NW_ACCENTS, LOOK_CHOICES as NW_LOOKS, probe as nw_probe
+from engine.templates.news import length_report as nw_length
 from engine import batch
 from engine import countries
 from engine import tl_batch
@@ -78,7 +79,7 @@ TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "
            "para_text", "para_store", "para_alias", "read_style",
            "text_size"]
 NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", "logo", "logo_shape", "trim_start",
-           "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index"]
+           "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
                 "video"}
@@ -93,7 +94,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
             "para_text": "", "para_store": "{}", "para_alias": "",
-            "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0}  # for projects saved before these options existed
+            "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -206,6 +207,13 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   every clip (one MP4 each + a .zip). Save project keeps all the clips.
 - The video: big subtitles that follow the speech word by word, each key word marked when it is said, a card with the
   word and its Arabic meaning, and a recap card of all the key words at the end (🔚 Ending: its title, call to action).
+- **⬇️ Key words → Excel (all clips)**: one row per key word of every clip, with its sentence for context. Fill the
+  yellow columns (Arabic meaning, and Repeat if you like) in Excel, save, **⬆️ Upload the filled sheet**: the meanings
+  go back onto their words in every clip.
+- **🐢 Speed of this clip** (0.5–1): plays the clip slower — the voice keeps its pitch — and the line under the
+  buttons shows the length it gives (with the repeats), e.g. *clip 8.0 s → 10.7 s at 0.75× + 2.7 s of repeats*.
+- **🔁 Repeat** (meanings table / Excel, 0–10): when the video reaches that key word it holds the frame
+  (**REPEAT 1/2** badge), rewinds and plays the word again — as many extra times as you set — then carries on.
 - Five looks (⏱️ Design): **Pop** (1–3 huge words at a time, yellow stickers), Breaking (dark), Studio (light),
   TV broadcast (lower thirds + ticker) and Newspaper; five accent colours, shared by all the clips. Trim a clip with
   *Start / End the clip at*. The 🔚 Ending *Question* line (optional) becomes the recap card's subtitle.
@@ -1713,6 +1721,9 @@ def news_tab():
     with gr.Row():
         trim0 = gr.Number(value=0, label="Start the clip at (s)", minimum=0)
         trim1 = gr.Number(value=0, label="End the clip at (s)", minimum=0, info="0 = the end of the video")
+    speed = gr.Slider(0.5, 1.0, value=1.0, step=0.05, label="🐢 Speed of this clip",
+                      info="1 = normal · 0.75 = slower, easier to follow (the voice keeps its pitch) — the length "
+                           "it gives is shown under the buttons")
     with gr.Row(equal_height=True):
         again = gr.Button("📝 Transcribe again", min_width=150)
         sug = gr.Button("✨ Suggest key words", min_width=160)
@@ -1724,9 +1735,16 @@ def news_tab():
                             combine_adjacent=False, show_legend=False, interactive=False)
     params = inspect.signature(gr.Dataframe.__init__).parameters  # Gradio 5 and 6 name these differently
     kw = {"static_columns": [0, 1]} if "static_columns" in params else {}
-    kw["column_count" if "column_count" in params else "col_count"] = (3, "fixed")
-    meanings = gr.Dataframe(headers=["#", "Key word", "Arabic meaning (type here)"], datatype=["number", "str", "str"],
-                            interactive=True, wrap=True, label="🌐 Arabic meanings", elem_classes="nw-meanings", **kw)
+    kw["column_count" if "column_count" in params else "col_count"] = (4, "fixed")
+    meanings = gr.Dataframe(headers=["#", "Key word", "Arabic meaning (type here)", "🔁 Repeat (extra times)"],
+                            datatype=["number", "str", "str", "number"], interactive=True, wrap=True,
+                            label="🌐 Arabic meanings — and 🔁 how many times the video replays each key word "
+                                  "(0 = once, as spoken)", elem_classes="nw-meanings", **kw)
+    with gr.Row(equal_height=True):
+        mk_xl = gr.Button("⬇️ Key words → Excel (all clips)", min_width=200)
+        up_xl = gr.UploadButton("⬆️ Upload the filled sheet", file_types=[".xlsx"], min_width=200)
+    xl_file = gr.File(label="Key-words sheet — fill the yellow columns (Arabic meaning, Repeat), save, upload it back",
+                      visible=False, height=90)
     with gr.Accordion("✏️ Words (advanced) — fix a misheard word or a time", open=False):
         words = gr.Textbox(lines=12, max_lines=40, label="Words", info=NEWS_WORDS_HELP)
     with gr.Row(equal_height=True):
@@ -1742,7 +1760,8 @@ def news_tab():
     return dict(key=key, model=model, lang=lang, save_k=save_k, uploads=uploads, pick=pick, remove=remove,
                 headline=headline, trim0=trim0, trim1=trim1, again=again, sug=sug, n_sug=n_sug, clr=clr,
                 status=status, join=join, ht=ht, meanings=meanings, words=words, go=go, info=info, zip=zipb,
-                files=files, video=video, clips=clips, cur=cur)
+                files=files, video=video, clips=clips, cur=cur, speed=speed, mk_xl=mk_xl, up_xl=up_xl,
+                xl_file=xl_file)
 
 
 def news_design_tab():
@@ -1776,9 +1795,9 @@ def _clips(js):
     return [c for c in v if isinstance(c, dict)] if isinstance(v, list) else []
 
 
-def _clip(video, headline, t0, t1, words):
+def _clip(video, headline, t0, t1, words, speed=1.0):
     return {"video": video or "", "headline": headline or "", "trim_start": float(t0 or 0),
-            "trim_end": float(t1 or 0), "words": words or ""}
+            "trim_end": float(t1 or 0), "words": words or "", "speed": float(speed or 1.0)}
 
 
 def _clip_label(i, c):
@@ -1812,13 +1831,13 @@ def news_project(base, c):
     p = copy.deepcopy(base)
     p["news"].update(video=c.get("video") or "", headline=c.get("headline") or "",
                      trim_start=float(c.get("trim_start") or 0), trim_end=float(c.get("trim_end") or 0),
-                     words=c.get("words") or "", clips="[]", clip_index=0)
+                     words=c.get("words") or "", speed=float(c.get("speed") or 1.0), clips="[]", clip_index=0)
     return p
 
 
 def wire_news(ui, pv, fields):
-    clip_in = [ui["video"], ui["headline"], ui["trim0"], ui["trim1"], ui["words"]]
-    clip_out = [ui["video"], ui["headline"], ui["trim0"], ui["trim1"], ui["words"]]
+    clip_in = [ui["video"], ui["headline"], ui["trim0"], ui["trim1"], ui["words"], ui["speed"]]
+    clip_out = list(clip_in)
 
     def stt(path, key, model, lang):
         key = (key or "").strip() or el.load_settings(DATA_DIR)["api_key"]
@@ -1848,8 +1867,8 @@ def wire_news(ui, pv, fields):
         if 0 <= i < len(clips):
             c = clips[i]
             return (_media_path(c.get("video")), c.get("headline") or "", c.get("trim_start") or 0,
-                    c.get("trim_end") or 0, c.get("words") or "")
-        return "", "", 0, 0, ""
+                    c.get("trim_end") or 0, c.get("words") or "", float(c.get("speed") or 1.0))
+        return "", "", 0, 0, "", 1.0
 
     def switch(pick, js, cur, *vals):
         clips = commit(_clips(js), int(cur or 0), *vals)
@@ -1857,7 +1876,7 @@ def wire_news(ui, pv, fields):
         return (json.dumps(clips, ensure_ascii=False), i, *load_clip(clips, i))
 
     def add(files, js, cur, *rest, progress=gr.Progress()):
-        vals, (key, model, lang) = rest[:5], rest[5:]
+        vals, (key, model, lang) = rest[:6], rest[6:]
         clips = commit(_clips(js), int(cur or 0), *vals)
         paths = [f if isinstance(f, str) else getattr(f, "name", None) for f in (files or [])]
         have = {(os.path.basename(c["video"]), os.path.getsize(c["video"]) if os.path.isfile(c["video"]) else -1)
@@ -1878,7 +1897,7 @@ def wire_news(ui, pv, fields):
             except Exception as e:  # the clip is added; 📝 Transcribe again once the problem is fixed
                 errors.append(f"{os.path.basename(path)}: {_msg(e)}")
                 words = ""
-            clips.append(_clip(path, "", 0, 0, words))
+            clips.append(_clip(path, "", 0, 0, words, 1.0))
             first = len(clips) - 1 if first is None else first
         msg = []
         if first is not None:
@@ -1913,9 +1932,15 @@ def wire_news(ui, pv, fields):
             gr.Info("New transcript: the key words of this clip were cleared — click them again.", duration=8)
         return new
 
-    def refresh(text, path, t0, t1):
+    def refresh(text, path, t0, t1, speed):
         words = nw.load(text)
         rep = nw.report(words, _clip_len(path))
+        ln = _clip_len(path)
+        if ln:
+            try:
+                rep += "  \n" + nw_length({"trim_start": t0, "trim_end": t1, "speed": speed, "words": text}, ln)
+            except Exception:
+                pass
         if path and words:
             ln = _clip_len(path) or 0
             if ln and float(t0 or 0) > ln - 0.5:
@@ -1948,6 +1973,30 @@ def wire_news(ui, pv, fields):
         el.save_settings(DATA_DIR, api_key=(key or "").strip())
         gr.Info("ElevenLabs key saved on this computer.", duration=4)
 
+    def make_sheet(js, cur, *vals):
+        clips = commit(_clips(js), int(cur or 0), *vals)
+        if not clips:
+            raise gr.Error("Add clips and mark their key words first.")
+        path = os.path.join(OUT_DIR, f"news_key_words_{_stamp()}.xlsx")
+        path, n = nw.export_xlsx(clips, path)
+        if not n:
+            raise gr.Error("No key words yet — click words in the transcripts first.")
+        gr.Info(f"{n} key word{'s' if n != 1 else ''} in the sheet: fill the Arabic (yellow column), save, then "
+                "⬆️ upload it back.", duration=8)
+        return json.dumps(clips, ensure_ascii=False), gr.update(value=path, visible=True)
+
+    def read_sheet(file, js, cur, *vals):
+        path = file if isinstance(file, str) else getattr(file, "name", None)
+        clips = commit(_clips(js), int(cur or 0), *vals)
+        try:
+            clips, msg = nw.import_xlsx(path, clips)
+        except Exception as e:
+            raise gr.Error(f"Could not read the sheet: {_msg(e)}")
+        gr.Info(msg, duration=10)
+        i = int(cur or 0)
+        words = clips[i]["words"] if 0 <= i < len(clips) else gr.update()
+        return json.dumps(clips, ensure_ascii=False), words, msg
+
     def start(request: gr.Request):
         if not _claim(request):
             raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
@@ -1959,8 +2008,8 @@ def wire_news(ui, pv, fields):
         def plan():
             base = values_to_project("news", vals)
             n = base["news"]
-            clips = commit(_clips(n.get("clips")), int(n.get("clip_index") or 0),
-                           n.get("video"), n.get("headline"), n.get("trim_start"), n.get("trim_end"), n.get("words"))
+            clips = commit(_clips(n.get("clips")), int(n.get("clip_index") or 0), n.get("video"), n.get("headline"),
+                           n.get("trim_start"), n.get("trim_end"), n.get("words"), n.get("speed"))
             ready = [c for c in clips if os.path.isfile(_media_path(c.get("video")) or "") and nw.load(c.get("words"))]
             left = len(clips) - len(ready)
             if not ready:
@@ -1997,8 +2046,9 @@ def wire_news(ui, pv, fields):
           outputs=ui["clips"], trigger_mode="always_last", show_progress="hidden")
     gr.on(triggers=[ui["clips"].change, ui["cur"].change], fn=show, inputs=[ui["clips"], ui["cur"]],
           outputs=ui["pick"], trigger_mode="always_last", show_progress="hidden")
-    gr.on(triggers=[ui["words"].change, ui["video"].change, ui["trim0"].change, ui["trim1"].change], fn=refresh,
-          inputs=[ui["words"], ui["video"], ui["trim0"], ui["trim1"]],
+    gr.on(triggers=[ui["words"].change, ui["video"].change, ui["trim0"].change, ui["trim1"].change,
+                    ui["speed"].change], fn=refresh,
+          inputs=[ui["words"], ui["video"], ui["trim0"], ui["trim1"], ui["speed"]],
           outputs=[ui["ht"], ui["meanings"], ui["status"]], trigger_mode="always_last", show_progress="hidden")
     ui["again"].click(retranscribe, [ui["video"], ui["words"]] + keys, ui["words"])
     ui["ht"].select(click, [ui["words"], ui["join"]], ui["words"], queue=False, show_progress="hidden")
@@ -2006,6 +2056,9 @@ def wire_news(ui, pv, fields):
     ui["clr"].click(do_clear, ui["words"], ui["words"])
     ui["meanings"].input(meanings_in, [ui["words"], ui["meanings"]], ui["words"], show_progress="hidden")
     ui["save_k"].click(save_key, ui["key"], None)
+    ui["mk_xl"].click(make_sheet, [ui["clips"], ui["cur"]] + clip_in, [ui["clips"], ui["xl_file"]])
+    ui["up_xl"].upload(read_sheet, [ui["up_xl"], ui["clips"], ui["cur"]] + clip_in,
+                       [ui["clips"], ui["words"], ui["info"]])
     dep = ui["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"], pv["info"],
                                        ui["files"], ui["zip"]], queue=False)
     dep.success(render_all, fields,
@@ -2519,7 +2572,7 @@ def build_ui():
                     nw_fields = shared_fields(nw_st, nw_end) + [
                         nwu["video"], nwd["look"], nwd["accent"], nwu["headline"], nwd["tag"], nwd["label"],
                         nwd["bname"], nwd["logo"], nwd["lshape"], nwu["trim0"], nwu["trim1"], nwd["gain"],
-                        nwd["ending_on"], nwu["words"], nwu["clips"], nwu["cur"]]
+                        nwd["ending_on"], nwu["words"], nwu["clips"], nwu["cur"], nwu["speed"]]
                 nw_pv = preview_panel("news")
             wire(nw_proj, nw_pv, nw_fields)
             wire_news(nwu, nw_pv, nw_fields)
