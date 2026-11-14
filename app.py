@@ -16,7 +16,7 @@ import zipfile
 import gradio as gr
 
 from engine.audio import INTRO_SOUNDS, MOODS, TICK_SOUNDS, sound_demo
-from engine.core import COLOR_NAMES, THEME_NAMES
+from engine.core import COLOR_NAMES, THEME_NAMES, RenderStopped, check_stop, set_stop_check
 from engine.icons import ICON_NAMES
 from engine.mcq_styles import STYLE_NAMES
 from engine.timers import TIMER_FX, TIMER_NAMES
@@ -366,12 +366,45 @@ def _claim(request):
         if key in _jobs and now - _jobs[key] < JOB_TIMEOUT:
             return False
         _jobs[key] = now
-        return True
+        _stop_asked.discard(key)  # a new job starts with no stop pending
+    _bind(request)
+    return True
 
 
 def _release(request):
     with _jobs_lock:
-        _jobs.pop(_job_key(request), None)
+        key = _job_key(request)
+        _jobs.pop(key, None)
+        _stop_asked.discard(key)
+
+
+# ⏹ Stop: the button marks the browser session; the render running for that session (in whichever worker thread
+# it runs: _bind tells the thread whose job it is) sees it at its next frame (engine.core.check_stop) and ends.
+_stop_asked = set()
+_thread_job = threading.local()
+
+
+def _bind(request):
+    _thread_job.key = _job_key(request)
+
+
+def _stop_wanted():
+    key = getattr(_thread_job, "key", None)
+    with _jobs_lock:
+        return key is not None and key in _stop_asked
+
+
+set_stop_check(_stop_wanted)
+
+
+def stop_job(request: gr.Request):
+    """⏹ Stop pressed: the running clip / video / batch of this browser tab stops at its next frame."""
+    key = _job_key(request)
+    with _jobs_lock:
+        if key not in _jobs:
+            return "Nothing is rendering right now."
+        _stop_asked.add(key)
+    return "⏹ Stopping…"
 
 
 def _zip_videos(paths, out_dir):
@@ -406,6 +439,7 @@ def _stream_batch(request, plan, progress):
     Yields (player, message, files, zip, busy, tabs, clip, render, go) for the outputs of the batch button;
     the zip of all finished videos is offered at the end (also after an error, with the ones that finished)."""
     done, out_dir = [], None
+    _bind(request)
     keep = (gr.update(),) * 5  # still working: leave busy / tabs / buttons as start() set them
     unlock = (False, gr.update(selected="vid"), gr.update(interactive=True), gr.update(interactive=True),
               gr.update(interactive=True))
@@ -413,6 +447,7 @@ def _stream_batch(request, plan, progress):
         out_dir, total, jobs = plan()
         where = _where(out_dir)
         for k, (name, project) in enumerate(jobs, 1):
+            check_stop()  # ⏹ Stop pressed between two videos
             with open(os.path.join(out_dir, name + ".json"), "w", encoding="utf-8") as f:
                 json.dump(project, f, ensure_ascii=False, indent=2)
             out = os.path.join(out_dir, name + ".mp4")
@@ -433,9 +468,14 @@ def _stream_batch(request, plan, progress):
                + (" — the player shows the last one" if total > 1 else ""))
         yield (done[-1], msg, gr.update(value=list(done), visible=True), _zip_update(done, out_dir), *unlock)
     except Exception as e:
-        gr.Warning(_msg(e))
-        got = f" ({len(done)} finished before the error)" if done else ""
-        yield (done[-1] if done else gr.update(), f"⚠️ {_msg(e)}{got}",
+        stopped = isinstance(e, RenderStopped) or _stop_wanted()
+        if stopped:
+            msg = "⏹ Stopped" + (f" — {len(done)} video{'s' if len(done) != 1 else ''} finished before that, "
+                                 f"in `{_where(out_dir)}`" if done else " — no video was finished.")
+        else:
+            gr.Warning(_msg(e))
+            msg = f"⚠️ {_msg(e)}" + (f" ({len(done)} finished before the error)" if done else "")
+        yield (done[-1] if done else gr.update(), msg,
                gr.update(value=list(done) or None, visible=bool(done)),
                _zip_update(done, out_dir) if done else gr.update(value=None, visible=False), *unlock)
     finally:
@@ -742,10 +782,11 @@ def preview_panel(tpl):
         with gr.Row(equal_height=True):
             clip_btn = gr.Button("▶️ Quick motion (6 s)", min_width=130)
             rd_btn = gr.Button("🎬 Render video", variant="primary", min_width=130)
+            stop_btn = gr.Button("⏹ Stop", variant="stop", min_width=80, scale=0)
         info = gr.Markdown(elem_classes="info-line")
         busy = gr.State(False)  # True while a clip / video is being made
     return dict(busy=busy, img=img, vid=vid, tabs=out_tabs, t=t, safe=safe, auto=auto, pv=pv_btn, clip=clip_btn, rd=rd_btn,
-                info=info, fns=(preview, render, save, load, example, clip))
+                stop=stop_btn, info=info, fns=(preview, render, save, load, example, clip))
 
 
 def wire(proj, pv, fields):
@@ -781,10 +822,14 @@ def wire(proj, pv, fields):
 
     def run(fn, request, *args, **kw):
         """Run clip/render; whatever happens, unlock the buttons and say how it went."""
+        _bind(request)
         try:
             out, msg = fn(*args, **kw)
             return out, msg, False, gr.update(selected="vid"), gr.update(interactive=True), gr.update(interactive=True)
         except Exception as e:
+            if isinstance(e, RenderStopped) or _stop_wanted():
+                return (gr.update(), "⏹ Stopped — nothing was saved.", False, gr.update(selected="pic"),
+                        gr.update(interactive=True), gr.update(interactive=True))
             gr.Warning(_msg(e))
             return (gr.update(), f"⚠️ {_msg(e)}", False, gr.update(selected="pic"), gr.update(interactive=True),
                     gr.update(interactive=True))
@@ -810,6 +855,8 @@ def wire(proj, pv, fields):
         .success(do_clip, [pv["t"]] + fields, work_out)
     pv["rd"].click(start("Rendering the full video"), None, start_out, queue=False) \
         .success(do_render, fields, work_out)
+    # answers at once (no queue): the render sees the request at its next frame and ends cleanly
+    pv["stop"].click(stop_job, None, pv["info"], queue=False)
 
 
 # ------------------------------------------------------------------ Excel batch (Multiple Choice)
@@ -1377,7 +1424,8 @@ def wire_wl_import(ui, pv, fields, items_box, audio_box):
                     if voice:
                         proj["vocab"]["audio"] = word_import.voice_clips(
                             vid, DATA_DIR, os.path.join(out_dir, f"{name} audio"),
-                            lambda x, d, k=k: progress((k - 1 + 0.15 * x) / total, desc=f"Video {k} of {total}: {d}"))
+                            lambda x, d, k=k: (check_stop(),  # ⏹ Stop works while the voices are made too
+                                               progress((k - 1 + 0.15 * x) / total, desc=f"Video {k} of {total}: {d}")))
                     yield name, proj
             return out_dir, total, jobs()
 
@@ -2251,6 +2299,7 @@ def know_country_tab():
     with gr.Row():
         still = gr.Button("🖼️ Quick check (one picture)", interactive=False)
         go = gr.Button("🎬 Render video", variant="primary", interactive=False)
+        kc_stop = gr.Button("⏹ Stop", variant="stop", scale=0, min_width=90)
     info = gr.Markdown("Upload the countries sheet to start.")
     with gr.Row(equal_height=False):
         img = gr.Image(label="Quick check", height=560, visible=False, interactive=False)
@@ -2303,16 +2352,20 @@ def know_country_tab():
 
                 def tick(f, text, k=k):
                     progress((k + f) / len(todo), desc=text)
-                kc_video.render(c, out, path, cache_dir=KC_CACHE, workers=2, progress=tick)
+                kc_video.render(c, out, path, cache_dir=KC_CACHE, workers=2, progress=tick, should_stop=_stop_wanted)
                 done.append(out)
                 yield (gr.update(value=out, visible=True), gr.update(value=list(done), visible=True),
                        f"✅ {len(done)} of {len(todo)} done — saved in `{OUT_DIR}`")
+        except RenderStopped:
+            yield (gr.update(), gr.update(value=list(done) or None, visible=bool(done)),
+                   "⏹ Stopped" + (f" — {len(done)} finished before that, in `{OUT_DIR}`" if done else "."))
         except Exception as e:
             raise gr.Error(f"{type(e).__name__}: {e}" if not isinstance(e, ValueError) else str(e))
         finally:
             _release(request)
 
     sheet.change(loaded, sheet, [pick, still, go, info], show_progress="hidden")
+    kc_stop.click(stop_job, None, info, queue=False)
     still.click(quick, [sheet, pick], [img, info])
     go.click(render, [sheet, pick], [vid, files, info])
 

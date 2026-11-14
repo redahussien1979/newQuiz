@@ -991,7 +991,7 @@ def render_scene(args):
     os.replace(tmp, path)
     return name
 
-def render(country, out, xlsx, cache_dir=None, workers=2, progress=None):
+def render(country, out, xlsx, cache_dir=None, workers=2, progress=None, should_stop=None):
     """Render one country (a row of the Excel file) to out (.mp4). progress(fraction, text) is called as
     scenes finish. Returns out."""
     global XLSX
@@ -1009,16 +1009,34 @@ def render(country, out, xlsx, cache_dir=None, workers=2, progress=None):
         progress(0.02, f"{name}: preparing the map…")
     env = os.environ.get("VS_WORKERS")
     workers = int(env) if env and env.isdigit() else workers
-    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor
+    from concurrent.futures import wait as wait_futures
     from concurrent.futures.process import BrokenProcessPool
     try:
         with ProcessPoolExecutor(max(1, min(workers, len(order))), mp_context=mp.get_context("spawn"),
                                  initializer=_init, initargs=(country, xlsx, cache_dir)) as pool:
-            for fut in as_completed([pool.submit(render_scene, job) for job in order]):
-                nm = fut.result()
-                done += next(sc[1] for sc in scenes if sc[0] == nm)
-                if progress:
-                    progress(0.02 + 0.9 * done / total, f"{name}: rendered {nm}")
+            todo = {pool.submit(render_scene, job) for job in order}
+            try:
+                while todo:  # wake up twice a second to see whether ⏹ Stop was pressed
+                    ready, todo = wait_futures(todo, timeout=0.5, return_when=FIRST_COMPLETED)
+                    if should_stop and should_stop():
+                        from ..core import RenderStopped
+                        raise RenderStopped("Rendering stopped.")
+                    for fut in ready:
+                        nm = fut.result()
+                        done += next(sc[1] for sc in scenes if sc[0] == nm)
+                        if progress:
+                            progress(0.02 + 0.9 * done / total, f"{name}: rendered {nm}")
+            except BaseException:  # stop now: end the drawing processes instead of waiting for their scenes
+                procs = list(getattr(pool, "_processes", {}).values())
+                for proc in procs:
+                    proc.terminate()
+                for proc in procs:  # gone before their folder is removed
+                    proc.join(5)
+                pool.shutdown(wait=False, cancel_futures=True)
+                import shutil
+                shutil.rmtree(work, ignore_errors=True)
+                raise
     except BrokenProcessPool:
         raise RuntimeError("A drawing process stopped unexpectedly (usually not enough free memory). Close other "
                            "programs and try again, or set the environment variable VS_WORKERS=1 to draw on one process.")
