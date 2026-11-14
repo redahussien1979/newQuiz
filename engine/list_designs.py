@@ -17,10 +17,10 @@ Navy + juice is the default)."""
 import math
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 from .core import H, W, ease_io, ease_out_back, paste, prog
-from .word_list import MESSIRI, PATRICK, PLAYFAIR, RUQAA, _font, _gradient, _ipa, _speaker, _t
+from .word_list import MESSIRI, PATRICK, PLAYFAIR, RUQAA, _font, _gradient, _ipa, _speaker, _t, resolve_font
 
 POPPINS_B = _font("Poppins", "Poppins-Bold.ttf")
 POPPINS_K = _font("Poppins", "Poppins-Black.ttf")
@@ -713,6 +713,114 @@ def _bright_bg(top, bottom):
     return _cache[key]
 
 
+_PUNCT = ".,;:!?\"'”“’‘)(…—–"
+
+
+def _ex_tokens(text, phrase):
+    """[(text, highlighted)] pieces of a sample sentence, split at spaces: the *starred* part, else the phrase
+    found by paragraphs.find_phrase (other forms too). Punctuation touching a highlighted word stays outside."""
+    raw = " ".join(str(text or "").split())
+    chars, flags = [], []
+    if "*" in raw:
+        on = False
+        for ch in raw:
+            if ch == "*":
+                on = not on
+            else:
+                chars.append(ch)
+                flags.append(on and ch != " ")
+    else:
+        chars, flags = list(raw), [False] * len(raw)
+        words, starts, pos = raw.split(" "), [], 0
+        for wd in words:
+            starts.append(pos)
+            pos += len(wd) + 1
+        try:
+            from .paragraphs import find_phrase
+            hit = find_phrase({"words": words}, phrase)
+        except Exception:
+            hit = None
+        if hit:
+            for k in range(hit[0], hit[1] + 1):
+                wd = words[k]
+                core = wd.strip(_PUNCT) or wd
+                a = starts[k] + wd.find(core)
+                for c in range(a, a + len(core)):
+                    flags[c] = True
+    for k, ch in enumerate(chars):  # punctuation is never on the pill
+        if ch in _PUNCT:
+            flags[k] = False
+    out, cur, cur_f = [], "", None
+    for ch, f in zip(chars, flags):
+        if ch == " ":
+            if cur:
+                out.append((cur, cur_f))
+            out.append((" ", False))
+            cur, cur_f = "", None
+        elif cur and f != cur_f:
+            out.append((cur, cur_f))
+            cur, cur_f = ch, f
+        else:
+            cur, cur_f = cur + ch, f
+    if cur:
+        out.append((cur, cur_f))
+    return out
+
+
+def _wrap(toks, fn, fh, width, room=0.0):
+    """Pieces -> lines of [(text, highlighted, width)] no wider than width, breaking only at spaces. The highlighted
+    words stay together on one line (unless they alone are too wide) and get `room` px on each side for the pill
+    (as empty pieces); the pill is drawn from the first to the last highlighted piece of a line."""
+    words, cur = [], []
+    for txt, hl in toks:  # a space ends a word
+        if txt == " ":
+            words.append(cur)
+            cur = []
+        else:
+            cur.append((txt, hl))
+    words.append(cur)
+    words = [w for w in words if w]
+    units = []  # words joined while the highlight runs across the space between them
+    for w in words:
+        if units and units[-1][-1][-1][1] and w[0][1]:
+            units[-1].append(w)
+        else:
+            units.append([w])
+    sp = fn.getlength(" ")
+
+    def measure(unit):
+        out, prev = [], False
+        for n, w in enumerate(unit):
+            if n:
+                out.append((" ", False, sp))
+            for t, h in w:
+                if h and not prev:
+                    out.append(("", False, room))
+                out.append((t, h, (fh if h else fn).getlength(t)))
+                if not h and prev:
+                    out.insert(len(out) - 1, ("", False, room))
+                prev = h
+        if prev:
+            out.append(("", False, room))
+        return out
+
+    lines, line, lw = [], [], 0.0
+    for unit in units:
+        pieces = measure(unit)
+        wsum = sum(p[2] for p in pieces)
+        if line and lw + sp + wsum > width:
+            lines.append(line)
+            line, lw = [], 0.0
+        if line:
+            line.append((" ", False, sp))
+            lw += sp
+        line += pieces
+        lw += wsum
+    if line:
+        lines.append(line)
+    return lines
+
+
 def _bright_scheme(pal):
     """Colours of the Bright design: a bright gradient with white cards (PALETTES) or a two-tone set (DUOS):
     deep background, cards a shade lighter, the accent for the Arabic and the card being read."""
@@ -721,21 +829,33 @@ def _bright_scheme(pal):
         return dict(bg=(_mix(dk, WHITE, 0.07), _mix(dk, BLACK, 0.28)), card=_mix(dk, WHITE, 0.1), card_a=x, ring=None,
                     en=WHITE, ipa=_mix(dk, WHITE, 0.66), ar=x, en_a=dk, ipa_a=_mix(dk, x, 0.4), ar_a=dk,
                     disc=_mix(dk, WHITE, 0.24), num=WHITE, disc_a=dk, bars=x, disc_d=x, tick=dk,
-                    title=WHITE, kick=x, sub=x, shadow=_mix(dk, BLACK, 0.7))
+                    title=WHITE, kick=x, sub=x, shadow=_mix(dk, BLACK, 0.7),
+                    back=x, ex=dk, hl=dk, hl_txt=x, label=_mix(dk, x, 0.4), bars_b=dk)
     a, b = PALETTES[pal if pal in PALETTES else "sky"]
     ink, acc = (24, 26, 36), _on_white(a)
     return dict(bg=(a, b), card=WHITE, card_a=WHITE, ring=(255, 206, 60), en=ink, ipa=(110, 114, 130), ar=acc,
                 en_a=ink, ipa_a=(110, 114, 130), ar_a=acc, disc=a, num=WHITE, disc_a=a, bars=WHITE,
-                disc_d=(34, 170, 100), tick=WHITE, title=WHITE, kick=WHITE, sub=WHITE, shadow=_mix(a, BLACK, 0.6))
+                disc_d=(34, 170, 100), tick=WHITE, title=WHITE, kick=WHITE, sub=WHITE, shadow=_mix(a, BLACK, 0.6),
+                back=WHITE, ex=ink, hl=acc, hl_txt=WHITE, label=(122, 126, 142), bars_b=acc)
+
+
+# how a word-list card shows its sample sentence (vocab `list_ex_style`; `list_karaoke` lights its words in turn)
+EX_STYLES = [("Flip — the card turns over", "flip"), ("Expand — the card grows, the sentence slides out", "expand"),
+             ("Bottom sheet — a panel slides up", "sheet"), ("Speech bubble — pops out of the card", "bubble"),
+             ("Focus zoom — the card comes to the centre", "zoom"), ("Drawer — the card slides away", "drawer")]
 
 
 class Bright:
     TOP, BOT, GAP, CW = 420, 1660, 22, 960   # the cards fill the screen between the title and the bottom
+    SHEET_BOT = 1700  # the bottom sheet's lower edge
 
     def __init__(self, pg, opts, title, subtitle, kicker):
         self.pg = pg
         pal = opts.get("palette")
         self.c = c = _bright_scheme(_pal_key(pal))
+        st = opts.get("ex_style")
+        self.ex_style = st if st in dict((v, k) for k, v in EX_STYLES) else "flip"
+        self.karaoke = bool(opts.get("karaoke"))
         n = len(pg.words)
         self.kick = _t(POPPINS_B, (kicker or "Vocabulary").upper(), 28, c["kick"], "Bold", 800)
         self.title = _t(POPPINS_B, title, 80, c["title"], "Bold", 960)
@@ -777,31 +897,335 @@ class Bright:
                     _put_row(im, en, ipa, ar, pos)
                 out[state] = im
             self.cards.append(out)
+        for j, w in enumerate(pg.words):  # sample sentences: the pictures the chosen style needs
+            ex = pg.examples[j] if j < len(pg.examples) else None
+            if ex:
+                self._build_examples(j, w, ex, self.cards[j])
+
+    # ------------------------------------------------------------ sample sentences
+    def _sentence(self, w, text, width, size_max=50, size_min=34, max_lines=4, max_h=None):
+        """The sentence drawn centred in `width` px, the word / expression on a pill (found by find_phrase in any
+        form, or *starred*). The biggest size (size_max down to size_min) that fits in max_lines (and max_h).
+        Returns dict(lit = full colours, dim = karaoke start: faded text + faint pill, boxes = per word
+        (x0, y0, x1, y1, weight) to light up in turn, w, h)."""
+        from .core import get_font
+        c, S = self.c, 2  # drawn at twice the size, then scaled down (smooth pill edges)
+        toks = _ex_tokens(text, w["en"])
+        f_path, f_w = resolve_font(POPPINS_B, "SemiBold")
+        h_path, h_w = resolve_font(POPPINS_B, "Bold")
+        size = size_max * S
+        while True:
+            fn, fh = get_font(size, f_w, f_path), get_font(size, h_w, h_path)
+            lines = _wrap(toks, fn, fh, width * S, size * 0.2)
+            asc, desc = fn.getmetrics()
+            lh = int((asc + desc) * 1.08)
+            if (len(lines) <= max_lines and (max_h is None or len(lines) * lh <= max_h * S)) or size <= size_min * S:
+                break
+            size -= 2 * S
+        H0 = len(lines) * lh
+        layers = {}
+        for mode in ("lit", "dim"):
+            k_txt, k_pill, k_hl = (1.0, 1.0, 1.0) if mode == "lit" else (0.34, 0.3, 0.5)
+            lay = Image.new("RGBA", (width * S, H0), (0, 0, 0, 0))
+            d = ImageDraw.Draw(lay)
+            boxes = []
+            y = asc
+            for line in lines:
+                x, pieces = (width * S - sum(p[2] for p in line)) / 2, []
+                for txt, hl, wdt in line:
+                    pieces.append((x, txt, hl, wdt))
+                    x += wdt
+                run = [p for p in pieces if p[2]]
+                pad = size * 0.14
+                if run:  # one pill under the highlighted words of this line
+                    d.rounded_rectangle([run[0][0] - pad, y - asc * 0.84, run[-1][0] + run[-1][3] + pad,
+                                         y + desc * 0.58], size * 0.24, fill=tuple(c["hl"]) + (int(255 * k_pill),))
+                for x0, txt, hl, wdt in pieces:
+                    if txt.strip():
+                        col = c["hl_txt"] if hl else c["ex"]
+                        d.text((x0, y), txt, font=fh if hl else fn, fill=tuple(col) + (int(255 * (k_hl if hl else
+                                                                                                    k_txt)),),
+                               anchor="ls")
+                        e = pad if hl else 2
+                        boxes.append(((x0 - e) / S, (y - lh * 0.82) / S, (x0 + wdt + e) / S, (y + lh * 0.3) / S,
+                                      len(txt) + 1))
+                y += lh
+            layers[mode] = lay.resize((width, max(1, H0 // S)), Image.LANCZOS)
+            layers["boxes"] = boxes
+        return dict(lit=layers["lit"], dim=layers["dim"], boxes=layers["boxes"], w=width, h=max(1, H0 // S))
+
+    def _sent_now(self, sl, e, u):
+        """The sentence as it looks at time u: everything lit, or (karaoke) the words lit one after another while
+        the sentence is read (word times from the clip length, by letters)."""
+        if not self.karaoke or u >= e["e1"]:
+            return sl["lit"]
+        img = sl["dim"].copy()
+        p = prog(u, e["e0"], e["e1"])
+        total = sum(b[4] for b in sl["boxes"]) or 1
+        acc = 0.0
+        for x0, y0, x1, y1, wt in sl["boxes"]:
+            if acc / total >= p:
+                break
+            box = tuple(int(round(v)) for v in (max(0, x0), max(0, y0), min(sl["w"], x1), min(sl["h"], y1)))
+            if box[2] > box[0] and box[3] > box[1]:
+                img.paste(sl["lit"].crop(box), box[:2])
+            acc += wt
+        return img
+
+    def _label(self, size=22):
+        f, wt = resolve_font(POPPINS_B, "Bold")
+        return _t(f, "  ".join("EXAMPLE"), size, self.c["label"], wt)
+
+    def _build_examples(self, j, w, e, out):
+        """The images the chosen style needs for word j's sample sentence."""
+        c, cw, ch, d = self.c, self.CW, self.ch, self.d
+        front = out["a"].copy()  # the active front with its sound bars drawn in (it moves as one picture)
+        _bars(front, PAD + 30 + d / 2, PAD + ch / 2, d * 0.45, c["bars"], 0.0, None, 1.0, n=4,
+              bw=max(5, int(d * 0.08)), gap=max(3, int(d * 0.06)))
+        out["a_turn"] = front
+        lab = self._label()
+        st = self.ex_style
+        if st in ("flip", "drawer"):  # a card of its own (taller when the sentence needs it)
+            sl = self._sentence(w, e["text"], cw - 110, max_h=self.BOT - self.TOP - 160)
+            hb = max(ch, 26 + (lab.height - 60) + 26 + sl["h"] + 34)
+            out["back"] = _shadow_card(cw, hb, 32, c["back"], c["shadow"], 0.34, 22, 12)
+            out["back"].alpha_composite(lab, (PAD + 36 - 30, PAD + 26 - 30))
+            out["sent"], out["back_h"], out["back_lab"] = sl, hb, 26 + (lab.height - 60) / 2
+            free = hb - (26 + (lab.height - 60) + 26) - 34
+            out["sent_xy"] = (PAD + 55, PAD + 26 + (lab.height - 60) + 26 + (free - sl["h"]) // 2)
+        elif st in ("expand", "zoom"):  # the card itself grows: the word on top, the sentence under a line
+            n = len(self.pg.words)
+            room = self.BOT - self.TOP - ch - (n - 1) * (0.5 * ch + self.GAP) - 110 if st == "expand" else 700
+            sl = self._sentence(w, e["text"], cw - 110, max_h=max(90, room))
+            extra = 8 + (lab.height - 60) + 14 + sl["h"] + 34
+            full = _shadow_card(cw, ch + extra, 32, c["card_a"], c["shadow"], 0.34, 22, 12)
+            if c["ring"]:
+                ImageDraw.Draw(full).rounded_rectangle([PAD, PAD, PAD + cw - 1, PAD + ch + extra - 1], 32,
+                                                       outline=tuple(c["ring"]) + (255,), width=8)
+            full.alpha_composite(front.crop((PAD + 10, PAD + 10, PAD + cw - 10, PAD + ch - 6)), (PAD + 10, PAD + 10))
+            ImageDraw.Draw(full).line([(PAD + 36, PAD + ch), (PAD + cw - 36, PAD + ch)],
+                                      fill=tuple(c["label"]) + (110,), width=2)
+            full.alpha_composite(lab, (PAD + 36 - 30, PAD + ch + 8 - 30))
+            out["exp"], out["exp_h"], out["sent"] = full, ch + extra, sl
+            out["sent_xy"] = (PAD + 55, PAD + ch + 8 + (lab.height - 60) + 14)
+            out["exp_lab"] = ch + 8 + (lab.height - 60) / 2
+        else:  # sheet / bubble: a panel of its own
+            pw = 980 if st == "sheet" else 900
+            sl = self._sentence(w, e["text"], pw - 110, max_h=520)
+            word = _fit(_t(POPPINS_B, w["en"], 34, c["hl"] if c["back"] == WHITE else c["ex"], "Bold"), 560)
+            head = max(lab.height, word.height) - 60
+            ph = (30 if st == "sheet" else 0) + 28 + head + 22 + sl["h"] + 36
+            panel = _shadow_card(pw, ph, 36, c["back"], c["shadow"], 0.4, 26, 14)
+            dr = ImageDraw.Draw(panel)
+            y0 = PAD + 28
+            if st == "sheet":  # the grab handle of a bottom sheet
+                dr.rounded_rectangle([PAD + pw / 2 - 40, PAD + 14, PAD + pw / 2 + 40, PAD + 22], 4,
+                                     fill=tuple(c["label"]) + (140,))
+                y0 += 30
+            panel.alpha_composite(word, (PAD + 40 - 30, y0 - 30))
+            lx = PAD + pw - 40 - (lab.width - 60) - 30 - 50  # the label, left of the sound bars
+            panel.alpha_composite(lab, (lx, y0 + (word.height - 60 - (lab.height - 60)) // 2 - 30))
+            out["panel"], out["panel_h"], out["panel_w"], out["sent"] = panel, ph, pw, sl
+            out["sent_xy"] = (PAD + 55, y0 + head + 22)
+            out["panel_bars"] = (pw - 40 - 18, y0 - PAD + (word.height - 60) / 2)
+
+    def _open(self, j, u):
+        """How far word j's sentence is shown (0-1, eased) and its example dict, or (0, None) outside its time."""
+        e = self.pg.examples[j] if j < len(self.pg.examples) else None
+        if not e or u < e["f0"] or u >= e["f1"] + e["flip"]:
+            return 0.0, None
+        fl = e["flip"]
+        if u < e["f0"] + fl:
+            return ease_io(prog(u, e["f0"], e["f0"] + fl)), e
+        if u < e["f1"]:
+            return 1.0, e
+        return 1 - ease_io(prog(u, e["f1"], e["f1"] + fl)), e
+
+    def _flip(self, j, u):
+        """(angle 0-360 of the card turning over, how far the sentence is shown 0-1) or (None, 0)."""
+        e = self.pg.examples[j] if j < len(self.pg.examples) else None
+        if not e or u < e["f0"] or u >= e["f1"] + e["flip"]:
+            return None, 0.0
+        fl = e["flip"]
+        if u < e["f0"] + fl:
+            p = prog(u, e["f0"], e["f0"] + fl)
+            return 180 * ease_io(p), p
+        if u < e["f1"]:
+            return 180.0, 1.0
+        p = prog(u, e["f1"], e["f1"] + fl)
+        return 180 + 180 * ease_io(p), 1 - p
+
+    @staticmethod
+    def _turn(img, ang):
+        """img seen while it turns over on its horizontal middle: squashed, with a little perspective and shade."""
+        rad = math.radians(ang)
+        cos, sin = abs(math.cos(rad)), abs(math.sin(rad))
+        w, h = img.size
+        nh = max(2, int(round(h * cos)))
+        back = 90 < ang % 360 < 270
+        k = 0.07 * sin  # the edge coming towards us is wider
+        wt, wb = (w * (1 - k), w * (1 + k)) if back else (w * (1 + k), w * (1 - k))
+        W0 = int(max(wt, wb)) + 2
+        qx = lambda edge: (W0 - edge) / 2 * w / edge  # noqa: E731  (source x reached by the output's left side)
+        quad = (-qx(wt), 0, -qx(wb), h, w + qx(wb), h, w + qx(wt), 0)
+        out = img.transform((W0, nh), Image.QUAD, quad, Image.BICUBIC)
+        if sin > 0.02:
+            a = out.split()[3]
+            out = ImageEnhance.Brightness(out.convert("RGB")).enhance(1 - 0.35 * sin).convert("RGBA")
+            out.putalpha(a)
+        return out
+
+    @staticmethod
+    def _reveal(img, full_h, h, r=40):
+        """A card image (PAD margin) of card height full_h shown at height h: its top and its rounded bottom edge."""
+        h = int(max(r + 2, min(full_h, h)))
+        top = img.crop((0, 0, img.width, PAD + h - r))
+        bot = img.crop((0, PAD + full_h - r, img.width, img.height))
+        out = Image.new("RGBA", (img.width, top.height + bot.height), (0, 0, 0, 0))
+        out.alpha_composite(top)
+        out.alpha_composite(bot, (0, top.height))
+        return out
+
+    def _with_sentence(self, base, c, e, u):
+        """base (a card / panel picture) with the sentence as it looks at time u."""
+        img = base.copy()
+        img.alpha_composite(self._sent_now(c["sent"], e, u), tuple(int(v) for v in c["sent_xy"]))
+        return img
+
+    def _sent_bars(self, fr, x, y, e, u, a, s=1.0):
+        _bars(fr, x, y, 26 * s, self.c["bars_b"], u, e["speak"], a, n=4, bw=5, gap=4)
 
     def draw(self, fr, u):
-        pg = self.pg
+        pg, st, n = self.pg, self.ex_style, len(self.cards)
         fr.paste(_bright_bg(*self.c["bg"]), (0, 0))
         hp = prog(u, 0.05, 0.45)
         paste(fr, self.kick, W / 2, 150, 1, hp)
         _top(fr, self.title, W / 2, 192 + 20 * (1 - ease_io(hp)), hp)
         if self.sub is not None:
             paste(fr, self.sub, W / 2, 340, 1, prog(u, 0.15, 0.55))
+        opens = [self._open(j, u) for j in range(n)]
+        cur = max(range(n), key=lambda j: opens[j][0]) if n else 0
+        o, e = opens[cur] if n else (0.0, None)
+        ys, scales = list(self.ys), [1.0] * n
+        if e is not None and st in ("expand", "sheet"):
+            # expand: the open card grows and the others step back (smaller) to make room; sheet: the whole list
+            # makes room above the sheet (the word being read keeps its size)
+            c = self.cards[cur]
+            bot = self.BOT if st == "expand" else self.BOT + (self.SHEET_BOT - c["panel_h"] - 24 - self.BOT) * o
+            hs = [self.ch] * n
+            if st == "expand":
+                hs[cur] = self.ch + (c["exp_h"] - self.ch) * o
+            free = bot - self.TOP - hs[cur] - self.GAP * (n - 1)
+            s_min = max(0.3, min(1.0, free / max(1, (n - 1) * self.ch))) if n > 1 else 1.0
+            for k in range(n):
+                if k != cur:
+                    scales[k] = 1 - (1 - s_min) * (o if st == "expand" else 1.0)
+                    hs[k] = self.ch * scales[k]
+            total = sum(hs) + self.GAP * (n - 1)
+            y = (self.TOP + bot) / 2 - total / 2
+            for k in range(n):
+                ys[k] = y + hs[k] / 2
+                y += hs[k] + self.GAP
+        dim = {"sheet": 0.6, "zoom": 0.65}.get(st, 0.45) * o if e is not None else 0.0
+        later = []
         for j, c in enumerate(self.cards):
             a, dy = pg._row_in(j, u)
             if a <= 0.01:
                 continue
-            y = self.ys[j] + dy
+            y, s0 = ys[j] + dy, scales[j]
+            if j == cur and e is not None and st in ("flip", "drawer", "zoom", "expand"):
+                later.append((j, c, y, a))  # drawn by its style (over the other cards)
+                continue
+            keep = j == cur and e is not None and st in ("sheet", "bubble")  # the word stays lit next to its sentence
+            if dim and not keep:
+                a *= 1 - dim
             hl, done = _row_state(pg, j, u)
             base = c["d"] if u >= pg.starts[j] and done > 0 else c["n"]
-            paste(fr, base, W / 2, y, 1, a)
+            paste(fr, base, W / 2, y, s0, a)
             if hl > 0.005:
                 c_in, _ = pg._lit(j, u)
-                s = 1 + 0.035 * ease_out_back(c_in)
+                s = s0 * (1 + 0.035 * ease_out_back(c_in))
                 paste(fr, c["a"], W / 2, y, s, a * hl)
                 bx = W / 2 + (60 + 30 + self.d / 2 - W / 2) * s
                 _bars(fr, bx, y, self.d * 0.45 * s, self.c["bars"], u, pg.speak[j], a * hl, n=4,
                       bw=max(5, int(self.d * 0.08)), gap=max(3, int(self.d * 0.06)))
+        for j, c, y, a in later:
+            getattr(self, "_draw_" + st)(fr, j, c, y, a, o, e, u)
+        if e is not None and st in ("sheet", "bubble"):
+            getattr(self, "_draw_" + st)(fr, cur, self.cards[cur], ys[cur], 1.0, o, e, u)
 
+    # ------------------------------------------------------------ the six ways to show a sentence
+    def _draw_flip(self, fr, j, c, y, a, o, e, u):
+        ang, _ = self._flip(j, u)
+        back = 90 < ang < 270
+        lift = 1.035 + 0.035 * abs(math.sin(math.radians(ang)))
+        if back:  # a taller back stays inside the screen
+            half = c["back_h"] / 2 * lift
+            y = min(max(y, self.TOP + half), self.BOT - half)
+        face = self._with_sentence(c["back"], c, e, u) if back else c["a_turn"]
+        paste(fr, self._turn(face, ang), W / 2, y, lift, a)
+        if ang == 180.0:
+            self._sent_bars(fr, W / 2 + (self.CW / 2 - 64) * lift, y + (c["back_lab"] - c["back_h"] / 2) * lift, e, u,
+                            a, lift)
+
+    def _draw_drawer(self, fr, j, c, y, a, o, e, u):
+        half = c["back_h"] / 2 * 1.035
+        yb = min(max(y, self.TOP + half), self.BOT - half)
+        paste(fr, self._with_sentence(c["back"], c, e, u), W / 2, yb, 1.035, a * min(1.0, o * 1.6))
+        if o >= 0.999:
+            self._sent_bars(fr, W / 2 + (self.CW / 2 - 64) * 1.035, yb + (c["back_lab"] - c["back_h"] / 2) * 1.035,
+                            e, u, a, 1.035)
+        if o < 0.999:  # the front slides away to the right like a drawer, and back again
+            paste(fr, c["a_turn"], W / 2 + 1100 * o, y, 1.035 - 0.05 * o, a * (1 - 0.3 * o))
+
+    def _draw_expand(self, fr, j, c, y, a, o, e, u):
+        h = self.ch + (c["exp_h"] - self.ch) * o
+        img = self._reveal(self._with_sentence(c["exp"], c, e, u) if o > 0.02 else c["exp"], c["exp_h"], h)
+        paste(fr, img, W / 2, y, 1.02, a)
+        if o >= 0.999:
+            self._sent_bars(fr, W / 2 + (self.CW / 2 - 64) * 1.02, y + (c["exp_lab"] - h / 2) * 1.02, e, u, a, 1.02)
+
+    def _draw_zoom(self, fr, j, c, y, a, o, e, u):
+        h = self.ch + (c["exp_h"] - self.ch) * o
+        yc = (self.TOP + self.BOT) / 2 + 40
+        yy = y + (yc - y) * o
+        s = 1.02 + 0.05 * o
+        img = self._reveal(self._with_sentence(c["exp"], c, e, u) if o > 0.02 else c["exp"], c["exp_h"], h)
+        paste(fr, img, W / 2, yy, s, a)
+        if o >= 0.999:
+            self._sent_bars(fr, W / 2 + (self.CW / 2 - 64) * s, yy + (c["exp_lab"] - h / 2) * s, e, u, a, s)
+
+    def _draw_sheet(self, fr, j, c, y, a, o, e, u):
+        ph = c["panel_h"]
+        rest = self.SHEET_BOT - ph / 2
+        yy = rest + (H + ph / 2 - rest) * (1 - o)
+        img = self._with_sentence(c["panel"], c, e, u) if o > 0.02 else c["panel"]
+        paste(fr, img, W / 2, yy, 1.0, a)
+        if o >= 0.999:
+            bx, by = c["panel_bars"]
+            self._sent_bars(fr, W / 2 - c["panel_w"] / 2 + bx, yy - ph / 2 + by, e, u, a)
+
+    def _draw_bubble(self, fr, j, c, y, a, o, e, u):
+        ph, pw = c["panel_h"], c["panel_w"]
+        below = y < (self.TOP + self.BOT) / 2  # the bubble opens on the side with more room
+        tail_x = W / 2 - self.CW / 2 + 150
+        edge = y + (self.ch / 2 + 14) * (1 if below else -1)  # the tail's tip touches the card
+        cy = edge + (28 + ph / 2) * (1 if below else -1)
+        cy = min(max(cy, self.TOP - 20 + ph / 2), 1720 - ph / 2)
+        k = 0.55 + 0.45 * ease_out_back(o) if o < 1 else 1.0
+        img = self._with_sentence(c["panel"], c, e, u) if o > 0.02 else c["panel"]
+        tail = Image.new("RGBA", (120, 64), (0, 0, 0, 0))  # drawn at twice the size: a smooth edge
+        pts = [(12, 64), (108, 64), (34, 0)] if below else [(12, 0), (108, 0), (34, 64)]
+        ImageDraw.Draw(tail).polygon(pts, fill=tuple(self.c["back"]) + (255,))
+        tail = tail.resize((60, 32), Image.LANCZOS)
+        # grow out of the tail: the bubble's centre moves from the tail's tip to its place
+        bx = tail_x + (W / 2 - tail_x) * k
+        by = edge + (cy - edge) * k
+        paste(fr, tail, tail_x + 18, edge + 16 * (1 if below else -1), k, a * min(1.0, o * 2))
+        paste(fr, img, bx, by, k, a * min(1.0, o * 2))
+        if o >= 0.999:
+            px, py = c["panel_bars"]
+            self._sent_bars(fr, W / 2 - pw / 2 + px, by - ph / 2 + py, e, u, a)
 
 DESIGNS = {"Bright": Bright, "Glass": Glass, "Pop": Pop, "Spotlight": Spotlight}
 

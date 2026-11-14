@@ -45,7 +45,7 @@ from engine import news_words as nw
 from engine import text_batch
 from engine import vocab_batch
 from engine import word_import
-from engine.list_designs import PALETTE_CHOICES, font_choices
+from engine.list_designs import EX_STYLES, PALETTE_CHOICES, font_choices
 from engine.word_list import BOARD_CHOICES, CHALK_COLOR_CHOICES, HIGHLIGHTS, MARKS
 from engine.know_country import video as kc_video
 
@@ -75,7 +75,8 @@ MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", 
            "layout", "letters"]
 VC_KEYS = ["group", "group_name", "title", "subtitle", "lesson", "lesson_n", "items", "accent", "background",
            "title_style", "hook", "pace", "guess_seconds", "timer", "timer_fx", "recap", "audio", "audio_gain",
-           "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color", "list_palette", "list_fonts"]
+           "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color", "list_palette", "list_fonts",
+           "list_ex_style", "list_karaoke"]
 TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "lead", "band", "marker", "style",
            "level", "translation", "logo", "brand_name", "logo_shape", "logo_intro", "logo_end", "ending_on",
            "para_text", "para_store", "para_alias", "read_style",
@@ -92,7 +93,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "group_name": "", "lesson": "", "lesson_n": 1, "accent": "group", "background": "group", "hook": False,
             "pace": "normal", "guess_seconds": 5, "timer": "Bar", "recap": True, "audio_gain": 1.0,
             "list_style": "Bright", "list_highlight": "cream", "chalk_board": "green", "chalk_mark": "circle",
-            "chalk_color": "pink", "list_palette": "navy_juice", "list_fonts": 1, "tag": "", "lead": 1.0, "band": "teal",
+            "chalk_color": "pink", "list_palette": "navy_juice", "list_fonts": 1, "list_ex_style": "flip", "list_karaoke": False, "tag": "", "lead": 1.0, "band": "teal",
             "marker": "yellow",
             "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
@@ -181,6 +182,9 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   (the default: the list fills the screen with big cards), **Glass** (frosted app cards), **Pop** (bold pop-art) and
   **Spotlight** (big lyrics-style words); these four take one of 15 colours (Navy + juice is the default).
   In Excel: Type = list, one word per row with its Audio; "Words per list page" sets how many go on one page.
+  **Sample sentences** (Bright): an `example:` line under a word (or a *Sample sentence* column in 📥 Words from
+  Excel) — after the word is read its card flips over to the sentence, the word highlighted (found in any form:
+  battle → battles, or marked with `*stars*`), read with clip `w1_1e` (or ElevenLabs), then flips back.
 
 ### English Texts tips
 - **✍️ Paragraphs** (the easiest way): paste paragraphs (an empty line between them, optional `# Title` line), click
@@ -1090,10 +1094,12 @@ VC_ITEMS_HELP = """**One item per block, an empty line between items** (max 10).
 `group:` an item from another group (mixed videos).
 Guess options are lines starting with `-`; put `*` after the correct one.
 **Word list** (several words on one page, read one after another): `type: list`, optional `title:` / `subtitle:`,
-then one line per word (up to 6): `- Airport = مطار` or `- Airport = /ˈeəpɔːt/ = مطار`."""
+then one line per word (up to 6): `- Airport = مطار` or `- Airport = /ˈeəpɔːt/ = مطار`; an optional
+`example: …` line right under a word = its sample sentence (Bright flips the card over to show it)."""
 VC_AUDIO_HELP = """**Your own audio per item.** Name each clip after its item: `w1` = item 1 (the word, proverb or
 correct sentence — it plays when it appears and the 🔊 icon animates) · `w1e` = item 1's example sentence ·
-`w1_1`, `w1_2` … = word 1, word 2 … of a word list in item 1 (each word lights up while its clip plays).
+`w1_1`, `w1_2` … = word 1, word 2 … of a word list in item 1 (each word lights up while its clip plays) ·
+`w1_1e`, `w1_2e` … = the sample sentence of that word.
 Any audio type works (mp3, wav, m4a…). The item waits for its clips, and the music gets quieter while they play.
 A voiceover for the whole video is in 🎨 Style & sound."""
 VC_BATCH_HELP = """**Make many videos from one spreadsheet.** One item per row: `Group · Type · Word / Phrase · IPA ·
@@ -1238,9 +1244,10 @@ def wire_vc_batch(xl, pv, fields):
 
 
 # ------------------------------------------------------------------ English Words: 📃 Word list from Excel + ElevenLabs
-WL_IMPORT_HELP = ("**📥 Words from Excel** — one word per row: **English | Arabic | IPA** (IPA optional; headers in "
-                  "English or Arabic, or none: A = English, B = Arabic, C = IPA). Any number of words: they are cut "
-                  "into pages, and the pages into videos.")
+WL_IMPORT_HELP = ("**📥 Words from Excel** — one word per row: **English | Arabic | IPA | Sample sentence** (IPA and "
+                  "sentence optional; headers in English or Arabic, or none: A = English, B = Arabic, C = IPA, "
+                  "D = sentence). With a sentence, the card (Bright) flips over to it, the word highlighted, read "
+                  "aloud too. Any number of words: they are cut into pages, and the pages into videos.")
 
 
 def _wl_template_path():
@@ -2582,6 +2589,13 @@ def build_ui():
                                     v_lfont = gr.Dropdown(font_choices("Bright"), value=1, label="Font set",
                                                           info="5 English + Arabic font pairs made for this design "
                                                                "(a font picked in 🎨 Style & sound is used instead)")
+                                with gr.Row(visible=True, equal_height=True) as v_lrow_ex:
+                                    v_lex = gr.Dropdown(EX_STYLES, value="flip", label="Sample sentences (Bright)",
+                                                        info="How a word's sample sentence (example: line / Excel "
+                                                             "column) is shown after the word is read", scale=3)
+                                    v_lkar = gr.Checkbox(value=False, label="🎤 Karaoke",
+                                                         info="The sentence's words light up as they are spoken",
+                                                         scale=1)
                                 with gr.Row(visible=False) as v_lrow_ed:
                                     v_lhl = gr.Dropdown(HIGHLIGHTS, value="cream", label="Editorial: highlight",
                                                         info="How the row being read is marked")
@@ -2608,7 +2622,7 @@ def build_ui():
                                                                  v_items, v_acc, v_bg, v_tstyle, v_hook, v_pace, v_secs,
                                                                  v_timer, v_tfx, v_recap, v_audio, v_again,
                                                                  v_lstyle, v_lhl, v_cboard, v_cmark, v_ccol, v_lpal,
-                                                                 v_lfont]
+                                                                 v_lfont, v_lex, v_lkar]
                 vc_pv = preview_panel("vocab")
             wire(vc_proj, vc_pv, vc_fields)
             wire_vc_batch(vxl, vc_pv, vc_fields)
@@ -2622,8 +2636,10 @@ def build_ui():
                 # the font-set list follows the design; the number (1-5) stays, every design has 5 sets
                 return (gr.update(visible=style in (None, "", "Editorial")), gr.update(visible=style == "Chalkboard"),
                         gr.update(visible=style in ("Bright", "Glass", "Pop", "Spotlight")),
-                        gr.update(choices=font_choices(style or "Bright")))
-            v_lstyle.change(list_design, v_lstyle, [v_lrow_ed, v_lrow_ch, v_lrow_pal, v_lfont], show_progress="hidden")
+                        gr.update(choices=font_choices(style or "Bright")),
+                        gr.update(visible=style in (None, "", "Bright")))
+            v_lstyle.change(list_design, v_lstyle, [v_lrow_ed, v_lrow_ch, v_lrow_pal, v_lfont, v_lrow_ex],
+                            show_progress="hidden")
 
             def make_words(text):
                 try:
