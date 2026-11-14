@@ -632,6 +632,41 @@ def ffmpeg_exe():
     raise RuntimeError("FFmpeg not found. Run: pip install imageio-ffmpeg")
 
 
+class RenderStopped(Exception):
+    """The user pressed ⏹ Stop: the render ends at the next frame (workers and FFmpeg closed, no half file left)."""
+
+
+_stop_check = None
+
+
+def set_stop_check(fn):
+    """fn() -> True when the job running in this thread should stop (set by the app: per browser session)."""
+    global _stop_check
+    _stop_check = fn
+
+
+def check_stop():
+    if _stop_check is not None and _stop_check():
+        raise RenderStopped("Rendering stopped.")
+
+
+def _abort(ff, source, *paths):
+    """Close FFmpeg, the frame workers (source generator) and remove the unfinished files."""
+    try:
+        ff.kill()
+        ff.wait()
+    except Exception:
+        pass
+    if hasattr(source, "close"):
+        source.close()
+    for p in paths:
+        try:
+            if p and os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            pass
+
+
 def encode(render, n_frames, fps, wav_path, out_path, progress=None, frames=None):
     """Pipe frames into FFmpeg. `frames` (optional) is an iterable of raw RGB frame bytes in order;
     without it each frame is made with render(t)."""
@@ -640,15 +675,20 @@ def encode(render, n_frames, fps, wav_path, out_path, progress=None, frames=None
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", out_path]
     ff = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    source = frames if frames is not None else (render(i / fps).tobytes() for i in range(n_frames))
     try:
-        source = frames if frames is not None else (render(i / fps).tobytes() for i in range(n_frames))
         for i, raw in enumerate(source):
             ff.stdin.write(raw)
-            if progress and i % 10 == 0:
-                progress(i / n_frames)
+            if i % 10 == 0:
+                check_stop()
+                if progress:
+                    progress(i / n_frames)
         ff.stdin.close()
     except BrokenPipeError:
         pass
+    except BaseException:  # ⏹ Stop (or any error): nothing keeps running, no half-written video stays
+        _abort(ff, source, out_path)
+        raise
     err = ff.stderr.read().decode(errors="ignore")
     if ff.wait() != 0:
         raise RuntimeError("FFmpeg failed: " + err[-800:])

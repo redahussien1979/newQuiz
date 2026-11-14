@@ -34,6 +34,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
 - `engine/globe.py` — real-Earth globe intro from `data/earth.jpg` (NASA Blue Marble, public domain); in
   `timeline.py` the globe intro lasts `GLOBE_LEN` and the rest of the video is shifted by `self.off` (frames + sounds)
 - `engine/render.py` renders frames on several processes (`frame_stream`); templates' `render(t)` must depend only on t
+- ⏹ Stop (preview panel + Know a Country): `app.stop_job` marks the browser session (`_stop_asked`); the thread
+  running its job (`_bind`, set in `_claim` / `run` / `_stream_batch`) sees it via `core.check_stop()` (in `encode`,
+  `frame_stream` while waiting, `render_clip`, between batch videos, ElevenLabs voices; know_country `should_stop`)
+  and raises `RenderStopped`: FFmpeg + workers closed (`core._abort`), no half-written file; finished batch videos stay
 - `engine/render.py` — build / render_still / render_clip / render_video / render_cover (templates with `cover_time`)
 - `engine/templates/vocab.py` — English Words: groups (`GROUPS`: badge, colour, theme, `news` headline style) and item
   types `word` / `guess` / `reverse` / `mistake` / `proverb` / `idiom` written as `key: value` blocks (`parse_items`,

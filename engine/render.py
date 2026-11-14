@@ -5,7 +5,7 @@ import threading
 from collections import OrderedDict
 
 from .audio import SR, Mixer, load_audio
-from .core import draw_safe_zone, encode, set_font
+from .core import check_stop, draw_safe_zone, encode, set_font
 from .templates import TEMPLATES
 
 
@@ -110,7 +110,11 @@ def frame_stream(project, video, n_frames, fps, workers=None, chunk=6):
             while nxt < len(jobs) and len(pending) < workers * 2:  # keep memory bounded
                 pending.append(pool.apply_async(_render_chunk, (jobs[nxt],)))
                 nxt += 1
-            yield from pending.pop(0).get()
+            first = pending.pop(0)
+            while not first.ready():  # waiting for a worker: ⏹ Stop still answers within a quarter second
+                first.wait(0.25)
+                check_stop()
+            yield from first.get()
     finally:
         pool.terminate()
         pool.join()
@@ -130,9 +134,11 @@ def render_video(project, out_path, progress=None):
     voice = s.get("voice_file")
     if voice and os.path.isfile(voice):
         mx.add_voice(voice, float(s.get("voice_offset") or 0), float(s.get("voice_gain") or 1.0))
+    check_stop()
     wav = os.path.splitext(out_path)[0] + "_audio.wav"
     mx.write(wav)
     try:
+        check_stop()
         n = int(round(video.dur * video.fps))
         encode(video.render, n, video.fps, wav, out_path, progress,
                frames=frame_stream(project, video, n, video.fps, chunk=getattr(video, "chunk", 6)))
@@ -159,7 +165,7 @@ def render_clip(project, out_path, t0=0.0, secs=6.0, fps=15, scale=3):
 
     from PIL import Image
 
-    from .core import H, W, ffmpeg_exe
+    from .core import H, W, _abort, ffmpeg_exe
     video = build(project)
     s = project.get("settings", {})
     t0 = max(0.0, min(float(t0), max(0.0, video.dur - 1.0)))
@@ -185,10 +191,14 @@ def render_clip(project, out_path, t0=0.0, secs=6.0, fps=15, scale=3):
     ff = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         for i in range(int(secs * fps)):
+            check_stop()
             ff.stdin.write(video.render(t0 + i / fps).resize((w, h), Image.BILINEAR).tobytes())
         ff.stdin.close()
     except BrokenPipeError:
         pass
+    except BaseException:
+        _abort(ff, None, out_path, wav)
+        raise
     err = ff.stderr.read().decode(errors="ignore")
     code = ff.wait()
     if os.path.exists(wav):
