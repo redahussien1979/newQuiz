@@ -173,7 +173,7 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   above 60 s (Facebook Reels).
 - **📊 Excel batch:** one item per row, one video per group (or in sheet order), lesson numbers count up.
 - **Word list page** (`type: list`): up to 6 words with their Arabic meanings on one page, read one after another
-  with clips `w1_1`, `w1_2` … — the word being read lights up. Two designs in ⏱️ Design & timing: **Editorial**
+  with clips `w1_1`, `w1_2` … — the word being read lights up. Two designs in 📃 Word list: **Editorial**
   (magazine page, 6 highlight colours) and **Chalkboard** (hand-written chalk; board, mark and chalk colour).
   In Excel: Type = list, one word per row with its Audio; "Words per list page" sets how many go on one page.
 
@@ -2410,14 +2410,16 @@ def build_ui():
                                     v_secs = gr.Slider(2, 15, value=5, step=1, label="Guess countdown (seconds)")
                                     v_timer = gr.Dropdown(TIMER_NAMES, value="Bar", label="Guess timer")
                                 v_tfx = gr.CheckboxGroup(TIMER_FX, value=["pulse", "glow"], label="Timer effects")
-                                gr.Markdown("**Word-list page** (`type: list` items) — the word being read lights up")
-                                with gr.Row():
-                                    v_lstyle = gr.Radio(VC_LIST_STYLES, value="Editorial", label="Page design",
-                                                        info="Editorial = magazine page · Chalkboard = hand-written "
-                                                             "chalk")
+                        with gr.Tab("📃 Word list"):
+                            with gr.Column(elem_classes="pane"):
+                                gr.Markdown("**Word-list page** (`type: list` items) — up to 6 words on one page, "
+                                            "read one after another; the word being read lights up")
+                                v_lstyle = gr.Radio(VC_LIST_STYLES, value="Editorial", label="Page design",
+                                                    info="Editorial = magazine page · Chalkboard = hand-written chalk")
+                                with gr.Row(visible=True) as v_lrow_ed:
                                     v_lhl = gr.Dropdown(HIGHLIGHTS, value="cream", label="Editorial: highlight",
                                                         info="How the row being read is marked")
-                                with gr.Row():
+                                with gr.Row(visible=False) as v_lrow_ch:
                                     v_cboard = gr.Dropdown(BOARD_CHOICES, value="green", label="Chalkboard: board")
                                     v_cmark = gr.Dropdown(MARKS, value="circle", label="Chalkboard: mark",
                                                           info="Drawn live around the word being read")
@@ -2445,6 +2447,12 @@ def build_ui():
             gr.on(triggers=[v_audio.change, v_items.change], fn=clips_report, inputs=[v_audio, v_items],
                   outputs=v_ainfo, trigger_mode="always_last", show_progress="hidden")
             v_add.click(add_item, [v_items, v_type], v_items)
+
+            def list_design(style):
+                """📃 Word list: show only the options of the chosen page design."""
+                chalk = style == "Chalkboard"
+                return gr.update(visible=not chalk), gr.update(visible=chalk)
+            v_lstyle.change(list_design, v_lstyle, [v_lrow_ed, v_lrow_ch], show_progress="hidden")
 
             def make_words(text):
                 try:

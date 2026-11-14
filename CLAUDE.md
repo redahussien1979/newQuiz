@@ -43,7 +43,7 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   (template `projects/words_template.xlsx`)
 - Vocab item type `list` = one page of 1-6 words (`- English = /ipa/ = Arabic` lines, optional `title:` /
   `subtitle:`), read in turn with clips `w<i>_<k>`; drawn by `engine/word_list.py` (`ListPage`): designs
-  `list_style` Editorial (`list_highlight`) / Chalkboard (`chalk_board`, `chalk_mark`, `chalk_color`;
+  `list_style` (app: 📃 Word list sub-tab) Editorial (`list_highlight`) / Chalkboard (`chalk_board`, `chalk_mark`, `chalk_color`;
   font `fonts/library/PatrickHand`). Excel: Type = list, one word per row with its Audio;
   `vocab_batch.merge_lists` joins rows into pages (`list_size` words, a new Page title starts a page)
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
