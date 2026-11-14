@@ -29,7 +29,6 @@ MONTSERRAT = _font("Montserrat", "Montserrat[wght].ttf")
 RIGHTEOUS = _font("Righteous", "Righteous-Regular.ttf")
 LOBSTER = _font("Lobster", "Lobster-Regular.ttf")
 ANTON = _font("Anton", "Anton-Regular.ttf")
-REEM = _font("ReemKufi", "ReemKufi[wght].ttf")
 TAJAWAL = _font("Tajawal", "Tajawal-Bold.ttf")
 TAJAWAL_K = _font("Tajawal", "Tajawal-Black.ttf")
 LALEZAR = _font("Lalezar", "Lalezar-Regular.ttf")
@@ -278,7 +277,7 @@ def _neon(src, col, glow=1.0, core_mix=0.62):
     on.alpha_composite(_colored(m.filter(ImageFilter.GaussianBlur(9)), col, 1.5 * glow))
     on.alpha_composite(_colored(m.filter(ImageFilter.GaussianBlur(2)), col, 1.2))
     on.alpha_composite(_colored(m, _mix(col, WHITE, core_mix)))
-    off = _colored(m, _mix(col, (38, 34, 52), 0.62))
+    off = _colored(m, _mix(col, (196, 194, 206), 0.5), 0.82)  # unlit glass tube: pale, no glow, still readable
     return off, on
 
 
@@ -314,7 +313,7 @@ class Neon:
         sc = pg.sc
         self.kick = _t(MONTSERRAT, "  ".join((kicker or "Vocabulary").upper()), 26, (210, 205, 225), "Bold", 900)
         self.title = _neon(_t(LOBSTER, title, 104, WHITE, "Regular", 940), a, 1.1)
-        self.sub = _neon(_t(REEM, subtitle, 60, WHITE, "Bold", 900), b) if subtitle else None
+        self.sub = _neon(_t(TAJAWAL, subtitle, 58, WHITE, "Bold", 900), b, 0.7, 0.7) if subtitle else None
         fh = int(pg.pitch - 22)
         self.frame = _neon(Image.merge("RGBA", [_round_mask(964, fh, 30, outline=5)] * 4), b, 0.9)
         self.rows = []
@@ -326,10 +325,10 @@ class Neon:
             ring.alpha_composite(num, (ring.width // 2 - num.width // 2, ring.height // 2 - num.height // 2))
             (en, ipa, ar), two = _share(
                 lambda k, w=w: (_fit(_t(RIGHTEOUS, w["en"], 60 * sc * k, WHITE, "Regular"), 520),
-                                _fit(_ipa(w["ipa"], 32 * sc * k, WHITE), 520) if w["ipa"] else None,
-                                _fit(_t(REEM, w["ar"], 60 * sc * k, WHITE, "Bold"), 750)), 990 - 190 - 50)
+                                _fit(_ipa(w["ipa"], 38 * sc * k, WHITE), 520) if w["ipa"] else None,
+                                _fit(_t(TAJAWAL, w["ar"], 62 * sc * k, WHITE, "Bold"), 750)), 990 - 190 - 50)
             self.rows.append(dict(num=_neon(ring, b, 0.8), en=_neon(en, a),
-                                  ipa=_neon(ipa, a, 0.45, 0.4) if ipa else None, ar=_neon(ar, b),
+                                  ipa=_neon(ipa, a, 0.35, 0.7) if ipa else None, ar=_neon(ar, b, 0.6, 0.72),
                                   pos=_place(en, ipa, ar, two, 190, 990, 0, sc)))
 
     def draw(self, fr, u):
@@ -352,7 +351,7 @@ class Neon:
             cy = pg.cy[j] + dy
             hl, done = _row_state(pg, j, u)
             s = pg.starts[j]
-            lit = _flick(u, s - 0.12) * (1 - done) + 0.42 * done if u >= s - 0.12 else 0.0
+            lit = _flick(u, s - 0.12) * (1 - done) + 0.7 * done if u >= s - 0.12 else 0.0  # read words stay lit
             frame = _flick(u, s - 0.08) * (1 - done)
             if frame > 0.01:
                 paste(fr, self.frame[1], W / 2, cy, 1, a * frame)
