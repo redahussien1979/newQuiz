@@ -11,8 +11,10 @@ that depends only on the item time u. They share ListPage's layout (`pg.cy`, `pg
                yellow, tilts, and a starburst sticker with a speaker pops on its corner; read cards get a tick
     Spotlight  lyrics style: big centred words on a deep gradient; the word being read grows to full size under a
                soft spotlight with sound bars, the others shrink and dim (read ones a little brighter)
+    Bright     the list fills the screen: tall white cards on a bright gradient (its own layout, TOP..BOT); the card
+               being read gets a yellow border, springs forward and shows live sound bars; read cards get a tick
 
-`list_palette` (PALETTES) colours all four."""
+`list_palette` (PALETTES, 12 colour pairs) colours all five."""
 import math
 
 import numpy as np
@@ -32,14 +34,25 @@ TAJAWAL = _font("Tajawal", "Tajawal-Bold.ttf")
 TAJAWAL_K = _font("Tajawal", "Tajawal-Black.ttf")
 LALEZAR = _font("Lalezar", "Lalezar-Regular.ttf")
 READEX = _font("ReadexPro", "ReadexPro[HEXP,wght].ttf")
+PLEX_B = _font("IBMPlexSansArabic", "IBMPlexSansArabic-Bold.ttf")
 
-# (main colour A, second colour B)
-PALETTES = {"violet": ((139, 92, 246), (236, 72, 153)),
-            "sunset": ((249, 98, 40), (250, 196, 30)),
+# (main colour A, second colour B); Bright uses them as its background gradient (A at the top, B at the bottom)
+PALETTES = {"sky": ((56, 152, 236), (99, 182, 255)),
+            "royal": ((52, 84, 209), (86, 120, 240)),
             "ocean": ((14, 140, 233), (34, 211, 200)),
-            "mint": ((16, 185, 129), (163, 230, 53))}
-PALETTE_CHOICES = [("Violet + pink", "violet"), ("Sunset", "sunset"), ("Ocean", "ocean"), ("Mint", "mint")]
-# Pop: background, its halftone dots
+            "lavender": ((139, 112, 232), (176, 150, 250)),
+            "violet": ((139, 92, 246), (236, 72, 153)),
+            "rose": ((232, 92, 150), (250, 130, 175)),
+            "coral": ((245, 110, 100), (255, 150, 120)),
+            "sunset": ((249, 98, 40), (250, 196, 30)),
+            "mango": ((245, 160, 30), (252, 200, 60)),
+            "mint": ((16, 185, 129), (163, 230, 53)),
+            "emerald": ((12, 150, 100), (40, 185, 120)),
+            "tealblue": ((16, 160, 170), (40, 120, 220))}
+PALETTE_CHOICES = [("Sky blue", "sky"), ("Royal blue", "royal"), ("Ocean", "ocean"), ("Lavender", "lavender"),
+                   ("Purple + pink", "violet"), ("Rose", "rose"), ("Coral", "coral"), ("Sunset", "sunset"),
+                   ("Mango", "mango"), ("Mint", "mint"), ("Emerald", "emerald"), ("Teal + blue", "tealblue")]
+# Pop: background, its halftone dots (the first four tuned by hand; the others follow colour A)
 _POP_BG = {"violet": ((118, 72, 250), (96, 50, 226)), "sunset": ((255, 92, 57), (228, 66, 34)),
            "ocean": ((0, 146, 250), (0, 118, 214)), "mint": ((0, 190, 132), (0, 160, 108))}
 YELLOW, BLACK, WHITE = (255, 222, 0), (14, 14, 18), (255, 255, 255)
@@ -501,7 +514,8 @@ class Glass:
 def _halftone(pal):
     key = ("pop", pal)
     if key not in _cache:
-        bg, dot = _POP_BG[pal]
+        bg = PALETTES[pal][0]
+        bg, dot = _POP_BG.get(pal, (bg, _mix(bg, BLACK, 0.14)))
         im = Image.new("RGBA", (W, H), tuple(bg) + (255,))
         d = ImageDraw.Draw(im)
         step = 36
@@ -752,4 +766,96 @@ class Spotlight:
                       n=3, bw=max(4, int(8 * s)), gap=max(3, int(6 * s)))
 
 
-DESIGNS = {"Neon": Neon, "Glass": Glass, "Pop": Pop, "Spotlight": Spotlight}
+# ================================================================ Bright
+def _shadow_card(w, h, r, fill, sh_col, sh_alpha, blur=18, dy=10):
+    """A filled rounded card with a soft drop shadow, PAD px of margin on every side."""
+    m = _round_mask(w, h, r)
+    pm = _padded_alpha(Image.merge("RGBA", [m] * 4))
+    out = Image.new("RGBA", pm.size, (0, 0, 0, 0))
+    out.alpha_composite(_colored(pm.filter(ImageFilter.GaussianBlur(blur)), sh_col, sh_alpha), (0, dy))
+    card = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    card.paste(Image.new("RGBA", (w, h), tuple(fill) + (255,)), (0, 0), m)
+    out.alpha_composite(card, (PAD, PAD))
+    return out
+
+
+def _bright_bg(pal):
+    key = ("bright", pal)
+    if key not in _cache:
+        a, b = PALETTES[pal]
+        _cache[key] = _to_img(_noise(_gradient([(0, a), (1, b)]), 1.0, 7))
+    return _cache[key]
+
+
+class Bright:
+    TOP, BOT, GAP, CW = 420, 1660, 22, 960   # the cards fill the screen between the title and the bottom
+    INK, DONE, RING = (24, 26, 36), (34, 170, 100), (255, 206, 60)
+
+    def __init__(self, pg, opts, title, subtitle, kicker):
+        self.pg = pg
+        self.pal = opts.get("palette") if opts.get("palette") in PALETTES else "sky"
+        a, b = PALETTES[self.pal]
+        acc = _on_white(a)
+        n = len(pg.words)
+        self.kick = _t(POPPINS_B, (kicker or "Vocabulary").upper(), 28, WHITE, "Bold", 800)
+        self.title = _t(POPPINS_B, title, 80, WHITE, "Bold", 960)
+        self.sub = _t(PLEX_B, subtitle, 50, WHITE, "Bold", 940) if subtitle else None
+        ch = int(min(250, (self.BOT - self.TOP - self.GAP * (n - 1)) / n))
+        self.ch = ch
+        y0 = (self.TOP + self.BOT) / 2 - (n * ch + (n - 1) * self.GAP) / 2
+        self.ys = [y0 + j * (ch + self.GAP) + ch / 2 for j in range(n)]
+        k0 = min(1.15, ch / 210)  # the text follows the card height
+        self.d = d = int(min(96, ch * 0.5))  # badge diameter
+        cw, tx = self.CW, 30 + d + 30
+        sh = _mix(a, BLACK, 0.6)
+        self.cards = []
+        for j, w in enumerate(pg.words):
+            (en, ipa, ar), two = _share(
+                lambda k, w=w: (_fit(_t(POPPINS_B, w["en"], 62 * k0 * k, self.INK, "Bold"), 560),
+                                _fit(_ipa(w["ipa"], 34 * k0 * k, (110, 114, 130)), 560) if w["ipa"] else None,
+                                _fit(_t(PLEX_B, w["ar"], 64 * k0 * k, acc, "Bold"), 760)), cw - tx - 34 - 50)
+            pos = {key: (x + PAD, y + PAD) for key, (x, y) in _place(en, ipa, ar, two, tx, cw - 34, ch / 2, k0).items()}
+            out = {}
+            for state in ("n", "a", "d"):  # normal / being read / read
+                im = _shadow_card(cw, ch, 32, WHITE, sh, 0.22 if state == "a" else 0.12)
+                if state == "a":
+                    ImageDraw.Draw(im).rounded_rectangle([PAD, PAD, PAD + cw - 1, PAD + ch - 1], 32,
+                                                         outline=self.RING + (255,), width=8)
+                disc = _colored(_circle_mask(d), self.DONE if state == "d" else a)
+                if state == "d":
+                    tk = _tick_img(d * 0.62, WHITE, max(5, d * 0.1))
+                    disc.alpha_composite(tk, (d // 2 - tk.width // 2, d // 2 - tk.height // 2))
+                elif state == "n":
+                    nm = _t(POPPINS_B, str(j + 1), d * 0.5, WHITE, "Bold")
+                    disc.alpha_composite(nm, (d // 2 - nm.width // 2, d // 2 - nm.height // 2))
+                im.alpha_composite(disc, (PAD + 30, PAD + ch // 2 - d // 2))
+                _put_row(im, en, ipa, ar, pos)
+                out[state] = im
+            self.cards.append(out)
+
+    def draw(self, fr, u):
+        pg = self.pg
+        fr.paste(_bright_bg(self.pal), (0, 0))
+        hp = prog(u, 0.05, 0.45)
+        paste(fr, self.kick, W / 2, 150, 1, hp)
+        _top(fr, self.title, W / 2, 192 + 20 * (1 - ease_io(hp)), hp)
+        if self.sub is not None:
+            paste(fr, self.sub, W / 2, 340, 1, prog(u, 0.15, 0.55))
+        for j, c in enumerate(self.cards):
+            a, dy = pg._row_in(j, u)
+            if a <= 0.01:
+                continue
+            y = self.ys[j] + dy
+            hl, done = _row_state(pg, j, u)
+            base = c["d"] if u >= pg.starts[j] and done > 0 else c["n"]
+            paste(fr, base, W / 2, y, 1, a)
+            if hl > 0.005:
+                c_in, _ = pg._lit(j, u)
+                s = 1 + 0.035 * ease_out_back(c_in)
+                paste(fr, c["a"], W / 2, y, s, a * hl)
+                bx = W / 2 + (60 + 30 + self.d / 2 - W / 2) * s
+                _bars(fr, bx, y, self.d * 0.45 * s, WHITE, u, pg.speak[j], a * hl, n=4,
+                      bw=max(5, int(self.d * 0.08)), gap=max(3, int(self.d * 0.06)))
+
+
+DESIGNS = {"Neon": Neon, "Glass": Glass, "Pop": Pop, "Spotlight": Spotlight, "Bright": Bright}

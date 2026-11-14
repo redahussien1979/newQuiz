@@ -175,10 +175,10 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   above 60 s (Facebook Reels).
 - **📊 Excel batch:** one item per row, one video per group (or in sheet order), lesson numbers count up.
 - **Word list page** (`type: list`): up to 6 words with their Arabic meanings on one page, read one after another
-  with clips `w1_1`, `w1_2` … — the word being read lights up. Six designs in 📃 Word list: **Editorial**
+  with clips `w1_1`, `w1_2` … — the word being read lights up. Seven designs in 📃 Word list: **Editorial**
   (magazine page, 6 highlight colours), **Chalkboard** (hand-written chalk; board, mark and chalk colour), **Neon**
-  (glowing signs), **Glass** (frosted app cards), **Pop** (bold pop-art) and **Spotlight** (big lyrics-style words);
-  the last four take a colour set (Violet + pink, Sunset, Ocean, Mint).
+  (glowing signs), **Glass** (frosted app cards), **Pop** (bold pop-art), **Spotlight** (big lyrics-style words) and
+  **Bright** (the list fills the screen: big white cards on a bright colour); the last five take one of 12 colours.
   In Excel: Type = list, one word per row with its Audio; "Words per list page" sets how many go on one page.
 
 ### English Texts tips
@@ -2422,10 +2422,11 @@ def build_ui():
                                                     info="Editorial = magazine page · Chalkboard = hand-written "
                                                          "chalk · Neon = glowing signs on a night wall · Glass = "
                                                          "frosted app cards · Pop = bold pop-art cards · Spotlight "
-                                                         "= big lyrics-style words")
+                                                         "= big lyrics-style words · Bright = the list fills the "
+                                                         "screen: big white cards on a bright colour")
                                 with gr.Row(visible=False) as v_lrow_pal:
                                     v_lpal = gr.Dropdown(PALETTE_CHOICES, value="violet", label="Colours",
-                                                         info="Neon / Glass / Pop / Spotlight")
+                                                         info="Neon / Glass / Pop / Spotlight / Bright")
                                 with gr.Row(visible=True) as v_lrow_ed:
                                     v_lhl = gr.Dropdown(HIGHLIGHTS, value="cream", label="Editorial: highlight",
                                                         info="How the row being read is marked")
@@ -2461,7 +2462,7 @@ def build_ui():
             def list_design(style):
                 """📃 Word list: show only the options of the chosen page design."""
                 return (gr.update(visible=style in (None, "", "Editorial")), gr.update(visible=style == "Chalkboard"),
-                        gr.update(visible=style in ("Neon", "Glass", "Pop", "Spotlight")))
+                        gr.update(visible=style in ("Neon", "Glass", "Pop", "Spotlight", "Bright")))
             v_lstyle.change(list_design, v_lstyle, [v_lrow_ed, v_lrow_ch, v_lrow_pal], show_progress="hidden")
 
             def make_words(text):

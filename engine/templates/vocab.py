@@ -13,7 +13,7 @@ type, and types can be mixed:
     idiom    the idiom -> literal meaning (crossed out) -> the real meaning -> example
     list     one page of 1-6 words with their Arabic meanings ("- English = /ipa/ = Arabic" lines), read one after
              another (clips w1_1, w1_2 …): the word being read is highlighted. Page designs (LIST_STYLES):
-             Editorial (magazine page), Chalkboard (hand-written chalk), Neon, Glass, Pop, Spotlight
+             Editorial (magazine page), Chalkboard (hand-written chalk), Neon, Glass, Pop, Spotlight, Bright
 
 Items are written in a small "key: value" format (see EXAMPLE and parse_items()); the Excel batch
 (engine/vocab_batch.py) builds the same text. Audio clips named w1 / w1e (word 1 / its example) are played on
@@ -437,7 +437,7 @@ PACES = [("Slow", "slow"), ("Normal", "normal"), ("Fast", "fast")]
 PACE_K = {"slow": 1.25, "normal": 1.0, "fast": 0.82}
 TITLE_STYLES = ["Fancy", "Simple", "None"]  # None = no title page: the first item starts at 0
 RECAP_MAX = 14  # recap rows on one screen (a word list adds one row per word)
-LIST_STYLES = ["Editorial", "Chalkboard", "Neon", "Glass", "Pop", "Spotlight"]
+LIST_STYLES = ["Editorial", "Chalkboard", "Neon", "Glass", "Pop", "Spotlight", "Bright"]
 
 IPA_FONT = os.path.join(ROOT, "fonts", "NotoSans-Bold.ttf")
 INK = (20, 20, 30)
