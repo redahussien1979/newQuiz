@@ -43,8 +43,11 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   (template `projects/words_template.xlsx`)
 - Vocab item type `list` = one page of 1-6 words (`- English = /ipa/ = Arabic` lines, optional `title:` /
   `subtitle:`), read in turn with clips `w<i>_<k>`; drawn by `engine/word_list.py` (`ListPage`): designs
-  `list_style` Editorial (`list_highlight`) / Chalkboard (`chalk_board`, `chalk_mark`, `chalk_color`;
-  font `fonts/library/PatrickHand`). Excel: Type = list, one word per row with its Audio;
+  `list_style` (app: 📃 Word list sub-tab; default Bright + `navy_juice`) Editorial (`list_highlight`) / Chalkboard (`chalk_board`, `chalk_mark`, `chalk_color`;
+  font `fonts/library/PatrickHand`); `engine/list_designs.py` = more designs (classes in `DESIGNS`, built with the
+  ListPage for its layout/timing): Bright (own full-screen layout `TOP..BOT`) / Glass / Pop / Spotlight, colours `list_palette` (`PALETTES` 12 +
+  two-tone `DUOS` 3). `engine/word_import.py` = 📃 Word list's Excel import (English | Arabic | IPA, any number of
+  rows -> pages -> videos) + ElevenLabs voice per word (`voice_clips` -> w<page>_<word>.mp3, cache DATA_DIR/tts). Excel: Type = list, one word per row with its Audio;
   `vocab_batch.merge_lists` joins rows into pages (`list_size` words, a new Page title starts a page)
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
   (ElevenLabs word timings); words ink in as spoken (`vs`/`ve` per word), highlighted words get a marker swipe, fly

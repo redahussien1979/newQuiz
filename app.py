@@ -44,6 +44,8 @@ from engine import paragraphs as para
 from engine import news_words as nw
 from engine import text_batch
 from engine import vocab_batch
+from engine import word_import
+from engine.list_designs import PALETTE_CHOICES
 from engine.word_list import BOARD_CHOICES, CHALK_COLOR_CHOICES, HIGHLIGHTS, MARKS
 from engine.know_country import video as kc_video
 
@@ -73,7 +75,7 @@ MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", 
            "layout", "letters"]
 VC_KEYS = ["group", "group_name", "title", "subtitle", "lesson", "lesson_n", "items", "accent", "background",
            "title_style", "hook", "pace", "guess_seconds", "timer", "timer_fx", "recap", "audio", "audio_gain",
-           "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color"]
+           "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color", "list_palette"]
 TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "lead", "band", "marker", "style",
            "level", "translation", "logo", "brand_name", "logo_shape", "logo_intro", "logo_end", "ending_on",
            "para_text", "para_store", "para_alias", "read_style",
@@ -89,8 +91,9 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "intro_sound": "Bass hit", "tick_sound": "Classic", "tick_gain": 1.0, "title_style": "Fancy", "header_style": "Fancy", "fx": [], "number_style": "plain", "layout": "Standard", "letters": True,
             "group_name": "", "lesson": "", "lesson_n": 1, "accent": "group", "background": "group", "hook": False,
             "pace": "normal", "guess_seconds": 5, "timer": "Bar", "recap": True, "audio_gain": 1.0,
-            "list_style": "Editorial", "list_highlight": "cream", "chalk_board": "green", "chalk_mark": "circle",
-            "chalk_color": "pink", "tag": "", "lead": 1.0, "band": "teal", "marker": "yellow",
+            "list_style": "Bright", "list_highlight": "cream", "chalk_board": "green", "chalk_mark": "circle",
+            "chalk_color": "pink", "list_palette": "navy_juice", "tag": "", "lead": 1.0, "band": "teal",
+            "marker": "yellow",
             "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
             "para_text": "", "para_store": "{}", "para_alias": "",
@@ -173,8 +176,10 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   above 60 s (Facebook Reels).
 - **📊 Excel batch:** one item per row, one video per group (or in sheet order), lesson numbers count up.
 - **Word list page** (`type: list`): up to 6 words with their Arabic meanings on one page, read one after another
-  with clips `w1_1`, `w1_2` … — the word being read lights up. Two designs in ⏱️ Design & timing: **Editorial**
-  (magazine page, 6 highlight colours) and **Chalkboard** (hand-written chalk; board, mark and chalk colour).
+  with clips `w1_1`, `w1_2` … — the word being read lights up. Six designs in 📃 Word list: **Editorial**
+  (magazine page, 6 highlight colours), **Chalkboard** (hand-written chalk; board, mark and chalk colour), **Bright**
+  (the default: the list fills the screen with big cards), **Glass** (frosted app cards), **Pop** (bold pop-art) and
+  **Spotlight** (big lyrics-style words); these four take one of 15 colours (Navy + juice is the default).
   In Excel: Type = list, one word per row with its Audio; "Words per list page" sets how many go on one page.
 
 ### English Texts tips
@@ -1229,6 +1234,155 @@ def wire_vc_batch(xl, pv, fields):
                                        xl["files"], xl["zip"]], queue=False)
     dep.success(render_all, inputs + [xl["title"], xl["lesson0"]] + fields,
                 [pv["vid"], pv["info"], xl["files"], xl["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], xl["go"]],
+                **_progress_on(dep, pv["vid"]))
+
+
+# ------------------------------------------------------------------ English Words: 📃 Word list from Excel + ElevenLabs
+WL_IMPORT_HELP = ("**📥 Words from Excel** — one word per row: **English | Arabic | IPA** (IPA optional; headers in "
+                  "English or Arabic, or none: A = English, B = Arabic, C = IPA). Any number of words: they are cut "
+                  "into pages, and the pages into videos.")
+
+
+def _wl_template_path():
+    path = os.path.join(APP_PROJ_DIR, "word_list_template.xlsx")
+    if not os.path.isfile(path):
+        try:
+            word_import.write_template(path)
+        except Exception:  # openpyxl missing: no template button
+            return None
+    return path
+
+
+def wl_import_ui():
+    gr.Markdown("---")
+    with gr.Row(equal_height=True):
+        gr.Markdown(WL_IMPORT_HELP)
+        tpl = _wl_template_path()
+        gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), size="sm", min_width=130, scale=0)
+    sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Words sheet (.xlsx or .csv)",
+                    height=110)
+    tab = gr.Dropdown([], label="Sheet (tab)", visible=False, info="The workbook's tabs — pick the one with the words.")
+    with gr.Row():
+        per = gr.Slider(1, vocab_batch.LIST_MAX, value=5, step=1, label="Words per page")
+        pages = gr.Slider(1, vocab_batch.MAX_ITEMS, value=4, step=1, label="Pages per video",
+                          info="A page of 5 words ≈ 15 s — 4 pages ≈ 1 minute")
+    with gr.Row():
+        title = gr.Textbox(label="Page title (optional)", placeholder="Words in the News",
+                           info="{n} = the page number · empty = the title of the group")
+        sub = gr.Textbox(label="Page subtitle (optional)", placeholder="كلمات من الأخبار", rtl=True)
+    voice = gr.Checkbox(value=True, label="🎙️ Make the voice of every word with my ElevenLabs voice",
+                        info="Uses 🔑 ElevenLabs voice in 📖 English Texts → ✍️ Paragraphs. Each word costs credits "
+                             "only once (it is kept on this computer).")
+    info = gr.Markdown("Upload a sheet to see how many pages and videos it makes.")
+    with gr.Row(equal_height=True):
+        part = gr.Dropdown([], label="Video to put in the editor", scale=2)
+        load = gr.Button("📥 Put it in the editor", scale=1, min_width=150)
+        go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, scale=1, min_width=200)
+    zipb = gr.DownloadButton("📦 Download all (.zip)", visible=False, variant="primary")
+    files = gr.File(label="Rendered videos — each one appears here as soon as it finishes", file_count="multiple",
+                    visible=False, height=260)
+    return dict(sheet=sheet, tab=tab, per=per, pages=pages, title=title, sub=sub, voice=voice, info=info, part=part,
+                load=load, go=go, zip=zipb, files=files)
+
+
+def wire_wl_import(ui, pv, fields, items_box, audio_box):
+    inputs = [ui["sheet"], ui["tab"], ui["per"], ui["pages"]]
+
+    def read(sheet, tab, per, pages):
+        if not sheet:
+            raise ValueError("Upload a words sheet first.")
+        words, problems = word_import.read_words(sheet, tab or None)
+        return words, problems, word_import.plan(words, per, pages)
+
+    def first_page(videos, k):
+        return 1 + sum(len(v) for v in videos[:k - 1])
+
+    def check(sheet, tab, per, pages, voice):
+        off = gr.update(value="🎬 Render all videos", interactive=False)
+        if not sheet:
+            return "Upload a sheet to see how many pages and videos it makes.", gr.update(choices=[], value=None), off
+        try:
+            words, problems, videos = read(sheet, tab, per, pages)
+        except Exception as e:
+            return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
+        msg = word_import.summary(words, problems, videos, int(per or 5))
+        if voice and words:
+            ok, why = word_import.voice_ready(DATA_DIR)
+            msg += "\n\n" + ("" if ok else "⚠️ ") + why
+        choices = [(f"Video {k} — {sum(len(p) for p in v)} words (rows {v[0][0]['row']}–{v[-1][-1]['row']})", k)
+                   for k, v in enumerate(videos, 1)]
+        n = len(videos)
+        go = gr.update(value=f"🎬 Render all {n} video{'s' if n != 1 else ''}" if n else "🎬 Render all videos",
+                       interactive=bool(n))
+        return msg, gr.update(choices=choices, value=1 if choices else None), go
+
+    def load_part(sheet, tab, per, pages, k, title, sub, voice, progress=gr.Progress()):
+        try:
+            words, problems, videos = read(sheet, tab, per, pages)
+            k = int(k or 1)
+            if not 1 <= k <= len(videos):
+                raise ValueError("Pick a video first.")
+            text = word_import.video_items(videos[k - 1], title, sub, first_page(videos, k))
+            clips = []
+            if voice:
+                clips = word_import.voice_clips(videos[k - 1], DATA_DIR,
+                                                os.path.join(MEDIA_DIR, f"word_list_voice_{_stamp()}"),
+                                                lambda x, d: progress(x, desc=d))
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        gr.Info(f"Video {k} of {len(videos)} is in the editor (📝 Items" + (" + 🎙️ Audio" if clips else "") + ")."
+                + (f" Use 🎬 Render all for all {len(videos)}." if len(videos) > 1 else ""), duration=8)
+        return text, clips
+
+    def start(request: gr.Request):
+        if not _claim(request):
+            raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+        return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
+                gr.update(interactive=False), "⏳ Making the voices and rendering… each video appears below when done.",
+                gr.update(value=None, visible=False), gr.update(value=None, visible=False))
+
+    def render_all(request: gr.Request, sheet, tab, per, pages, title, sub, voice, *vals, progress=gr.Progress()):
+        def plan():
+            words, problems, videos = read(sheet, tab, per, pages)
+            if not videos:
+                raise ValueError("The sheet has no usable rows." + (f" First problem: {problems[0]}" if problems else ""))
+            if voice:
+                ok, why = word_import.voice_ready(DATA_DIR)
+                if not ok:
+                    raise ValueError(why)
+            base = values_to_project("vocab", vals)
+            out_dir = os.path.join(OUT_DIR, f"word_lists_{_stamp()}")
+            os.makedirs(out_dir, exist_ok=True)
+            total = len(videos)
+            try:
+                lesson0 = int(float(base["vocab"].get("lesson_n") or 1))
+            except (TypeError, ValueError):
+                lesson0 = 1
+
+            def jobs():
+                for k, vid in enumerate(videos, 1):
+                    name = f"Word list {k:02d} of {total:02d}"
+                    proj = copy.deepcopy(base)
+                    proj["vocab"]["items"] = word_import.video_items(vid, title, sub, first_page(videos, k))
+                    proj["vocab"]["lesson_n"] = lesson0 + k - 1
+                    proj["vocab"]["audio"] = []
+                    if voice:
+                        proj["vocab"]["audio"] = word_import.voice_clips(
+                            vid, DATA_DIR, os.path.join(out_dir, f"{name} audio"),
+                            lambda x, d, k=k: progress((k - 1 + 0.15 * x) / total, desc=f"Video {k} of {total}: {d}"))
+                    yield name, proj
+            return out_dir, total, jobs()
+
+        yield from _stream_batch(request, plan, progress)
+
+    ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
+    gr.on(triggers=[c.change for c in inputs + [ui["voice"]]], fn=check, inputs=inputs + [ui["voice"]],
+          outputs=[ui["info"], ui["part"], ui["go"]], trigger_mode="always_last", show_progress="hidden")
+    ui["load"].click(load_part, inputs + [ui["part"], ui["title"], ui["sub"], ui["voice"]], [items_box, audio_box])
+    dep = ui["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"], pv["info"],
+                                       ui["files"], ui["zip"]], queue=False)
+    dep.success(render_all, inputs + [ui["title"], ui["sub"], ui["voice"]] + fields,
+                [pv["vid"], pv["info"], ui["files"], ui["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"]],
                 **_progress_on(dep, pv["vid"]))
 
 
@@ -2410,19 +2564,29 @@ def build_ui():
                                     v_secs = gr.Slider(2, 15, value=5, step=1, label="Guess countdown (seconds)")
                                     v_timer = gr.Dropdown(TIMER_NAMES, value="Bar", label="Guess timer")
                                 v_tfx = gr.CheckboxGroup(TIMER_FX, value=["pulse", "glow"], label="Timer effects")
-                                gr.Markdown("**Word-list page** (`type: list` items) — the word being read lights up")
-                                with gr.Row():
-                                    v_lstyle = gr.Radio(VC_LIST_STYLES, value="Editorial", label="Page design",
-                                                        info="Editorial = magazine page · Chalkboard = hand-written "
-                                                             "chalk")
+                        with gr.Tab("📃 Word list"):
+                            with gr.Column(elem_classes="pane"):
+                                gr.Markdown("**Word-list page** (`type: list` items) — up to 6 words on one page, "
+                                            "read one after another; the word being read lights up")
+                                v_lstyle = gr.Radio(VC_LIST_STYLES, value="Bright", label="Page design",
+                                                    info="Bright = the list fills the screen with big cards · "
+                                                         "Glass = frosted app cards · Pop = bold pop-art cards · "
+                                                         "Spotlight = big lyrics-style words · Editorial = magazine "
+                                                         "page · Chalkboard = hand-written chalk")
+                                with gr.Row(visible=True) as v_lrow_pal:
+                                    v_lpal = gr.Dropdown(PALETTE_CHOICES, value="navy_juice", label="Colours",
+                                                         info="Bright / Glass / Pop / Spotlight — the two-tone sets "
+                                                              "look best in Bright")
+                                with gr.Row(visible=False) as v_lrow_ed:
                                     v_lhl = gr.Dropdown(HIGHLIGHTS, value="cream", label="Editorial: highlight",
                                                         info="How the row being read is marked")
-                                with gr.Row():
+                                with gr.Row(visible=False) as v_lrow_ch:
                                     v_cboard = gr.Dropdown(BOARD_CHOICES, value="green", label="Chalkboard: board")
                                     v_cmark = gr.Dropdown(MARKS, value="circle", label="Chalkboard: mark",
                                                           info="Drawn live around the word being read")
                                     v_ccol = gr.Dropdown(CHALK_COLOR_CHOICES, value="pink",
                                                          label="Chalkboard: chalk colour")
+                                wl = wl_import_ui()
                         with gr.Tab("🎙️ Audio"):
                             with gr.Column(elem_classes="pane"):
                                 gr.Markdown(VC_AUDIO_HELP)
@@ -2438,13 +2602,20 @@ def build_ui():
                     vc_fields = shared_fields(vc_st, vc_end) + [v_group, v_gname, v_title, v_sub, v_lesson, v_lesson_n,
                                                                  v_items, v_acc, v_bg, v_tstyle, v_hook, v_pace, v_secs,
                                                                  v_timer, v_tfx, v_recap, v_audio, v_again,
-                                                                 v_lstyle, v_lhl, v_cboard, v_cmark, v_ccol]
+                                                                 v_lstyle, v_lhl, v_cboard, v_cmark, v_ccol, v_lpal]
                 vc_pv = preview_panel("vocab")
             wire(vc_proj, vc_pv, vc_fields)
             wire_vc_batch(vxl, vc_pv, vc_fields)
+            wire_wl_import(wl, vc_pv, vc_fields, v_items, v_audio)
             gr.on(triggers=[v_audio.change, v_items.change], fn=clips_report, inputs=[v_audio, v_items],
                   outputs=v_ainfo, trigger_mode="always_last", show_progress="hidden")
             v_add.click(add_item, [v_items, v_type], v_items)
+
+            def list_design(style):
+                """📃 Word list: show only the options of the chosen page design."""
+                return (gr.update(visible=style in (None, "", "Editorial")), gr.update(visible=style == "Chalkboard"),
+                        gr.update(visible=style in ("Bright", "Glass", "Pop", "Spotlight")))
+            v_lstyle.change(list_design, v_lstyle, [v_lrow_ed, v_lrow_ch, v_lrow_pal], show_progress="hidden")
 
             def make_words(text):
                 try:
