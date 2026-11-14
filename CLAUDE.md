@@ -50,8 +50,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   in word_list `_t`; 1 = own fonts; a 🎨 Style & sound font wins). `engine/word_import.py` = 📃 Word list's Excel import (English | Arabic | IPA, any number of
   rows -> pages -> videos; optional Sample sentence column) + ElevenLabs voice per word (`voice_clips` -> w<page>_<word>.mp3, cache DATA_DIR/tts). Sample sentence: an `example:` line under a
   word (word dict `ex`, clip `w<i>_<k>e`); `_build_list` times word → flip (`LIST_FLIP`) → sentence → flip back and
-  passes `examples` to ListPage; Bright draws it (`_back` = taller back with the word on a pill via
-  `_ex_tokens` = find_phrase / *stars*, `_wrap`, `_turn` = QUAD perspective); other designs just stay lit.
+  passes `examples` to ListPage; Bright draws it in the style `list_ex_style` (`EX_STYLES`: flip / expand / sheet /
+  bubble / zoom / drawer = `_draw_<style>`; `_open` = how far it is shown) from `_sentence` (lit + dim layers + word
+  boxes; the word on a pill via `_ex_tokens` = find_phrase / *stars*, `_wrap`), `list_karaoke` = `_sent_now` lights
+  the words in turn; `_turn` = QUAD perspective, `_reveal` = a card shown shorter; other designs just stay lit.
   Excel: Type = list, one word per row with its Audio;
   `vocab_batch.merge_lists` joins rows into pages (`list_size` words, a new Page title starts a page)
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
