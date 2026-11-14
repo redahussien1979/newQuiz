@@ -127,6 +127,7 @@ _OPT_LINE = re.compile(r"^\s*[-•–]\s*(.*)$")
 _ANSWER = {"a": 0, "b": 1, "c": 2, "d": 3, "ا": 0, "ب": 1, "ج": 2, "د": 3, "1": 0, "2": 1, "3": 2, "4": 3}
 MAX_ITEMS = 10
 LIST_MAX = 6  # words on one word-list page
+LIST_FLIP = 0.5  # s: a word-list card flipping over to its sample sentence (and back)
 _LIST_SEP = re.compile(r"\s*[=|]\s*")
 _LIST_SEP2 = re.compile(r"\s*[:：\t]\s*")
 
@@ -165,6 +166,7 @@ def parse_items(text):
     for b, block in enumerate(_blocks(text), 1):
         it = {k: "" for k in _KEYS}
         opts, stars = [], []
+        ex_at = {}  # word list: option index -> its sample sentence (an example: line under that word)
         for n, line in block:
             mo = _OPT_LINE.match(line)
             mk = None if mo else _KEY_LINE.match(line)
@@ -175,6 +177,8 @@ def parse_items(text):
                     it[key] += " " + val  # a second line continues the field
                 else:
                     it[key] = val
+                if key == "example" and opts:
+                    ex_at[len(opts) - 1] = (ex_at.get(len(opts) - 1, "") + " " + val).strip()
             elif mo:
                 o = " ".join(mo.group(1).split())
                 star = o.startswith("*") or o.endswith("*")
@@ -185,6 +189,7 @@ def parse_items(text):
             else:
                 raise ValueError(f"Item {b} (line {n}): “{line.strip()[:40]}” is not understood — start the line "
                                  f"with a key like word:, meaning:, example: … or with - for an option")
+        it["_ex_at"] = ex_at
         items.append(_finish(b, it, opts, stars))
     if not items:
         raise ValueError("Add at least one item (word:, meaning: …).")
@@ -222,6 +227,8 @@ def _finish(b, it, opts, stars):
             raise ValueError(f"{where} (list): at most {LIST_MAX} words on one page (there are {len(opts)}) — "
                              f"start another list item for the rest")
         words = [list_word(o, f"{where} (list), word {k}") for k, o in enumerate(opts, 1)]
+        for k, w in enumerate(words):
+            w["ex"] = (it.get("_ex_at") or {}).get(k, "")
         return list_item(words, it["title"], it["subtitle"], it["group"])
     out = dict(type=typ, word=it["word"], ipa=clean_ipa(it["ipa"]), pos=it["pos"], meaning=it["meaning"],
                example=it["example"], example_ar=it["example_ar"], also=_split_list(it["also"]), wrong=it["wrong"],
@@ -272,7 +279,7 @@ def list_word(line, where="Word"):
     rest = [p for p in parts if p is not ipa]
     if len(rest) < 2:
         raise ValueError(f"{where}: write it as “English = Arabic” (got “{raw[:40]}”)")
-    return dict(en=rest[0], ipa=clean_ipa(ipa), ar=" ".join(rest[1:]))
+    return dict(en=rest[0], ipa=clean_ipa(ipa), ar=" ".join(rest[1:]), ex="")
 
 
 def list_item(words, title="", subtitle="", group=""):
@@ -291,7 +298,10 @@ def items_text(items):
         lines = ([f"group: {it['group']}"] if it.get("group") else []) + [f"type: {it['type']}"]
         if it["type"] == "list":
             lines += [f"{k}: {it[k]}" for k in ("title", "subtitle") if it.get(k)]
-            lines += ["- " + " = ".join(x for x in (w["en"], w["ipa"], w["ar"]) if x) for w in it["words"]]
+            for w in it["words"]:
+                lines.append("- " + " = ".join(x for x in (w["en"], w["ipa"], w["ar"]) if x))
+                if w.get("ex"):
+                    lines.append(f"  example: {w['ex']}")
             blocks.append("\n".join(lines))
             continue
         for k in ("word", "ipa", "pos", "question", "wrong", "meaning", "literal", "equivalent", "note"):
@@ -313,18 +323,18 @@ def items_text(items):
 # ------------------------------------------------------------------ audio clips
 AUDIO_EXT = (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".wma")
 _CLIP_RE = re.compile(r"^(?:w|word|item)?[\s_.\-]*0*(\d{1,2})"
-                      r"(?:[\s_.\-]*(e|ex|example)|[\s_.\-]+0*(\d{1,2}))?$", re.I)
+                      r"(?:[\s_.\-]*(e|ex|example)|[\s_.\-]+0*(\d{1,2})(?:[\s_.\-]*(e|ex|example))?)?$", re.I)
 
 
 def clip_key(path):
     """'w3' / 'word3' / '3' -> (3, 'w'); 'w3e' / 'w3_example' -> (3, 'e'); 'w3_2' / 'w3-2' -> (3, 'l2')
-    (word 2 of the word list in item 3); None if the name does not match."""
+    (word 2 of the word list in item 3); 'w3_2e' -> (3, 'l2e') (its sample sentence); None if it does not match."""
     stem, ext = os.path.splitext(os.path.basename(str(path)))
     m = _CLIP_RE.match(stem.strip())
     if not m or ext.lower() not in AUDIO_EXT:
         return None
     if m.group(3):
-        return int(m.group(1)), f"l{int(m.group(3))}"
+        return int(m.group(1)), f"l{int(m.group(3))}" + ("e" if m.group(4) else "")
     return int(m.group(1)), ("e" if m.group(2) else "w")
 
 
@@ -349,8 +359,13 @@ def match_clips(paths, items):
                 problems.append(f"`{name}`: item {n} is a word list — name its clips w{n}_1, w{n}_2 … "
                                 f"(one per word)")
                 continue
-            if not 1 <= int(slot[1:]) <= len(it["words"]):
-                problems.append(f"`{name}`: the word list in item {n} has no word {slot[1:]}")
+            k = int(slot[1:].rstrip("e"))
+            if not 1 <= k <= len(it["words"]):
+                problems.append(f"`{name}`: the word list in item {n} has no word {k}")
+                continue
+            if slot.endswith("e") and not it["words"][k - 1].get("ex"):
+                problems.append(f"`{name}`: word {k} of item {n} has no sample sentence (example:), the clip is "
+                                f"not played")
                 continue
         elif slot[0] == "l":
             problems.append(f"`{name}`: item {n} is not a word list (use w{n} for it, w{n}e for its example)")
@@ -378,8 +393,11 @@ def clips_report(paths, text):
     for i, it in enumerate(items):
         if it["type"] == "list":
             got = [str(k) for k in range(1, len(it["words"]) + 1) if (i, f"l{k}") in found]
+            n_ex = sum(1 for k, w in enumerate(it["words"], 1) if w.get("ex"))
+            got_ex = sum(1 for k in range(1, len(it["words"]) + 1) if (i, f"l{k}e") in found)
             label = it["title"] or ", ".join(w["en"] for w in it["words"][:2]) + ("…" if len(it["words"]) > 2 else "")
-            rows.append(f"**{i + 1}. {label}:** " + (f"words {', '.join(got)} of {len(it['words'])}" if got else "—"))
+            rows.append(f"**{i + 1}. {label}:** " + (f"words {', '.join(got)} of {len(it['words'])}" if got else "—")
+                        + (f" · sentences {got_ex} of {n_ex}" if n_ex else ""))
             continue
         parts = (["word"] if (i, "w") in found else []) + (["example"] if (i, "e") in found else [])
         rows.append(f"**{i + 1}. {it['word'] or it['question'] or it['type']}:** " + (" + ".join(parts) if parts else "—"))
@@ -869,6 +887,7 @@ class VocabVideo:
             it["clip_e"] = clips.get((i, "e"))
             for k in range(1, len(it["words"]) + 1):
                 it[f"clip_l{k}"] = clips.get((i, f"l{k}"))
+                it[f"clip_l{k}e"] = clips.get((i, f"l{k}e"))
             it["lesson"] = self.lesson
             getattr(self, "_build_" + ("guess" if it["type"] == "reverse" else
                                        "phrase" if it["type"] in ("proverb", "idiom") else it["type"]))(it)
@@ -1124,7 +1143,8 @@ class VocabVideo:
         P, n = self.P, len(it["words"])
         rows = [0.55 + 0.16 * j for j in range(n)]  # when each row appears
         t = rows[-1] + 0.6 + 0.25 * P
-        starts, ends, speak = [], [], []
+        starts, ends, speak, examples = [], [], [], []
+        flips = []
         for k in range(1, n + 1):
             path, length = it.get(f"clip_l{k}"), 0.0
             if path:
@@ -1135,16 +1155,36 @@ class VocabVideo:
                     length = 0.0
             hold = max(0.6, length) if length else 1.4 * P  # no clip: the word stays lit for a moment
             starts.append(t)
-            ends.append(t + hold)
             speak.append((t, t + length) if length else None)
-            t += hold + 0.45 * P
+            ex = it["words"][k - 1].get("ex")
+            if ex:  # the card flips, the sample sentence is read, the card flips back
+                f0 = t + hold + 0.15 * P
+                e0 = f0 + LIST_FLIP + 0.1
+                epath, elen = it.get(f"clip_l{k}e"), 0.0
+                if epath:
+                    try:
+                        elen = audio_length(epath)
+                        it["voice"].append((e0, epath))
+                    except Exception:
+                        elen = 0.0
+                read = elen if elen else max(1.8, 0.32 * len(ex.split())) * P  # no clip: time to read it
+                f1 = e0 + max(0.8, read) + 0.55 * P
+                examples.append(dict(text=ex, f0=f0, e0=e0, e1=e0 + read, f1=f1, flip=LIST_FLIP,
+                                     speak=(e0, e0 + elen) if elen else None))
+                flips += [f0, f1]
+                ends.append(f1 + LIST_FLIP)
+            else:
+                examples.append(None)
+                ends.append(t + hold)
+            t = ends[-1] + 0.45 * P
         it["D"] = ends[-1] + 1.6 * P + EXIT
         it["reveal"] = None
-        it["snd"] = [("tap", r, 0.14) for r in rows] + [("click", s - 0.08, 0.16) for s in starts]
+        it["snd"] = ([("tap", r, 0.14) for r in rows] + [("click", s - 0.08, 0.16) for s in starts]
+                     + [("swish", f, 0.1) for f in flips])
         title = it["title"] or it["label"]
         sub = it["subtitle"] or it["gsub"].replace("{count}", str(n))
         it["page"] = ListPage(self.list_style, self.list_opts, it["words"], title, sub, it["lesson"],
-                              rows, starts, ends, speak, it["D"], EXIT)
+                              rows, starts, ends, speak, it["D"], EXIT, examples)
 
     # ============================================================ guess / reverse
     def _build_guess(self, it):

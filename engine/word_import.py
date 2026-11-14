@@ -1,6 +1,7 @@
 """English Words — 📃 Word list from an Excel / CSV sheet, with the voice of every word made by ElevenLabs.
 
-The sheet is one word per row: English | Arabic | IPA (optional). Headers are recognised in English or Arabic
+The sheet is one word per row: English | Arabic | IPA (optional) | Sample sentence (optional: the card flips over to
+show it, the word highlighted, read with its own clip). Headers are recognised in English or Arabic
 (English / Word, Arabic / Meaning, IPA / Pronunciation); without a header row the columns are A = English,
 B = Arabic, C = IPA. Any number of rows: `plan()` cuts them in order into pages of `per_page` words (one
 `type: list` item each) and the pages into videos of `per_video` pages (vocab.MAX_ITEMS); only the last page / video
@@ -18,7 +19,9 @@ from .templates.vocab import LIST_MAX, MAX_ITEMS, clean_ipa, items_text, list_it
 _HEAD = {"en": ("english", "word", "words", "wordphrase", "phrase", "term", "الكلمة", "الانجليزية", "الإنجليزية",
                 "انجليزي", "إنجليزي", "كلمة"),
          "ar": ("arabic", "meaning", "translation", "arabicmeaning", "المعنى", "العربية", "الترجمة", "عربي", "معنى"),
-         "ipa": ("ipa", "pronunciation", "phonetic", "phonetics", "النطق")}
+         "ipa": ("ipa", "pronunciation", "phonetic", "phonetics", "النطق"),
+         "ex": ("samplesentence", "sentence", "example", "examplesentence", "sample", "usage", "مثال", "جملة",
+                "الجملة", "المثال")}
 _SEP = re.compile(r"[=|]")  # the separators of a word line in the editor: never inside a word
 
 
@@ -52,17 +55,17 @@ def read_words(path, sheet=None):
             start = i + 1
             break
     if cols is None:
-        cols = {"en": 0, "ar": 1, "ipa": 2}
+        cols = {"en": 0, "ar": 1, "ipa": 2, "ex": 3}
     words, problems = [], []
     for r, row in enumerate(rows[start:], start + 1):
         cell = lambda k: _clean(row[cols[k]]) if k in cols and cols[k] < len(row) else ""  # noqa: E731
-        en, ar, ipa = cell("en"), cell("ar"), cell("ipa")
+        en, ar, ipa, ex = cell("en"), cell("ar"), cell("ipa"), cell("ex")
         if not en and not ar:
             continue
         if not en or not ar:
             problems.append(f"row {r}: {'the English word' if not en else 'the Arabic meaning'} is empty — left out")
             continue
-        words.append(dict(en=en, ar=ar, ipa=clean_ipa(ipa) if ipa else "", row=r))
+        words.append(dict(en=en, ar=ar, ipa=clean_ipa(ipa) if ipa else "", ex=ex, row=r))
     return words, problems
 
 
@@ -85,7 +88,7 @@ def video_items(pages, title="", subtitle="", first_page=1):
     items = []
     for k, page in enumerate(pages):
         n = str(first_page + k)
-        items.append(list_item([dict(en=w["en"], ipa=w["ipa"], ar=w["ar"]) for w in page],
+        items.append(list_item([dict(en=w["en"], ipa=w["ipa"], ar=w["ar"], ex=w.get("ex", "")) for w in page],
                                (title or "").replace("{n}", n), (subtitle or "").replace("{n}", n)))
     return items_text(items)
 
@@ -119,35 +122,40 @@ def voice_ready(data_dir):
 
 
 def voice_clips(pages, data_dir, out_dir, progress=None):
-    """One ElevenLabs clip per word as out_dir/w<page>_<word>.mp3 (page = item number in this video).
-    Returns the clip paths. Raises RuntimeError with a clear message if ElevenLabs refuses."""
+    """One ElevenLabs clip per word as out_dir/w<page>_<word>.mp3 (page = item number in this video), and one per
+    sample sentence as w<page>_<word>e.mp3 (read without the *stars*). Returns the clip paths. Raises
+    RuntimeError with a clear message if ElevenLabs refuses."""
     ok, msg = voice_ready(data_dir)
     if not ok:
         raise RuntimeError(msg)
     s = el.load_settings(data_dir)
     cache = os.path.join(data_dir, "tts")
     os.makedirs(out_dir, exist_ok=True)
-    total = sum(len(p) for p in pages) or 1
-    paths, done = [], 0
+    jobs = []
     for i, page in enumerate(pages, 1):
         for k, w in enumerate(page, 1):
-            if progress:
-                progress(done / total, f"🎙️ Voice of “{w['en']}” ({done + 1} of {total})")
-            mp3, _ = el.speak(w["en"], cache, s)
-            dst = os.path.join(out_dir, f"w{i}_{k}.mp3")
-            shutil.copyfile(mp3, dst)
-            paths.append(dst)
-            done += 1
+            jobs.append((w["en"], f"w{i}_{k}.mp3", f"“{w['en']}”"))
+            if w.get("ex"):
+                jobs.append((" ".join(w["ex"].replace("*", "").split()), f"w{i}_{k}e.mp3",
+                             f"the sentence of “{w['en']}”"))
+    paths = []
+    for done, (text, name, what) in enumerate(jobs):
+        if progress:
+            progress(done / len(jobs), f"🎙️ Voice of {what} ({done + 1} of {len(jobs)})")
+        mp3, _ = el.speak(text, cache, s)
+        dst = os.path.join(out_dir, name)
+        shutil.copyfile(mp3, dst)
+        paths.append(dst)
     return paths
 
 
-TEMPLATE_ROWS = [("English", "Arabic", "IPA (optional)"),
-                 ("Ceasefire", "وقف إطلاق النار", "/ˈsiːsfaɪər/"),
-                 ("Summit", "قمة", "/ˈsʌmɪt/"),
-                 ("Treaty", "معاهدة", "/ˈtriːti/"),
-                 ("Sanctions", "عقوبات", "/ˈsæŋkʃənz/"),
-                 ("Election", "انتخابات", "/ɪˈlekʃən/"),
-                 ("Deadline", "موعد نهائي", "")]
+TEMPLATE_ROWS = [("English", "Arabic", "IPA (optional)", "Sample sentence (optional)"),
+                 ("Tip of the iceberg", "قمة جبل الجليد", "", "This scandal is only the tip of the iceberg."),
+                 ("Uphill battle", "معركة شاقة", "", "Getting the new law passed was an uphill battle."),
+                 ("Cornerstone", "حجر الزاوية", "/ˈkɔːnəstəʊn/", "Trust is the cornerstone of every friendship."),
+                 ("Litmus test", "المحك الحاسم", "", "The election will be a litmus test for the new party."),
+                 ("Wake-up call", "جرس الإنذار", "", "The storm was a wake-up call for the whole city."),
+                 ("Deadline", "موعد نهائي", "/ˈdedlaɪn/", "")]
 
 
 def write_template(path):
@@ -164,7 +172,7 @@ def write_template(path):
     for row in ws.iter_rows(min_row=2, min_col=2, max_col=2):
         for c in row:
             c.alignment = Alignment(horizontal="right", readingOrder=2)
-    for col, w in zip("ABC", (28, 34, 24)):
+    for col, w in zip("ABCD", (28, 34, 24, 60)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
     wb.save(path)

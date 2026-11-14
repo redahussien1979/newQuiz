@@ -92,13 +92,20 @@ def user_fonts(value):
     return out
 
 
+def resolve_font(font, weight, rtl=False):
+    """(font, weight) actually used for a design font while a page is built: the font picked in 🎨 Style & sound
+    wins, else the chosen font set swaps the design's fonts."""
+    user = _USER.get("ar" if rtl else "en")
+    if user:
+        return user, weight
+    if font in _SET:
+        f, w = _SET[font]
+        return f, (w or weight)
+    return font, weight
+
+
 def _t(font, txt, size, col, weight="Bold", max_w=None):
-    user = _USER.get("ar" if is_rtl(txt) else "en")
-    if user:  # the font picked in 🎨 Style & sound wins
-        font = user
-    elif font in _SET:  # else the chosen font set swaps the design's fonts
-        font, w = _SET[font]
-        weight = w or weight
+    font, weight = resolve_font(font, weight, is_rtl(txt))
     return text_img_in(font, txt, max(12, int(size)), tuple(col), weight, shadow=False, max_w=max_w)
 
 
@@ -198,8 +205,11 @@ def _board(name):
 
 # ---------------------------------------------------------------- the page
 class ListPage:
-    def __init__(self, style, opts, words, title, subtitle, kicker, rows, starts, ends, speak, D, exit_len):
+    def __init__(self, style, opts, words, title, subtitle, kicker, rows, starts, ends, speak, D, exit_len,
+                 examples=None):
         self.style = style
+        # per word: None or dict(text, f0 flip over, e0..e1 the sentence, f1 flip back, flip = its length, speak)
+        self.examples = list(examples or [None] * len(words))
         self.words = words
         self.n = len(words)
         self.rows, self.starts, self.ends, self.speak = rows, starts, ends, speak
