@@ -45,7 +45,7 @@ from engine import news_words as nw
 from engine import text_batch
 from engine import vocab_batch
 from engine import word_import
-from engine.list_designs import PALETTE_CHOICES
+from engine.list_designs import PALETTE_CHOICES, font_choices
 from engine.word_list import BOARD_CHOICES, CHALK_COLOR_CHOICES, HIGHLIGHTS, MARKS
 from engine.know_country import video as kc_video
 
@@ -75,7 +75,7 @@ MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", 
            "layout", "letters"]
 VC_KEYS = ["group", "group_name", "title", "subtitle", "lesson", "lesson_n", "items", "accent", "background",
            "title_style", "hook", "pace", "guess_seconds", "timer", "timer_fx", "recap", "audio", "audio_gain",
-           "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color", "list_palette"]
+           "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color", "list_palette", "list_fonts"]
 TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "lead", "band", "marker", "style",
            "level", "translation", "logo", "brand_name", "logo_shape", "logo_intro", "logo_end", "ending_on",
            "para_text", "para_store", "para_alias", "read_style",
@@ -92,7 +92,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "group_name": "", "lesson": "", "lesson_n": 1, "accent": "group", "background": "group", "hook": False,
             "pace": "normal", "guess_seconds": 5, "timer": "Bar", "recap": True, "audio_gain": 1.0,
             "list_style": "Bright", "list_highlight": "cream", "chalk_board": "green", "chalk_mark": "circle",
-            "chalk_color": "pink", "list_palette": "navy_juice", "tag": "", "lead": 1.0, "band": "teal",
+            "chalk_color": "pink", "list_palette": "navy_juice", "list_fonts": 1, "tag": "", "lead": 1.0, "band": "teal",
             "marker": "yellow",
             "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
@@ -2574,10 +2574,14 @@ def build_ui():
                                                          "Glass = frosted app cards · Pop = bold pop-art cards · "
                                                          "Spotlight = big lyrics-style words · Editorial = magazine "
                                                          "page · Chalkboard = hand-written chalk")
-                                with gr.Row(visible=True) as v_lrow_pal:
-                                    v_lpal = gr.Dropdown(PALETTE_CHOICES, value="navy_juice", label="Colours",
-                                                         info="Bright / Glass / Pop / Spotlight — the two-tone sets "
-                                                              "look best in Bright")
+                                with gr.Row():
+                                    with gr.Column(visible=True, min_width=200) as v_lrow_pal:
+                                        v_lpal = gr.Dropdown(PALETTE_CHOICES, value="navy_juice", label="Colours",
+                                                             info="Bright / Glass / Pop / Spotlight — the two-tone "
+                                                                  "sets look best in Bright")
+                                    v_lfont = gr.Dropdown(font_choices("Bright"), value=1, label="Font set",
+                                                          info="5 English + Arabic font pairs made for this design "
+                                                               "(a font picked in 🎨 Style & sound is used instead)")
                                 with gr.Row(visible=False) as v_lrow_ed:
                                     v_lhl = gr.Dropdown(HIGHLIGHTS, value="cream", label="Editorial: highlight",
                                                         info="How the row being read is marked")
@@ -2603,7 +2607,8 @@ def build_ui():
                     vc_fields = shared_fields(vc_st, vc_end) + [v_group, v_gname, v_title, v_sub, v_lesson, v_lesson_n,
                                                                  v_items, v_acc, v_bg, v_tstyle, v_hook, v_pace, v_secs,
                                                                  v_timer, v_tfx, v_recap, v_audio, v_again,
-                                                                 v_lstyle, v_lhl, v_cboard, v_cmark, v_ccol, v_lpal]
+                                                                 v_lstyle, v_lhl, v_cboard, v_cmark, v_ccol, v_lpal,
+                                                                 v_lfont]
                 vc_pv = preview_panel("vocab")
             wire(vc_proj, vc_pv, vc_fields)
             wire_vc_batch(vxl, vc_pv, vc_fields)
@@ -2614,9 +2619,11 @@ def build_ui():
 
             def list_design(style):
                 """📃 Word list: show only the options of the chosen page design."""
+                # the font-set list follows the design; the number (1-5) stays, every design has 5 sets
                 return (gr.update(visible=style in (None, "", "Editorial")), gr.update(visible=style == "Chalkboard"),
-                        gr.update(visible=style in ("Bright", "Glass", "Pop", "Spotlight")))
-            v_lstyle.change(list_design, v_lstyle, [v_lrow_ed, v_lrow_ch, v_lrow_pal], show_progress="hidden")
+                        gr.update(visible=style in ("Bright", "Glass", "Pop", "Spotlight")),
+                        gr.update(choices=font_choices(style or "Bright")))
+            v_lstyle.change(list_design, v_lstyle, [v_lrow_ed, v_lrow_ch, v_lrow_pal, v_lfont], show_progress="hidden")
 
             def make_words(text):
                 try:

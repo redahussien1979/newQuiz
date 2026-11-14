@@ -9,6 +9,9 @@ Two designs (vocab setting `list_style`):
                 orange / blue. Words already read get a chalk tick.
 
 More designs (Bright = the default, Glass, Pop, Spotlight; colours `list_palette`) live in list_designs.py.
+Each design has 5 font sets (list_designs.FONT_SETS, vocab `list_fonts` 1-5, 1 = its own fonts); the font picked in
+🎨 Style & sound (`settings.font_file`, opts["font"]) is used instead of them for English, and for Arabic if it
+writes Arabic (`user_fonts`). Both are applied in `_t`; the IPA keeps Noto Sans.
 
 ListPage(...) pre-renders everything that does not move; draw(frame, u) depends only on the item time u (frames are
 rendered on several processes)."""
@@ -19,7 +22,7 @@ import random
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from .core import DEFAULT_FONT, H, ROOT, W, ease_io, paste, prog, text_img_in
+from .core import DEFAULT_FONT, H, ROOT, W, ease_io, is_rtl, paste, prog, text_img_in
 
 _LIB = os.path.join(ROOT, "fonts", "library")
 
@@ -61,7 +64,41 @@ _bg_cache = {}
 
 
 # ---------------------------------------------------------------- small helpers
+_USER = {}  # the font picked in 🎨 Style & sound while a page is being built: {"en": path, "ar": path}
+_SET = {}   # the design's font set (list_designs.FONT_SETS) while a page is being built: {design font: (font, weight)}
+
+
+def user_fonts(value):
+    """{"en": path, "ar": path} for the font picked in 🎨 Style & sound (a library family name or a font file):
+    it replaces the design's English fonts, and its Arabic fonts only if it writes Arabic. {} = the design's own."""
+    if not value:
+        return {}
+    path = str(value)
+    if not os.path.isfile(path):
+        try:
+            from .fonts import resolve
+            path = resolve(value)
+        except Exception:
+            return {}
+    if not path or not os.path.isfile(path) or (path == DEFAULT_FONT and str(value) != DEFAULT_FONT):
+        return {}
+    from .core import _font_cmap
+    cmap = _font_cmap(path)
+    out = {}
+    if cmap is None or ord("a") in cmap:
+        out["en"] = path
+    if cmap is None or 0x0644 in cmap:
+        out["ar"] = path
+    return out
+
+
 def _t(font, txt, size, col, weight="Bold", max_w=None):
+    user = _USER.get("ar" if is_rtl(txt) else "en")
+    if user:  # the font picked in 🎨 Style & sound wins
+        font = user
+    elif font in _SET:  # else the chosen font set swaps the design's fonts
+        font, w = _SET[font]
+        weight = w or weight
     return text_img_in(font, txt, max(12, int(size)), tuple(col), weight, shadow=False, max_w=max_w)
 
 
@@ -170,14 +207,22 @@ class ListPage:
         self.pitch = min(240.0, (ROWS_BOTTOM - ROWS_TOP) / self.n)
         self.sc = min(1.12, self.pitch / 209)
         self.cy = [ROWS_TOP + self.pitch * (j + 0.5) for j in range(self.n)]
-        from .list_designs import DESIGNS
+        from .list_designs import DESIGNS, font_set
         self.impl = None
-        if style in DESIGNS:
-            self.impl = DESIGNS[style](self, opts, title, subtitle, kicker)
-        elif style == "Chalkboard":
-            self._build_chalk(opts, title, subtitle)
-        else:
-            self._build_editorial(opts, title, subtitle, kicker)
+        _USER.clear()
+        _USER.update(user_fonts(opts.get("font")))  # every text image is made here, in __init__ (not per frame)
+        _SET.clear()
+        _SET.update(font_set(style, opts.get("fonts")))
+        try:
+            if style in DESIGNS:
+                self.impl = DESIGNS[style](self, opts, title, subtitle, kicker)
+            elif style == "Chalkboard":
+                self._build_chalk(opts, title, subtitle)
+            else:
+                self._build_editorial(opts, title, subtitle, kicker)
+        finally:
+            _USER.clear()
+            _SET.clear()
 
     # ------------------------------------------------------------ timing shared by both designs
     def _lit(self, j, u):
