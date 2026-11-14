@@ -50,7 +50,7 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `list_style` (app: 📃 Word list sub-tab; default Bright + `navy_juice`) Editorial (`list_highlight`) / Chalkboard (`chalk_board`, `chalk_mark`, `chalk_color`;
   font `fonts/library/PatrickHand`); `engine/list_designs.py` = more designs (classes in `DESIGNS`, built with the
   ListPage for its layout/timing): Bright (own full-screen layout `TOP..BOT`) / Glass / Pop / Spotlight, colours `list_palette` (`PALETTES` 12 +
-  two-tone `DUOS` 3); `list_fonts` 1-5 = the design's font set (`FONT_SETS`: design font -> (font, weight), applied
+  two-tone `DUOS`: 10 two-tone + 6 three-tone (base, accent, 2nd accent for titles / ticks / pill text)); `list_fonts` 1-5 = the design's font set (`FONT_SETS`: design font -> (font, weight), applied
   in word_list `_t`; 1 = own fonts; a 🎨 Style & sound font wins). `engine/word_import.py` = 📃 Word list's Excel import (English | Arabic | IPA, any number of
   rows -> pages -> videos; optional Sample sentence column) + ElevenLabs voice per word (`voice_clips` -> w<page>_<word>.mp3, cache DATA_DIR/tts). Sample sentence: an `example:` line under a
   word (word dict `ex`, clip `w<i>_<k>e`); `_build_list` times word → flip (`LIST_FLIP`) → sentence → flip back and
