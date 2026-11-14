@@ -51,6 +51,26 @@ PALETTES = {"sky": ((56, 152, 236), (99, 182, 255)),
 PALETTE_CHOICES = [("Sky blue", "sky"), ("Royal blue", "royal"), ("Ocean", "ocean"), ("Lavender", "lavender"),
                    ("Purple + pink", "violet"), ("Rose", "rose"), ("Coral", "coral"), ("Sunset", "sunset"),
                    ("Mango", "mango"), ("Mint", "mint"), ("Emerald", "emerald"), ("Teal + blue", "tealblue")]
+# two-tone sets for Bright: (deep base colour, bright accent)
+DUOS = {"navy_juice": ((37, 26, 102), (229, 245, 24)),
+        "navy_orange": ((20, 33, 61), (252, 163, 17)),
+        "slate_yellow": ((43, 50, 63), (253, 239, 75))}
+DUO_CHOICES = [("Navy + juice", "navy_juice"), ("Navy + orange", "navy_orange"), ("Gray blue + yellow", "slate_yellow")]
+PALETTE_CHOICES += [(f"{name} (two-tone, best in Bright)", key) for name, key in DUO_CHOICES]
+
+
+def _pal_key(pal):
+    return pal if pal in PALETTES or pal in DUOS else "violet"
+
+
+def _pair(pal):
+    """(colour A, colour B) of a palette; a two-tone set gives its accent and a deeper shade of it."""
+    if pal in DUOS:
+        dk, x = DUOS[pal]
+        return x, _mix(x, dk, 0.3)
+    return PALETTES[pal]
+
+
 # Pop: background, its halftone dots (the first four tuned by hand; the others follow colour A)
 _POP_BG = {"violet": ((118, 72, 250), (96, 50, 226)), "sunset": ((255, 92, 57), (228, 66, 34)),
            "ocean": ((0, 146, 250), (0, 118, 214)), "mint": ((0, 190, 132), (0, 160, 108))}
@@ -284,8 +304,10 @@ def _neon(src, col, glow=1.0, core_mix=0.62):
 def _neon_wall(pal):
     key = ("neon", pal)
     if key not in _cache:
-        a, b = PALETTES[pal]
-        arr = _gradient([(0, (16, 12, 26)), (0.55, (10, 8, 18)), (1, (5, 4, 10))])
+        a, b = _pair(pal)
+        dk = DUOS[pal][0] if pal in DUOS else None  # two-tone: the wall takes the deep colour
+        arr = _gradient([(0, _mix(dk, BLACK, 0.45)), (0.55, _mix(dk, BLACK, 0.62)), (1, _mix(dk, BLACK, 0.8))] if dk
+                        else [(0, (16, 12, 26)), (0.55, (10, 8, 18)), (1, (5, 4, 10))])
         im = _to_img(arr).convert("RGB")
         d = ImageDraw.Draw(im, "RGBA")  # brick wall, barely visible (drawn on RGB: the page stays opaque)
         bh, bw = 54, 150
@@ -307,8 +329,8 @@ def _neon_wall(pal):
 class Neon:
     def __init__(self, pg, opts, title, subtitle, kicker):
         self.pg = pg
-        self.pal = opts.get("palette") if opts.get("palette") in PALETTES else "violet"
-        a, b = PALETTES[self.pal]
+        self.pal = _pal_key(opts.get("palette"))
+        a, b = _pair(self.pal)
         self.a, self.b = a, b
         sc = pg.sc
         self.kick = _t(MONTSERRAT, "  ".join((kicker or "Vocabulary").upper()), 26, (210, 205, 225), "Bold", 900)
@@ -378,10 +400,16 @@ class Neon:
 def _mesh(pal):
     key = ("mesh", pal)
     if key not in _cache:
-        a, b = PALETTES[pal]
-        arr = _gradient([(0, (18, 14, 38)), (1, (8, 6, 20))])
-        arr = _blobs(arr, [(120, 260, 640, a, 0.85), (1000, 820, 560, b, 0.62), (200, 1500, 620, _mix(a, b, 0.5), 0.6),
-                           (980, 1880, 560, a, 0.55)])
+        a, b = _pair(pal)
+        if pal in DUOS:  # two-tone: a deep base with soft lighter shades and a touch of the accent
+            dk, x = DUOS[pal]
+            arr = _gradient([(0, _mix(dk, WHITE, 0.06)), (1, _mix(dk, BLACK, 0.3))])
+            arr = _blobs(arr, [(120, 260, 640, _mix(dk, WHITE, 0.22), 0.8), (1000, 820, 560, x, 0.28),
+                               (200, 1500, 620, _mix(dk, WHITE, 0.16), 0.6), (980, 1880, 560, _mix(dk, x, 0.25), 0.4)])
+        else:
+            arr = _gradient([(0, (18, 14, 38)), (1, (8, 6, 20))])
+            arr = _blobs(arr, [(120, 260, 640, a, 0.85), (1000, 820, 560, b, 0.62),
+                               (200, 1500, 620, _mix(a, b, 0.5), 0.6), (980, 1880, 560, a, 0.55)])
         im = _to_img(_noise(arr, 2.5, 5))
         frost = im.filter(ImageFilter.GaussianBlur(28))
         frost.alpha_composite(Image.new("RGBA", (W, H), (255, 255, 255, 30)))
@@ -394,8 +422,8 @@ class Glass:
 
     def __init__(self, pg, opts, title, subtitle, kicker):
         self.pg = pg
-        self.pal = opts.get("palette") if opts.get("palette") in PALETTES else "violet"
-        a, b = PALETTES[self.pal]
+        self.pal = _pal_key(opts.get("palette"))
+        a, b = _pair(self.pal)
         self.a, self.b = a, b
         dark = (22, 18, 40)
         self.dark = dark
@@ -513,7 +541,7 @@ class Glass:
 def _halftone(pal):
     key = ("pop", pal)
     if key not in _cache:
-        bg = PALETTES[pal][0]
+        bg = _pair(pal)[0]
         bg, dot = _POP_BG.get(pal, (bg, _mix(bg, BLACK, 0.14)))
         im = Image.new("RGBA", (W, H), tuple(bg) + (255,))
         d = ImageDraw.Draw(im)
@@ -575,7 +603,7 @@ class Pop:
 
     def __init__(self, pg, opts, title, subtitle, kicker):
         self.pg = pg
-        self.pal = opts.get("palette") if opts.get("palette") in PALETTES else "violet"
+        self.pal = _pal_key(opts.get("palette"))
         sc = pg.sc
         kt = _t(MONTSERRAT, (kicker or "Vocabulary").upper(), 28, WHITE, "Black", 800)
         pill = Image.new("RGBA", (_vis_w(kt) + 56, 60), (0, 0, 0, 0))
@@ -672,10 +700,16 @@ class Pop:
 def _deep(pal):
     key = ("deep", pal)
     if key not in _cache:
-        a, b = PALETTES[pal]
-        arr = _gradient([(0, _mix(a, BLACK, 0.55)), (0.5, _mix(_mix(a, b, 0.5), BLACK, 0.72)),
-                         (1, _mix(b, BLACK, 0.8))])
-        arr = _blobs(arr, [(140, 420, 600, _mix(a, BLACK, 0.2), 0.45), (980, 1450, 640, _mix(b, BLACK, 0.3), 0.4)])
+        a, b = _pair(pal)
+        if pal in DUOS:  # two-tone: the deep colour, lighter at the top
+            dk, x = DUOS[pal]
+            arr = _gradient([(0, _mix(dk, WHITE, 0.1)), (0.5, dk), (1, _mix(dk, BLACK, 0.35))])
+            arr = _blobs(arr, [(140, 420, 600, _mix(dk, WHITE, 0.2), 0.45), (980, 1450, 640, _mix(dk, x, 0.18), 0.4)])
+        else:
+            arr = _gradient([(0, _mix(a, BLACK, 0.55)), (0.5, _mix(_mix(a, b, 0.5), BLACK, 0.72)),
+                             (1, _mix(b, BLACK, 0.8))])
+            arr = _blobs(arr, [(140, 420, 600, _mix(a, BLACK, 0.2), 0.45),
+                               (980, 1450, 640, _mix(b, BLACK, 0.3), 0.4)])
         yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
         v = 1 - 0.5 * np.clip(((xx - W / 2) / (W * 0.8)) ** 2 + ((yy - H / 2) / (H * 0.65)) ** 2, 0, 1)
         _cache[key] = _to_img(_noise(arr * v[..., None], 3, 13))
@@ -691,8 +725,8 @@ class Spotlight:
 
     def __init__(self, pg, opts, title, subtitle, kicker):
         self.pg = pg
-        self.pal = opts.get("palette") if opts.get("palette") in PALETTES else "violet"
-        a, b = PALETTES[self.pal]
+        self.pal = _pal_key(opts.get("palette"))
+        a, b = _pair(self.pal)
         self.ar_col = _mix(b, WHITE, 0.35)
         self.kick = _t(MONTSERRAT, "  ".join((kicker or "Vocabulary").upper()), 26, _mix(b, WHITE, 0.55), "Bold", 900)
         self.title = _t(MONTSERRAT, title, 88, WHITE, "Black", 960)
@@ -778,27 +812,40 @@ def _shadow_card(w, h, r, fill, sh_col, sh_alpha, blur=18, dy=10):
     return out
 
 
-def _bright_bg(pal):
-    key = ("bright", pal)
+def _bright_bg(top, bottom):
+    key = ("bright", top, bottom)
     if key not in _cache:
-        a, b = PALETTES[pal]
-        _cache[key] = _to_img(_noise(_gradient([(0, a), (1, b)]), 1.0, 7))
+        _cache[key] = _to_img(_noise(_gradient([(0, top), (1, bottom)]), 1.0, 7))
     return _cache[key]
+
+
+def _bright_scheme(pal):
+    """Colours of the Bright design: a bright gradient with white cards (PALETTES) or a two-tone set (DUOS):
+    deep background, cards a shade lighter, the accent for the Arabic and the card being read."""
+    if pal in DUOS:
+        dk, x = DUOS[pal]
+        return dict(bg=(_mix(dk, WHITE, 0.07), _mix(dk, BLACK, 0.28)), card=_mix(dk, WHITE, 0.1), card_a=x, ring=None,
+                    en=WHITE, ipa=_mix(dk, WHITE, 0.66), ar=x, en_a=dk, ipa_a=_mix(dk, x, 0.4), ar_a=dk,
+                    disc=_mix(dk, WHITE, 0.24), num=WHITE, disc_a=dk, bars=x, disc_d=x, tick=dk,
+                    title=WHITE, kick=x, sub=x, shadow=_mix(dk, BLACK, 0.7))
+    a, b = PALETTES[pal if pal in PALETTES else "sky"]
+    ink, acc = (24, 26, 36), _on_white(a)
+    return dict(bg=(a, b), card=WHITE, card_a=WHITE, ring=(255, 206, 60), en=ink, ipa=(110, 114, 130), ar=acc,
+                en_a=ink, ipa_a=(110, 114, 130), ar_a=acc, disc=a, num=WHITE, disc_a=a, bars=WHITE,
+                disc_d=(34, 170, 100), tick=WHITE, title=WHITE, kick=WHITE, sub=WHITE, shadow=_mix(a, BLACK, 0.6))
 
 
 class Bright:
     TOP, BOT, GAP, CW = 420, 1660, 22, 960   # the cards fill the screen between the title and the bottom
-    INK, DONE, RING = (24, 26, 36), (34, 170, 100), (255, 206, 60)
 
     def __init__(self, pg, opts, title, subtitle, kicker):
         self.pg = pg
-        self.pal = opts.get("palette") if opts.get("palette") in PALETTES else "sky"
-        a, b = PALETTES[self.pal]
-        acc = _on_white(a)
+        pal = opts.get("palette")
+        self.c = c = _bright_scheme(pal if pal in PALETTES or pal in DUOS else "sky")
         n = len(pg.words)
-        self.kick = _t(POPPINS_B, (kicker or "Vocabulary").upper(), 28, WHITE, "Bold", 800)
-        self.title = _t(POPPINS_B, title, 80, WHITE, "Bold", 960)
-        self.sub = _t(PLEX_B, subtitle, 50, WHITE, "Bold", 940) if subtitle else None
+        self.kick = _t(POPPINS_B, (kicker or "Vocabulary").upper(), 28, c["kick"], "Bold", 800)
+        self.title = _t(POPPINS_B, title, 80, c["title"], "Bold", 960)
+        self.sub = _t(PLEX_B, subtitle, 50, c["sub"], "Bold", 940) if subtitle else None
         ch = int(min(250, (self.BOT - self.TOP - self.GAP * (n - 1)) / n))
         self.ch = ch
         y0 = (self.TOP + self.BOT) / 2 - (n * ch + (n - 1) * self.GAP) / 2
@@ -806,35 +853,40 @@ class Bright:
         k0 = min(1.15, ch / 210)  # the text follows the card height
         self.d = d = int(min(96, ch * 0.5))  # badge diameter
         cw, tx = self.CW, 30 + d + 30
-        sh = _mix(a, BLACK, 0.6)
         self.cards = []
         for j, w in enumerate(pg.words):
-            (en, ipa, ar), two = _share(
-                lambda k, w=w: (_fit(_t(POPPINS_B, w["en"], 62 * k0 * k, self.INK, "Bold"), 560),
-                                _fit(_ipa(w["ipa"], 34 * k0 * k, (110, 114, 130)), 560) if w["ipa"] else None,
-                                _fit(_t(PLEX_B, w["ar"], 64 * k0 * k, acc, "Bold"), 760)), cw - tx - 34 - 50)
+            def make(k, w=w, sfx=""):
+                return (_fit(_t(POPPINS_B, w["en"], 62 * k0 * k, c["en" + sfx], "Bold"), 560),
+                        _fit(_ipa(w["ipa"], 34 * k0 * k, c["ipa" + sfx]), 560) if w["ipa"] else None,
+                        _fit(_t(PLEX_B, w["ar"], 64 * k0 * k, c["ar" + sfx], "Bold"), 760), k)
+            (en, ipa, ar, k), two = _share(make, cw - tx - 34 - 50)
+            en_a, ipa_a, ar_a, _ = make(k, sfx="_a")  # the same sizes in the colours of the card being read
             pos = {key: (x + PAD, y + PAD) for key, (x, y) in _place(en, ipa, ar, two, tx, cw - 34, ch / 2, k0).items()}
             out = {}
             for state in ("n", "a", "d"):  # normal / being read / read
-                im = _shadow_card(cw, ch, 32, WHITE, sh, 0.22 if state == "a" else 0.12)
-                if state == "a":
+                im = _shadow_card(cw, ch, 32, c["card_a"] if state == "a" else c["card"], c["shadow"],
+                                  0.3 if state == "a" else 0.18)
+                if state == "a" and c["ring"]:
                     ImageDraw.Draw(im).rounded_rectangle([PAD, PAD, PAD + cw - 1, PAD + ch - 1], 32,
-                                                         outline=self.RING + (255,), width=8)
-                disc = _colored(_circle_mask(d), self.DONE if state == "d" else a)
+                                                         outline=tuple(c["ring"]) + (255,), width=8)
+                disc = _colored(_circle_mask(d), c[{"n": "disc", "a": "disc_a", "d": "disc_d"}[state]])
                 if state == "d":
-                    tk = _tick_img(d * 0.62, WHITE, max(5, d * 0.1))
+                    tk = _tick_img(d * 0.62, c["tick"], max(5, d * 0.1))
                     disc.alpha_composite(tk, (d // 2 - tk.width // 2, d // 2 - tk.height // 2))
                 elif state == "n":
-                    nm = _t(POPPINS_B, str(j + 1), d * 0.5, WHITE, "Bold")
+                    nm = _t(POPPINS_B, str(j + 1), d * 0.5, c["num"], "Bold")
                     disc.alpha_composite(nm, (d // 2 - nm.width // 2, d // 2 - nm.height // 2))
                 im.alpha_composite(disc, (PAD + 30, PAD + ch // 2 - d // 2))
-                _put_row(im, en, ipa, ar, pos)
+                if state == "a":
+                    _put_row(im, en_a, ipa_a, ar_a, pos)
+                else:
+                    _put_row(im, en, ipa, ar, pos)
                 out[state] = im
             self.cards.append(out)
 
     def draw(self, fr, u):
         pg = self.pg
-        fr.paste(_bright_bg(self.pal), (0, 0))
+        fr.paste(_bright_bg(*self.c["bg"]), (0, 0))
         hp = prog(u, 0.05, 0.45)
         paste(fr, self.kick, W / 2, 150, 1, hp)
         _top(fr, self.title, W / 2, 192 + 20 * (1 - ease_io(hp)), hp)
@@ -853,7 +905,7 @@ class Bright:
                 s = 1 + 0.035 * ease_out_back(c_in)
                 paste(fr, c["a"], W / 2, y, s, a * hl)
                 bx = W / 2 + (60 + 30 + self.d / 2 - W / 2) * s
-                _bars(fr, bx, y, self.d * 0.45 * s, WHITE, u, pg.speak[j], a * hl, n=4,
+                _bars(fr, bx, y, self.d * 0.45 * s, self.c["bars"], u, pg.speak[j], a * hl, n=4,
                       bw=max(5, int(self.d * 0.08)), gap=max(3, int(self.d * 0.06)))
 
 
