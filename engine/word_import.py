@@ -2,8 +2,9 @@
 
 The sheet is one word per row: English | Arabic | IPA (optional). Headers are recognised in English or Arabic
 (English / Word, Arabic / Meaning, IPA / Pronunciation); without a header row the columns are A = English,
-B = Arabic, C = IPA. Any number of rows: `plan()` cuts them into pages of `per_page` words (one `type: list` item
-each) and the pages into videos of at most `per_video` pages (vocab.MAX_ITEMS), both as even as possible. `voice_clips()` makes one clip per
+B = Arabic, C = IPA. Any number of rows: `plan()` cuts them in order into pages of `per_page` words (one
+`type: list` item each) and the pages into videos of `per_video` pages (vocab.MAX_ITEMS); only the last page / video
+takes what is left. `voice_clips()` makes one clip per
 word with the ElevenLabs settings saved in DATA_DIR/elevenlabs.json (cached in DATA_DIR/tts, so a word costs
 credits only once) and copies it as w<page>_<word>.mp3, the names the English Words template reads."""
 import os
@@ -65,25 +66,18 @@ def read_words(path, sheet=None):
     return words, problems
 
 
-def _even(seq, most):
-    """seq cut into as few parts of at most `most` as possible, all about the same size (6 by 5 -> 3 + 3, not 5 + 1)."""
-    if not seq:
-        return []
-    parts = -(-len(seq) // most)
-    size, extra = divmod(len(seq), parts)
-    out, i = [], 0
-    for k in range(parts):
-        n = size + (1 if k < extra else 0)
-        out.append(seq[i:i + n])
-        i += n
-    return out
+def _chunks(seq, size):
+    """seq cut in order into parts of exactly `size` (only the last part may be shorter)."""
+    return [seq[i:i + size] for i in range(0, len(seq), size)]
 
 
 def plan(words, per_page=5, per_video=4):
-    """[[page, page …] per video]; a page = up to per_page words, a video = up to per_video pages, both even."""
+    """[[page, page …] per video]: every page holds exactly per_page words and every video exactly per_video pages,
+    in sheet order — only the last page / video takes what is left (7 words, 6 per page, 1 page per video ->
+    a video of 6 words and a video of 1)."""
     per_page = max(1, min(LIST_MAX, int(per_page or 5)))
     per_video = max(1, min(MAX_ITEMS, int(per_video or 4)))
-    return _even(_even(words, per_page), per_video)
+    return _chunks(_chunks(words, per_page), per_video)
 
 
 def video_items(pages, title="", subtitle="", first_page=1):
@@ -96,14 +90,19 @@ def video_items(pages, title="", subtitle="", first_page=1):
     return items_text(items)
 
 
+def _rows(video):
+    a, b = video[0][0]["row"], video[-1][-1]["row"]
+    return f"row {a}" if a == b else f"rows {a}–{b}"
+
+
 def summary(words, problems, videos, per_page):
     n_pages = sum(len(v) for v in videos)
     if not words:
         return "⚠️ No words found." + (f" {problems[0]}" if problems else "")
-    lines = [f"**{len(words)} words** → {n_pages} page{'s' if n_pages != 1 else ''} of up to {per_page} words → "
+    lines = [f"**{len(words)} words** → {n_pages} page{'s' if n_pages != 1 else ''} of {per_page} words → "
              f"**{len(videos)} video{'s' if len(videos) != 1 else ''}**"]
     if len(videos) > 1:
-        lines.append(" · ".join(f"video {k}: rows {v[0][0]['row']}–{v[-1][-1]['row']}" for k, v in enumerate(videos, 1)))
+        lines.append(" · ".join(f"video {k}: {_rows(v)}" for k, v in enumerate(videos, 1)))
     if problems:
         lines.append(f"⚠️ {len(problems)} row{'s' if len(problems) != 1 else ''} left out: " + "; ".join(problems[:4])
                      + (" …" if len(problems) > 4 else ""))

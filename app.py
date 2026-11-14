@@ -1265,7 +1265,7 @@ def wl_import_ui():
     with gr.Row():
         per = gr.Slider(1, vocab_batch.LIST_MAX, value=5, step=1, label="Words per page")
         pages = gr.Slider(1, vocab_batch.MAX_ITEMS, value=4, step=1, label="Pages per video",
-                          info="A page of 5 words ≈ 15 s — 4 pages ≈ 1 minute")
+                          info="Pages are filled in order: only the last page / video gets what is left")
     with gr.Row():
         title = gr.Textbox(label="Page title (optional)", placeholder="Words in the News",
                            info="{n} = the page number · empty = the title of the group")
@@ -1309,7 +1309,8 @@ def wire_wl_import(ui, pv, fields, items_box, audio_box):
         if voice and words:
             ok, why = word_import.voice_ready(DATA_DIR)
             msg += "\n\n" + ("" if ok else "⚠️ ") + why
-        choices = [(f"Video {k} — {sum(len(p) for p in v)} words (rows {v[0][0]['row']}–{v[-1][-1]['row']})", k)
+        choices = [(f"Video {k} — {sum(len(p) for p in v)} word{'s' if sum(len(p) for p in v) != 1 else ''} "
+                    f"({word_import._rows(v)})", k)
                    for k, v in enumerate(videos, 1)]
         n = len(videos)
         go = gr.update(value=f"🎬 Render all {n} video{'s' if n != 1 else ''}" if n else "🎬 Render all videos",
