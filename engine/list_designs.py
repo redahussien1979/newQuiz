@@ -20,7 +20,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 from .core import H, W, ease_io, ease_out_back, paste, prog
-from .word_list import _font, _gradient, _ipa, _speaker, _t
+from .word_list import MESSIRI, PATRICK, PLAYFAIR, RUQAA, _font, _gradient, _ipa, _speaker, _t
 
 POPPINS_B = _font("Poppins", "Poppins-Bold.ttf")
 POPPINS_K = _font("Poppins", "Poppins-Black.ttf")
@@ -31,6 +31,23 @@ TAJAWAL_K = _font("Tajawal", "Tajawal-Black.ttf")
 LALEZAR = _font("Lalezar", "Lalezar-Regular.ttf")
 READEX = _font("ReadexPro", "ReadexPro[HEXP,wght].ttf")
 PLEX_B = _font("IBMPlexSansArabic", "IBMPlexSansArabic-Bold.ttf")
+# more families for the font sets
+ALEXANDRIA = _font("Alexandria", "Alexandria[wght].ttf")
+ALMARAI = _font("Almarai", "Almarai-Bold.ttf")
+BALOO = _font("BalooBhaijaan2", "BalooBhaijaan2[wght].ttf")
+BANGERS = _font("Bangers", "Bangers-Regular.ttf")
+BEBAS = _font("BebasNeue", "BebasNeue-Regular.ttf")
+CHANGA = _font("Changa", "Changa[wght].ttf")
+FREDOKA = _font("Fredoka", "Fredoka[wdth,wght].ttf")
+LEMONADA = _font("Lemonada", "Lemonada[wght].ttf")
+LITERATA = _font("Literata", "Literata[opsz,wght].ttf")
+LOBSTER = _font("Lobster", "Lobster-Regular.ttf")
+MARHEY = _font("Marhey", "Marhey[wght].ttf")
+NOTO_KUFI = _font("NotoKufiArabic", "NotoKufiArabic[wght].ttf")
+OSWALD = _font("Oswald", "Oswald[wght].ttf")
+PLEX_S = _font("IBMPlexSansArabic", "IBMPlexSansArabic-SemiBold.ttf")
+REEM = _font("ReemKufi", "ReemKufi[wght].ttf")
+RIGHTEOUS = _font("Righteous", "Righteous-Regular.ttf")
 
 # (main colour A, second colour B); Bright uses them as its background gradient (A at the top, B at the bottom)
 PALETTES = {"sky": ((56, 152, 236), (99, 182, 255)),
@@ -787,3 +804,81 @@ class Bright:
 
 
 DESIGNS = {"Bright": Bright, "Glass": Glass, "Pop": Pop, "Spotlight": Spotlight}
+
+
+# ================================================================ font sets
+def _same(src, to, w=None):
+    """Every font in src replaced by `to` (weight w, or the design's own weight when None)."""
+    return {f: (to, w) for f in src}
+
+
+# Each design: 5 sets of (name, {design font: (new font, weight or None)}); set 1 = the design's own fonts.
+# English parts only ever map to fonts with Latin letters, Arabic parts to fonts with Arabic letters.
+FONT_SETS = {
+    "Bright": [  # English: POPPINS_B · Arabic: PLEX_B
+        ("Poppins + IBM Plex Arabic", {}),
+        ("Montserrat + Tajawal", {POPPINS_B: (MONTSERRAT, "ExtraBold"), PLEX_B: (TAJAWAL, "Bold")}),
+        ("Alexandria (one family)", {POPPINS_B: (ALEXANDRIA, "SemiBold"), PLEX_B: (ALEXANDRIA, "SemiBold")}),
+        ("Fredoka + Baloo (rounded)", {POPPINS_B: (FREDOKA, "SemiBold"), PLEX_B: (BALOO, "Bold")}),
+        ("Oswald + Changa (condensed)", {POPPINS_B: (OSWALD, "SemiBold"), PLEX_B: (CHANGA, "SemiBold")}),
+    ],
+    "Glass": [  # title POPPINS_K · words POPPINS_B · lesson line MONTSERRAT · Arabic TAJAWAL / TAJAWAL_K
+        ("Poppins + Tajawal", {}),
+        ("Montserrat + Almarai", {POPPINS_K: (MONTSERRAT, "Black"), POPPINS_B: (MONTSERRAT, "Bold"),
+                                  TAJAWAL: (ALMARAI, "Bold"), TAJAWAL_K: (ALMARAI, "Black")}),
+        ("Readex Pro (one family)", {POPPINS_K: (READEX, "Bold"), POPPINS_B: (READEX, "SemiBold"),
+                                     MONTSERRAT: (READEX, "SemiBold"), TAJAWAL: (READEX, "SemiBold"),
+                                     TAJAWAL_K: (READEX, "Bold")}),
+        ("Playfair + El Messiri (elegant)", {POPPINS_K: (PLAYFAIR, "Black"), POPPINS_B: (PLAYFAIR, "Bold"),
+                                             TAJAWAL: (MESSIRI, "SemiBold"), TAJAWAL_K: (MESSIRI, "Bold")}),
+        ("Fredoka + Baloo (rounded)", {POPPINS_K: (FREDOKA, "Bold"), POPPINS_B: (FREDOKA, "SemiBold"),
+                                       TAJAWAL: (BALOO, "SemiBold"), TAJAWAL_K: (BALOO, "Bold")}),
+    ],
+    "Pop": [  # title + numbers ANTON · words POPPINS_K · lesson line MONTSERRAT · Arabic LALEZAR
+        ("Anton + Poppins + Lalezar", {}),
+        ("Bangers + Fredoka + Marhey (comic)", {ANTON: (BANGERS, None), POPPINS_K: (FREDOKA, "Bold"),
+                                                LALEZAR: (MARHEY, "Bold")}),
+        ("Bebas Neue + Montserrat + Changa (poster)", {ANTON: (BEBAS, None), POPPINS_K: (MONTSERRAT, "Black"),
+                                                       LALEZAR: (CHANGA, "ExtraBold")}),
+        ("Righteous + Lemonada (retro)", {ANTON: (RIGHTEOUS, None), POPPINS_K: (RIGHTEOUS, None),
+                                          LALEZAR: (LEMONADA, "Bold")}),
+        ("Oswald + Alexandria (heavy)", {ANTON: (OSWALD, "Bold"), POPPINS_K: (OSWALD, "Bold"),
+                                         LALEZAR: (ALEXANDRIA, "Black")}),
+    ],
+    "Spotlight": [  # lesson line + title + words MONTSERRAT · Arabic READEX
+        ("Montserrat + Readex Pro", {}),
+        ("Poppins + Tajawal", {MONTSERRAT: (POPPINS_B, None), READEX: (TAJAWAL, "ExtraBold")}),
+        ("Playfair + El Messiri (elegant)", {MONTSERRAT: (PLAYFAIR, None), READEX: (MESSIRI, "Bold")}),
+        ("Oswald + Noto Kufi (condensed)", {MONTSERRAT: (OSWALD, None), READEX: (NOTO_KUFI, "Bold")}),
+        ("Alexandria (one family)", {MONTSERRAT: (ALEXANDRIA, None), READEX: (ALEXANDRIA, "SemiBold")}),
+    ],
+    "Editorial": [  # English PLAYFAIR · Arabic MESSIRI
+        ("Playfair + El Messiri", {}),
+        ("Literata + Almarai (book)", {PLAYFAIR: (LITERATA, None), MESSIRI: (ALMARAI, "Bold")}),
+        ("Montserrat + IBM Plex Arabic (modern)", {PLAYFAIR: (MONTSERRAT, None), MESSIRI: (PLEX_S, "SemiBold")}),
+        ("Oswald + Changa (newsroom)", {PLAYFAIR: (OSWALD, None), MESSIRI: (CHANGA, "SemiBold")}),
+        ("Poppins + Tajawal (clean)", {PLAYFAIR: (POPPINS_B, None), MESSIRI: (TAJAWAL, "Bold")}),
+    ],
+    "Chalkboard": [  # English PATRICK · Arabic RUQAA
+        ("Patrick Hand + Aref Ruqaa", {}),
+        ("Patrick Hand + Marhey", {RUQAA: (MARHEY, "SemiBold")}),
+        ("Fredoka + Baloo (rounded)", {PATRICK: (FREDOKA, "Medium"), RUQAA: (BALOO, "SemiBold")}),
+        ("Lobster + Aref Ruqaa (script)", {PATRICK: (LOBSTER, None)}),
+        ("Patrick Hand + Reem Kufi", {RUQAA: (REEM, "SemiBold")}),
+    ],
+}
+
+
+def font_set(style, k):
+    """{design font: (font, weight)} of font set k (1-5) of a design; {} = its own fonts."""
+    sets = FONT_SETS.get(style) or [("", {})]
+    try:
+        k = int(k or 1)
+    except (TypeError, ValueError):
+        k = 1
+    return dict(sets[k - 1][1]) if 1 <= k <= len(sets) else {}
+
+
+def font_choices(style):
+    """The dropdown of a design's font sets: [(label, 1..5)]."""
+    return [(f"{i}. {name}", i) for i, (name, _) in enumerate(FONT_SETS.get(style) or [], 1)]
