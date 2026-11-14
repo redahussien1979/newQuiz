@@ -8,6 +8,8 @@ Two designs (vocab setting `list_style`):
                 circle / underline / box (drawn live around the word being read), `chalk_color` pink / yellow /
                 orange / blue. Words already read get a chalk tick.
 
+More designs (Neon, Glass, Pop, Spotlight; colours `list_palette`) live in list_designs.py.
+
 ListPage(...) pre-renders everything that does not move; draw(frame, u) depends only on the item time u (frames are
 rendered on several processes)."""
 import math
@@ -168,7 +170,11 @@ class ListPage:
         self.pitch = min(240.0, (ROWS_BOTTOM - ROWS_TOP) / self.n)
         self.sc = min(1.12, self.pitch / 209)
         self.cy = [ROWS_TOP + self.pitch * (j + 0.5) for j in range(self.n)]
-        if style == "Chalkboard":
+        from .list_designs import DESIGNS
+        self.impl = None
+        if style in DESIGNS:
+            self.impl = DESIGNS[style](self, opts, title, subtitle, kicker)
+        elif style == "Chalkboard":
             self._build_chalk(opts, title, subtitle)
         else:
             self._build_editorial(opts, title, subtitle, kicker)
@@ -196,7 +202,9 @@ class ListPage:
         if a <= 0.01:
             return
         page = frame if a >= 0.999 else frame.copy()
-        if self.style == "Chalkboard":
+        if self.impl is not None:
+            self.impl.draw(page, u)
+        elif self.style == "Chalkboard":
             self._draw_chalk(page, u)
         else:
             self._draw_editorial(page, u)

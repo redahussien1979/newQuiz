@@ -12,8 +12,8 @@ type, and types can be mixed:
     proverb  English proverb word by word -> literal translation -> the Arabic equivalent proverb -> example
     idiom    the idiom -> literal meaning (crossed out) -> the real meaning -> example
     list     one page of 1-6 words with their Arabic meanings ("- English = /ipa/ = Arabic" lines), read one after
-             another (clips w1_1, w1_2 …): the word being read is highlighted. Two page designs (LIST_STYLES):
-             Editorial (magazine page) and Chalkboard (hand-written chalk)
+             another (clips w1_1, w1_2 …): the word being read is highlighted. Page designs (LIST_STYLES):
+             Editorial (magazine page), Chalkboard (hand-written chalk), Neon, Glass, Pop, Spotlight
 
 Items are written in a small "key: value" format (see EXAMPLE and parse_items()); the Excel batch
 (engine/vocab_batch.py) builds the same text. Audio clips named w1 / w1e (word 1 / its example) are played on
@@ -437,7 +437,7 @@ PACES = [("Slow", "slow"), ("Normal", "normal"), ("Fast", "fast")]
 PACE_K = {"slow": 1.25, "normal": 1.0, "fast": 0.82}
 TITLE_STYLES = ["Fancy", "Simple", "None"]  # None = no title page: the first item starts at 0
 RECAP_MAX = 14  # recap rows on one screen (a word list adds one row per word)
-LIST_STYLES = ["Editorial", "Chalkboard"]
+LIST_STYLES = ["Editorial", "Chalkboard", "Neon", "Glass", "Pop", "Spotlight"]
 
 IPA_FONT = os.path.join(ROOT, "fonts", "NotoSans-Bold.ttf")
 INK = (20, 20, 30)
@@ -835,7 +835,8 @@ class VocabVideo:
         ls = str(v.get("list_style") or "Editorial")
         self.list_style = ls if ls in LIST_STYLES else "Editorial"
         self.list_opts = dict(highlight=v.get("list_highlight") or "cream", board=v.get("chalk_board") or "green",
-                              mark=v.get("chalk_mark") or "circle", color=v.get("chalk_color") or "pink")
+                              mark=v.get("chalk_mark") or "circle", color=v.get("chalk_color") or "pink",
+                              palette=v.get("list_palette") or "violet")
         self.audio_gain = float(v.get("audio_gain") if v.get("audio_gain") is not None else 1.0)
         clips, _ = match_clips(v.get("audio") or [], self.items)
 
