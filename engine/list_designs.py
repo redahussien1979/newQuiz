@@ -3,8 +3,6 @@ word_list.py. Each design is a class built once per page (everything still is pr
 that depends only on the item time u. They share ListPage's layout (`pg.cy`, `pg.pitch`, `pg.sc`) and timing
 (`pg._lit`, `pg._row_in`, `pg.starts`, `pg.ends`, `pg.speak`).
 
-    Neon       night wall, glass-tube neon signs; the word being read flickers on inside a neon frame,
-               words already read stay softly lit, the next ones are unlit tubes
     Glass      modern app look: colour-mesh background, frosted glass cards; the card being read turns white,
                springs forward, its badge shows live sound bars and a progress line fills; read cards get a tick
     Pop        bold pop-art: halftone colour, thick black outlines, hard shadows; the card being read jumps out in
@@ -14,7 +12,8 @@ that depends only on the item time u. They share ListPage's layout (`pg.cy`, `pg
     Bright     the list fills the screen: tall white cards on a bright gradient (its own layout, TOP..BOT); the card
                being read gets a yellow border, springs forward and shows live sound bars; read cards get a tick
 
-`list_palette` (PALETTES, 12 colour pairs) colours all five."""
+`list_palette` colours all four: PALETTES (12 colour pairs) or DUOS (3 two-tone sets: deep base + bright accent;
+Navy + juice is the default)."""
 import math
 
 import numpy as np
@@ -26,8 +25,6 @@ from .word_list import _font, _gradient, _ipa, _speaker, _t
 POPPINS_B = _font("Poppins", "Poppins-Bold.ttf")
 POPPINS_K = _font("Poppins", "Poppins-Black.ttf")
 MONTSERRAT = _font("Montserrat", "Montserrat[wght].ttf")
-RIGHTEOUS = _font("Righteous", "Righteous-Regular.ttf")
-LOBSTER = _font("Lobster", "Lobster-Regular.ttf")
 ANTON = _font("Anton", "Anton-Regular.ttf")
 TAJAWAL = _font("Tajawal", "Tajawal-Bold.ttf")
 TAJAWAL_K = _font("Tajawal", "Tajawal-Black.ttf")
@@ -48,7 +45,7 @@ PALETTES = {"sky": ((56, 152, 236), (99, 182, 255)),
             "mint": ((16, 185, 129), (163, 230, 53)),
             "emerald": ((12, 150, 100), (40, 185, 120)),
             "tealblue": ((16, 160, 170), (40, 120, 220))}
-PALETTE_CHOICES = [("Sky blue", "sky"), ("Royal blue", "royal"), ("Ocean", "ocean"), ("Lavender", "lavender"),
+PALETTE_CHOICES = [("Royal blue", "royal"), ("Ocean", "ocean"), ("Lavender", "lavender"),
                    ("Purple + pink", "violet"), ("Rose", "rose"), ("Coral", "coral"), ("Sunset", "sunset"),
                    ("Mango", "mango"), ("Mint", "mint"), ("Emerald", "emerald"), ("Teal + blue", "tealblue")]
 # two-tone sets for Bright: (deep base colour, bright accent)
@@ -56,11 +53,13 @@ DUOS = {"navy_juice": ((37, 26, 102), (229, 245, 24)),
         "navy_orange": ((20, 33, 61), (252, 163, 17)),
         "slate_yellow": ((43, 50, 63), (253, 239, 75))}
 DUO_CHOICES = [("Navy + juice", "navy_juice"), ("Navy + orange", "navy_orange"), ("Gray blue + yellow", "slate_yellow")]
-PALETTE_CHOICES += [(f"{name} (two-tone, best in Bright)", key) for name, key in DUO_CHOICES]
+DEFAULT_PALETTE = "navy_juice"
+# the four favourites first (the two-tone sets and Sky blue), then the other colours
+PALETTE_CHOICES = DUO_CHOICES + [("Sky blue", "sky")] + PALETTE_CHOICES
 
 
 def _pal_key(pal):
-    return pal if pal in PALETTES or pal in DUOS else "violet"
+    return pal if pal in PALETTES or pal in DUOS else DEFAULT_PALETTE
 
 
 def _pair(pal):
@@ -272,128 +271,6 @@ def _row_state(pg, j, u):
     """(highlight 0..1 of the row being read, settled-after-reading 0..1)."""
     c_in, c_out = pg._lit(j, u)
     return c_in * (1 - c_out), c_out
-
-
-# ================================================================ Neon
-_FLICK = ((0.00, 0.85), (0.05, 0.1), (0.09, 1.0), (0.13, 0.3), (0.17, 0.95), (0.20, 0.55), (0.24, 1.0))
-
-
-def _flick(u, s):
-    """Neon switching on at s: a few quick flickers, then steady."""
-    if u < s:
-        return 0.0
-    v = 0.0
-    for t0, val in _FLICK:
-        if u - s >= t0:
-            v = val
-    return v
-
-
-def _neon(src, col, glow=1.0, core_mix=0.62):
-    """(unlit tube, lit tube) images of a text / shape image (only its alpha is used), PAD px larger each side."""
-    m = _padded_alpha(src)
-    on = Image.new("RGBA", m.size, (0, 0, 0, 0))
-    on.alpha_composite(_colored(m.filter(ImageFilter.GaussianBlur(24)), col, 1.7 * glow))
-    on.alpha_composite(_colored(m.filter(ImageFilter.GaussianBlur(9)), col, 1.5 * glow))
-    on.alpha_composite(_colored(m.filter(ImageFilter.GaussianBlur(2)), col, 1.2))
-    on.alpha_composite(_colored(m, _mix(col, WHITE, core_mix)))
-    off = _colored(m, _mix(col, (196, 194, 206), 0.5), 0.82)  # unlit glass tube: pale, no glow, still readable
-    return off, on
-
-
-def _neon_wall(pal):
-    key = ("neon", pal)
-    if key not in _cache:
-        a, b = _pair(pal)
-        dk = DUOS[pal][0] if pal in DUOS else None  # two-tone: the wall takes the deep colour
-        arr = _gradient([(0, _mix(dk, BLACK, 0.45)), (0.55, _mix(dk, BLACK, 0.62)), (1, _mix(dk, BLACK, 0.8))] if dk
-                        else [(0, (16, 12, 26)), (0.55, (10, 8, 18)), (1, (5, 4, 10))])
-        im = _to_img(arr).convert("RGB")
-        d = ImageDraw.Draw(im, "RGBA")  # brick wall, barely visible (drawn on RGB: the page stays opaque)
-        bh, bw = 54, 150
-        for r in range(H // bh + 1):
-            y = r * bh
-            d.line([(0, y), (W, y)], fill=(0, 0, 0, 90), width=4)
-            off = 0 if r % 2 == 0 else bw // 2
-            for x in range(-off, W, bw):
-                d.line([(x, y), (x, y + bh)], fill=(0, 0, 0, 90), width=4)
-                d.line([(x + 4, y + 4), (x + bw - 6, y + 4)], fill=(255, 255, 255, 7), width=2)
-        arr = np.asarray(im.convert("RGB"), np.float32)
-        arr = _blobs(arr, [(160, 300, 520, a, 0.22), (960, 1250, 600, b, 0.18), (540, 1900, 700, a, 0.12)])
-        yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)  # vignette
-        v = 1 - 0.55 * np.clip(((xx - W / 2) / (W * 0.75)) ** 2 + ((yy - H / 2) / (H * 0.62)) ** 2, 0, 1)
-        _cache[key] = _to_img(_noise(arr * v[..., None], 3.5, 9))
-    return _cache[key]
-
-
-class Neon:
-    def __init__(self, pg, opts, title, subtitle, kicker):
-        self.pg = pg
-        self.pal = _pal_key(opts.get("palette"))
-        a, b = _pair(self.pal)
-        self.a, self.b = a, b
-        sc = pg.sc
-        self.kick = _t(MONTSERRAT, "  ".join((kicker or "Vocabulary").upper()), 26, (210, 205, 225), "Bold", 900)
-        self.title = _neon(_t(LOBSTER, title, 104, WHITE, "Regular", 940), a, 1.1)
-        self.sub = _neon(_t(TAJAWAL, subtitle, 58, WHITE, "Bold", 900), b, 0.7, 0.7) if subtitle else None
-        fh = int(pg.pitch - 22)
-        self.frame = _neon(Image.merge("RGBA", [_round_mask(964, fh, 30, outline=5)] * 4), b, 0.9)
-        self.rows = []
-        for j, w in enumerate(pg.words):
-            num = _t(RIGHTEOUS, str(j + 1), 46 * sc, WHITE, "Regular")
-            ring = Image.new("RGBA", (int(84 * sc) + 60, int(84 * sc) + 60), (0, 0, 0, 0))
-            rm = _round_mask(int(84 * sc), int(84 * sc), int(42 * sc), outline=4)
-            ring.paste(Image.merge("RGBA", [rm] * 4), (30, 30))
-            ring.alpha_composite(num, (ring.width // 2 - num.width // 2, ring.height // 2 - num.height // 2))
-            (en, ipa, ar), two = _share(
-                lambda k, w=w: (_fit(_t(RIGHTEOUS, w["en"], 60 * sc * k, WHITE, "Regular"), 520),
-                                _fit(_ipa(w["ipa"], 38 * sc * k, WHITE), 520) if w["ipa"] else None,
-                                _fit(_t(TAJAWAL, w["ar"], 62 * sc * k, WHITE, "Bold"), 750)), 990 - 190 - 50)
-            self.rows.append(dict(num=_neon(ring, b, 0.8), en=_neon(en, a),
-                                  ipa=_neon(ipa, a, 0.35, 0.7) if ipa else None, ar=_neon(ar, b, 0.6, 0.72),
-                                  pos=_place(en, ipa, ar, two, 190, 990, 0, sc)))
-
-    def draw(self, fr, u):
-        pg = self.pg
-        fr.paste(_neon_wall(self.pal), (0, 0))
-        hp = prog(u, 0.05, 0.4)
-        paste(fr, self.kick, W / 2, 150, 1, hp)
-        k = _flick(u, 0.12)
-        off, on = self.title
-        paste(fr, off, W / 2, 262, 1, hp)
-        paste(fr, on, W / 2, 262, 1, k)
-        if self.sub:
-            off, on = self.sub
-            paste(fr, off, W / 2, 372, 1, hp)
-            paste(fr, on, W / 2, 372, 1, _flick(u, 0.3))
-        for j, r in enumerate(self.rows):
-            a, dy = pg._row_in(j, u)
-            if a <= 0.01:
-                continue
-            cy = pg.cy[j] + dy
-            hl, done = _row_state(pg, j, u)
-            s = pg.starts[j]
-            lit = _flick(u, s - 0.12) * (1 - done) + 0.7 * done if u >= s - 0.12 else 0.0  # read words stay lit
-            frame = _flick(u, s - 0.08) * (1 - done)
-            if frame > 0.01:
-                paste(fr, self.frame[1], W / 2, cy, 1, a * frame)
-            off, on = r["num"]
-            paste(fr, off, 122, cy, 1, a)
-            if lit > 0.01:
-                paste(fr, on, 122, cy, 1, a * lit)
-            for key in ("en", "ipa", "ar"):
-                if r[key] is None:
-                    continue
-                off, on = r[key]
-                x, y = r["pos"][key]
-                if key == "ar":  # neon images carry PAD more on every side than the text image
-                    paste(fr, off, x + 30 + PAD, cy + y, 1, a, "r")
-                    if lit > 0.01:
-                        paste(fr, on, x + 30 + PAD, cy + y, 1, a * lit, "r")
-                else:
-                    _top(fr, off, x - 30 - PAD, cy + y - PAD, a, "l")
-                    if lit > 0.01:
-                        _top(fr, on, x - 30 - PAD, cy + y - PAD, a * lit, "l")
 
 
 # ================================================================ Glass
@@ -841,7 +718,7 @@ class Bright:
     def __init__(self, pg, opts, title, subtitle, kicker):
         self.pg = pg
         pal = opts.get("palette")
-        self.c = c = _bright_scheme(pal if pal in PALETTES or pal in DUOS else "sky")
+        self.c = c = _bright_scheme(_pal_key(pal))
         n = len(pg.words)
         self.kick = _t(POPPINS_B, (kicker or "Vocabulary").upper(), 28, c["kick"], "Bold", 800)
         self.title = _t(POPPINS_B, title, 80, c["title"], "Bold", 960)
@@ -909,4 +786,4 @@ class Bright:
                       bw=max(5, int(self.d * 0.08)), gap=max(3, int(self.d * 0.06)))
 
 
-DESIGNS = {"Neon": Neon, "Glass": Glass, "Pop": Pop, "Spotlight": Spotlight, "Bright": Bright}
+DESIGNS = {"Bright": Bright, "Glass": Glass, "Pop": Pop, "Spotlight": Spotlight}

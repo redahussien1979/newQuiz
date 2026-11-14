@@ -8,7 +8,7 @@ Two designs (vocab setting `list_style`):
                 circle / underline / box (drawn live around the word being read), `chalk_color` pink / yellow /
                 orange / blue. Words already read get a chalk tick.
 
-More designs (Neon, Glass, Pop, Spotlight; colours `list_palette`) live in list_designs.py.
+More designs (Bright = the default, Glass, Pop, Spotlight; colours `list_palette`) live in list_designs.py.
 
 ListPage(...) pre-renders everything that does not move; draw(frame, u) depends only on the item time u (frames are
 rendered on several processes)."""
