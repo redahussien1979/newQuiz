@@ -836,7 +836,7 @@ class VocabVideo:
         self.list_style = ls if ls in LIST_STYLES else "Bright"  # (a removed design, e.g. Neon, falls back too)
         self.list_opts = dict(highlight=v.get("list_highlight") or "cream", board=v.get("chalk_board") or "green",
                               mark=v.get("chalk_mark") or "circle", color=v.get("chalk_color") or "pink",
-                              palette=v.get("list_palette") or "navy_juice")
+                              palette=v.get("list_palette") or "navy_juice", font=s.get("font_file") or "")
         self.audio_gain = float(v.get("audio_gain") if v.get("audio_gain") is not None else 1.0)
         clips, _ = match_clips(v.get("audio") or [], self.items)
 
