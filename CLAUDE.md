@@ -145,6 +145,9 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
 
 ## Rules
 - Arabic text must stay right-to-left and correctly joined (RAQM when available, else arabic-reshaper + python-bidi fallback in `core._prep`).
+  Without RAQM a font with no joined presentation forms (Aref Ruqaa, Baloo, Marhey, Readex Pro, Reem Kufi) would show
+  separate letters: `core._basic_font` draws its Arabic with the nearest font that has them (`_BASIC_SUBS`). Test the
+  fallback with env `VS_FORCE_BASIC=1`.
 - Keep changes minimal and consistent with the existing structure.
 - The user runs it on Windows via `run_windows.bat` (venv + `requirements.txt`); avoid heavy new dependencies.
 - A new template needs: `NAME`, `EXAMPLE`, a class with `base_duration`, `dur`, `fps`, `silences`, `render(t)` and `sound(mixer)`, plus a tab in `app.py`.
