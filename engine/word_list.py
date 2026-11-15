@@ -226,7 +226,7 @@ class ListPage:
         from .list_designs import DESIGNS, HIDE_STYLES, MeaningHider, font_set
         self.impl = None
         hide = opts.get("hide")
-        self.hider = MeaningHider(self, hide) if hide in [v for _, v in HIDE_STYLES] and hide != "none" else None
+        self.hider = MeaningHider(self, hide, opts.get("wait") or "dots") if hide in [v for _, v in HIDE_STYLES] and hide != "none" else None
         _USER.clear()
         _USER.update(user_fonts(opts.get("font")))  # every text image is made here, in __init__ (not per frame)
         _SET.clear()
