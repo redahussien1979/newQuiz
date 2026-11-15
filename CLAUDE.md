@@ -63,6 +63,11 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `SentenceKit` (`sentence` = lit + dim layers + word boxes, lines by `_optimal` = least squared free space, justified,
   the word on a pill via `_ex_tokens` = find_phrase / *stars*; `now` = karaoke; `panel`), `open_amount`, `turn`
   (QUAD perspective), `reveal` (a card shown shorter).
+  `list_hide` (`HIDE_STYLES`: none / reveal / typewriter / splitflap) = the meanings hidden until spoken: ListPage
+  makes `pg.hider` (`MeaningHider`); each design `add`s its meaning images while built (card colour, text colour, font
+  for the split-flap redraw) and, while `hidden(j, u)`, draws `render(j, 'n'|'a', u)` in their place (card designs
+  keep a copy without the meaning + its offset: `with_meaning`); `hide_window` / `hide_sounds` time it (vocab adds
+  the sound cues). Designs Table / Stepper (`_Toned`: two-tone colours, Bright's font sets, `row_ys`).
   Excel: Type = list, one word per row with its Audio;
   `vocab_batch.merge_lists` joins rows into pages (`list_size` words, a new Page title starts a page)
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
