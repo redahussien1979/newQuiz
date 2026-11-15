@@ -404,7 +404,59 @@ def _prep(txt):
 _measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
 
 
+# Without RAQM (Pillow without libraqm, e.g. on many Windows installs) Arabic is joined with the presentation forms
+# inside the font. A few fonts have none, so their Arabic would come out as separate letters: their Arabic is then
+# drawn with the nearest-looking font that has them (with RAQM nothing changes).
+_BASIC_SUBS = {"ArefRuqaa": "Amiri", "BalooBhaijaan2": "Lemonada", "Marhey": "Lemonada", "ReadexPro": "Alexandria",
+               "ReemKufi": "NotoKufiArabic"}
+_BASIC_FALLBACK = "IBMPlexSansArabic"
+_joins_cache = {}
+
+
+def _joins(path):
+    """True when the font has the joined Arabic forms (initial / medial / final), or can't be checked."""
+    if path not in _joins_cache:
+        cmap = _font_cmap(path)
+        forms = (0xFE92, 0xFEE4, 0xFEDF, 0xFEA8, 0xFEB4, 0xFECC)  # beh, meem, lam, khah, seen, ain
+        _joins_cache[path] = cmap is None or sum(cp in cmap for cp in forms) >= 5
+    return _joins_cache[path]
+
+
+def _family_file(family):
+    """A file of a bundled family (fonts/library/<family>), the variable or Bold one if there is a choice."""
+    d = os.path.join(ROOT, "fonts", "library", family)
+    try:
+        files = sorted(f for f in os.listdir(d) if f.lower().endswith((".ttf", ".otf")))
+    except OSError:
+        return None
+    best = [f for f in files if "[" in f] or [f for f in files if "Bold" in f] or files
+    return os.path.join(d, best[0]) if best else None
+
+
+def _basic_font(txt):
+    """The font to draw txt with instead of the chosen one: only without RAQM, for Arabic text, when the chosen
+    font has no joined forms. None = keep the chosen font."""
+    if HAS_RAQM or not is_rtl(txt):
+        return None
+    path = _state["font"]
+    if not path or _joins(path):
+        return None
+    for fam in (_BASIC_SUBS.get(os.path.basename(os.path.dirname(path))), _BASIC_FALLBACK):
+        sub = _family_file(fam) if fam else None
+        if sub and _joins(sub):
+            return sub
+    return None
+
+
 def text_bbox(txt, size, weight="Black"):
+    sub = _basic_font(txt)
+    if sub:
+        old = _state["font"]
+        _state["font"] = sub
+        try:
+            return text_bbox(txt, size, weight)
+        finally:
+            _state["font"] = old
     txt, runs = _fit_text(txt)
     if runs:  # mixed fonts: the runs side by side
         parts = _run_parts(runs, size, weight)
@@ -428,6 +480,9 @@ def fit_size(txt, size, weight, max_w):
 
 def text_img(txt, size, color, weight="Black", shadow=True, max_w=None):
     """Render one line of text to a transparent RGBA image (cached)."""
+    sub = _basic_font(txt)
+    if sub:  # no RAQM and a font without joined Arabic forms: its nearest-looking font that has them
+        return text_img_in(sub, txt, size, color, weight, shadow, max_w)
     color = to_rgb(color)
     size = fit_size(txt, size, weight, max_w)
     k = (_state["font"], txt, size, color, weight, shadow)
