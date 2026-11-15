@@ -12,8 +12,8 @@ that depends only on the item time u. They share ListPage's layout (`pg.cy`, `pg
     Bright     the list fills the screen: tall white cards on a bright gradient (its own layout, TOP..BOT); the card
                being read gets a yellow border, springs forward and shows live sound bars; read cards get a tick
 
-`list_palette` colours all four: PALETTES (12 colour pairs) or DUOS (3 two-tone sets: deep base + bright accent;
-Navy + juice is the default)."""
+`list_palette` colours all four: PALETTES (12 colour pairs) or DUOS (10 two-tone sets: deep base + bright accent,
+6 three-tone sets with a second accent; Navy + juice is the default)."""
 import math
 
 import numpy as np
@@ -66,10 +66,32 @@ PALETTE_CHOICES = [("Royal blue", "royal"), ("Ocean", "ocean"), ("Lavender", "la
                    ("Purple + pink", "violet"), ("Rose", "rose"), ("Coral", "coral"), ("Sunset", "sunset"),
                    ("Mango", "mango"), ("Mint", "mint"), ("Emerald", "emerald"), ("Teal + blue", "tealblue")]
 # two-tone sets for Bright: (deep base colour, bright accent)
+# two-tone sets: (deep base, bright accent); three-tone sets add a second accent (titles, lesson line, ticks).
+# Deep bases dark enough for white text, accents light enough for dark text on the card being read.
 DUOS = {"navy_juice": ((37, 26, 102), (229, 245, 24)),
         "navy_orange": ((20, 33, 61), (252, 163, 17)),
-        "slate_yellow": ((43, 50, 63), (253, 239, 75))}
-DUO_CHOICES = [("Navy + juice", "navy_juice"), ("Navy + orange", "navy_orange"), ("Gray blue + yellow", "slate_yellow")]
+        "slate_yellow": ((43, 50, 63), (253, 239, 75)),
+        "midnight_coral": ((22, 30, 58), (255, 122, 105)),
+        "forest_gold": ((17, 56, 46), (240, 190, 80)),
+        "charcoal_mint": ((32, 38, 46), (88, 226, 190)),
+        "plum_peach": ((54, 26, 66), (255, 178, 145)),
+        "teal_sun": ((7, 62, 72), (255, 204, 70)),
+        "wine_blush": ((72, 20, 40), (255, 188, 200)),
+        "indigo_lime": ((44, 30, 104), (184, 240, 92)),
+        # three tones
+        "navy_red_gold": ((17, 26, 54), (238, 82, 83), (255, 206, 92)),
+        "midnight_coral_aqua": ((22, 30, 58), (255, 118, 117), (85, 214, 205)),
+        "teal_gold_coral": ((10, 54, 64), (255, 196, 76), (255, 128, 108)),
+        "plum_pink_yellow": ((46, 22, 64), (255, 120, 184), (255, 218, 70)),
+        "charcoal_lime_sky": ((32, 36, 42), (182, 236, 92), (110, 200, 255)),
+        "forest_mustard_cream": ((20, 50, 40), (236, 178, 58), (247, 236, 214))}
+DUO_CHOICES = [("Navy + juice", "navy_juice"), ("Navy + orange", "navy_orange"), ("Gray blue + yellow", "slate_yellow"),
+               ("Midnight + coral", "midnight_coral"), ("Forest + gold", "forest_gold"),
+               ("Charcoal + mint", "charcoal_mint"), ("Plum + peach", "plum_peach"), ("Deep teal + sunflower", "teal_sun"),
+               ("Wine + blush", "wine_blush"), ("Indigo + lime", "indigo_lime"),
+               ("Navy · red · gold", "navy_red_gold"), ("Midnight · coral · aqua", "midnight_coral_aqua"),
+               ("Deep teal · gold · coral", "teal_gold_coral"), ("Plum · pink · yellow", "plum_pink_yellow"),
+               ("Charcoal · lime · sky", "charcoal_lime_sky"), ("Forest · mustard · cream", "forest_mustard_cream")]
 DEFAULT_PALETTE = "navy_juice"
 # the four favourites first (the two-tone sets and Sky blue), then the other colours
 PALETTE_CHOICES = DUO_CHOICES + [("Sky blue", "sky")] + PALETTE_CHOICES
@@ -82,8 +104,8 @@ def _pal_key(pal):
 def _pair(pal):
     """(colour A, colour B) of a palette; a two-tone set gives its accent and a deeper shade of it."""
     if pal in DUOS:
-        dk, x = DUOS[pal]
-        return x, _mix(x, dk, 0.3)
+        dk, x = DUOS[pal][:2]
+        return x, (DUOS[pal][2] if len(DUOS[pal]) > 2 else _mix(x, dk, 0.3))
     return PALETTES[pal]
 
 
@@ -111,6 +133,13 @@ def _on_white(c, lum=0.2):
     while L(_mix(c, BLACK, k)) > lum and k < 1:
         k += 0.04
     return _mix(c, BLACK, k)
+
+
+def _lum(c):
+    """Relative luminance 0 (black) .. 1 (white)."""
+    ch = [v / 255 for v in c]
+    ch = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in ch]
+    return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
 
 
 def _vis_w(im):
@@ -296,7 +325,7 @@ def _mesh(pal):
     if key not in _cache:
         a, b = _pair(pal)
         if pal in DUOS:  # two-tone: a deep base with soft lighter shades and a touch of the accent
-            dk, x = DUOS[pal]
+            dk, x = DUOS[pal][:2]
             arr = _gradient([(0, _mix(dk, WHITE, 0.06)), (1, _mix(dk, BLACK, 0.3))])
             arr = _blobs(arr, [(120, 260, 640, _mix(dk, WHITE, 0.22), 0.8), (1000, 820, 560, x, 0.28),
                                (200, 1500, 620, _mix(dk, WHITE, 0.16), 0.6), (980, 1880, 560, _mix(dk, x, 0.25), 0.4)])
@@ -596,7 +625,7 @@ def _deep(pal):
     if key not in _cache:
         a, b = _pair(pal)
         if pal in DUOS:  # two-tone: the deep colour, lighter at the top
-            dk, x = DUOS[pal]
+            dk, x = DUOS[pal][:2]
             arr = _gradient([(0, _mix(dk, WHITE, 0.1)), (0.5, dk), (1, _mix(dk, BLACK, 0.35))])
             arr = _blobs(arr, [(140, 420, 600, _mix(dk, WHITE, 0.2), 0.45), (980, 1450, 640, _mix(dk, x, 0.18), 0.4)])
         else:
@@ -825,12 +854,14 @@ def _bright_scheme(pal):
     """Colours of the Bright design: a bright gradient with white cards (PALETTES) or a two-tone set (DUOS):
     deep background, cards a shade lighter, the accent for the Arabic and the card being read."""
     if pal in DUOS:
-        dk, x = DUOS[pal]
+        dk, x = DUOS[pal][:2]
+        y = DUOS[pal][2] if len(DUOS[pal]) > 2 else x  # three tones: the second accent
         return dict(bg=(_mix(dk, WHITE, 0.07), _mix(dk, BLACK, 0.28)), card=_mix(dk, WHITE, 0.1), card_a=x, ring=None,
                     en=WHITE, ipa=_mix(dk, WHITE, 0.66), ar=x, en_a=dk, ipa_a=_mix(dk, x, 0.4), ar_a=dk,
-                    disc=_mix(dk, WHITE, 0.24), num=WHITE, disc_a=dk, bars=x, disc_d=x, tick=dk,
-                    title=WHITE, kick=x, sub=x, shadow=_mix(dk, BLACK, 0.7),
-                    back=x, ex=dk, hl=dk, hl_txt=x, label=_mix(dk, x, 0.4), bars_b=dk)
+                    disc=_mix(dk, WHITE, 0.24), num=WHITE, disc_a=dk, bars=x, disc_d=y, tick=dk,
+                    title=WHITE, kick=y, sub=y, shadow=_mix(dk, BLACK, 0.7),
+                    back=x, ex=dk, hl=dk, hl_txt=y if y != x and _lum(y) > 0.35 else x, label=_mix(dk, x, 0.4),
+                    bars_b=dk)
     a, b = PALETTES[pal if pal in PALETTES else "sky"]
     ink, acc = (24, 26, 36), _on_white(a)
     return dict(bg=(a, b), card=WHITE, card_a=WHITE, ring=(255, 206, 60), en=ink, ipa=(110, 114, 130), ar=acc,
