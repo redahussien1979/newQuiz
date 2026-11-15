@@ -67,7 +67,8 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   makes `pg.hider` (`MeaningHider`); each design `add`s its meaning images while built (card colour, text colour, font
   for the split-flap redraw) and, while `hidden(j, u)`, draws `render(j, 'n'|'a', u)` in their place (card designs
   keep a copy without the meaning + its offset: `with_meaning`); `hide_window` / `hide_sounds` time it (vocab adds
-  the sound cues). Designs Table / Stepper (`_Toned`: two-tone colours, Bright's font sets, `row_ys`).
+  the sound cues); Typewriter placeholder `list_wait` (`WAIT_STYLES`: dots default / shimmer / ghost / caret / dashes,
+  `MeaningHider._waiting`). Designs Table / Stepper (`_Toned`: two-tone colours, Bright's font sets, `row_ys`).
   Rows of Bright / Table / Stepper / Glass / Pop: the meaning always on its own line under the word, ONE size per
   page (`_stack_k`: the largest k at which every row fits; `_place(..., two_lines=True)`, `_draw_row`).
   Excel: Type = list, one word per row with its Audio;

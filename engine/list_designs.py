@@ -1243,6 +1243,12 @@ HIDE_STYLES = [("Off — the meanings show from the start", "none"),
                ("Reveal — blurred, wiped clear with a shine", "reveal"),
                ("Typewriter — typed in letter by letter", "typewriter"),
                ("Split-flap — letters flip like a departure board, then settle", "splitflap")]
+# Typewriter: what holds the place of the letters still to come (vocab `list_wait`)
+WAIT_STYLES = [("Typing dots — like a chat app's \"is typing…\"", "dots"),
+               ("Shimmer — a loading bar with a sweeping light", "shimmer"),
+               ("Ghost — the meaning faint and blurred", "ghost"),
+               ("Caret — only a blinking cursor", "caret"),
+               ("Dashes — one per letter", "dashes")]
 _HIDE_WIN = {"reveal": (0.3, 0.85), "typewriter": (0.25, 1.3), "splitflap": (0.2, 1.1)}
 _AR_LETTERS = "ابتثجحخدذرزسشصضطظعغفقكلمنهوي"
 
@@ -1277,9 +1283,9 @@ class MeaningHider:
     LEVELS = 10
     WAITS = ("dashes", "shimmer", "dots", "ghost", "caret")
 
-    def __init__(self, pg, style, wait="dashes"):
+    def __init__(self, pg, style, wait="dots"):
         self.pg, self.style = pg, style
-        self.wait = wait if wait in self.WAITS else "dashes"
+        self.wait = wait if wait in self.WAITS else "dots"
         self.m = {}
         self.win = []
         for j in range(len(pg.words)):

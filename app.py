@@ -45,7 +45,7 @@ from engine import news_words as nw
 from engine import text_batch
 from engine import vocab_batch
 from engine import word_import
-from engine.list_designs import EX_STYLES, HIDE_STYLES, PALETTE_CHOICES, font_choices
+from engine.list_designs import EX_STYLES, HIDE_STYLES, WAIT_STYLES, PALETTE_CHOICES, font_choices
 from engine.word_list import BOARD_CHOICES, CHALK_COLOR_CHOICES, HIGHLIGHTS, MARKS
 from engine.know_country import video as kc_video
 
@@ -76,7 +76,7 @@ MQ_KEYS = ["title", "subtitle", "questions", "think_seconds", "reveal_seconds", 
 VC_KEYS = ["group", "group_name", "title", "subtitle", "lesson", "lesson_n", "items", "accent", "background",
            "title_style", "hook", "pace", "guess_seconds", "timer", "timer_fx", "recap", "audio", "audio_gain",
            "list_style", "list_highlight", "chalk_board", "chalk_mark", "chalk_color", "list_palette", "list_fonts",
-           "list_ex_style", "list_karaoke", "list_hide"]
+           "list_ex_style", "list_karaoke", "list_hide", "list_wait"]
 TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "lead", "band", "marker", "style",
            "level", "translation", "logo", "brand_name", "logo_shape", "logo_intro", "logo_end", "ending_on",
            "para_text", "para_store", "para_alias", "read_style",
@@ -93,7 +93,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "group_name": "", "lesson": "", "lesson_n": 1, "accent": "group", "background": "group", "hook": False,
             "pace": "normal", "guess_seconds": 5, "timer": "Bar", "recap": True, "audio_gain": 1.0,
             "list_style": "Bright", "list_highlight": "cream", "chalk_board": "green", "chalk_mark": "circle",
-            "chalk_color": "pink", "list_palette": "navy_juice", "list_fonts": 1, "list_ex_style": "flip", "list_karaoke": False, "list_hide": "none",
+            "chalk_color": "pink", "list_palette": "navy_juice", "list_fonts": 1, "list_ex_style": "flip", "list_karaoke": False, "list_hide": "none", "list_wait": "dots",
             "tag": "", "lead": 1.0, "band": "teal",
             "marker": "yellow",
             "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
@@ -2662,6 +2662,9 @@ def build_ui():
                                 v_lhide = gr.Radio(HIDE_STYLES, value="none", label="🙈 Hide the meanings until spoken",
                                                    info="Curiosity keeps people watching: each Arabic meaning stays "
                                                         "hidden until its word is heard (every design)")
+                                v_lwait = gr.Dropdown(WAIT_STYLES, value="dots", label="Typewriter: before the letters",
+                                                      info="What waits in place of the meaning until it is typed",
+                                                      visible=False)
                                 with gr.Row(visible=False) as v_lrow_ed:
                                     v_lhl = gr.Dropdown(HIGHLIGHTS, value="cream", label="Editorial: highlight",
                                                         info="With 🎨 Design's own colours: how the row being read is "
@@ -2691,7 +2694,7 @@ def build_ui():
                                                                  v_items, v_acc, v_bg, v_tstyle, v_hook, v_pace, v_secs,
                                                                  v_timer, v_tfx, v_recap, v_audio, v_again,
                                                                  v_lstyle, v_lhl, v_cboard, v_cmark, v_ccol, v_lpal,
-                                                                 v_lfont, v_lex, v_lkar, v_lhide]
+                                                                 v_lfont, v_lex, v_lkar, v_lhide, v_lwait]
                 vc_pv = preview_panel("vocab")
             wire(vc_proj, vc_pv, vc_fields)
             wire_vc_batch(vxl, vc_pv, vc_fields)
@@ -2706,6 +2709,7 @@ def build_ui():
                 own = pal == "own"
                 return (gr.update(visible=style == "Editorial" and own), gr.update(visible=style == "Chalkboard"),
                         gr.update(visible=own), gr.update(choices=font_choices(style or "Bright")))
+            v_lhide.change(lambda h: gr.update(visible=h == "typewriter"), v_lhide, v_lwait, show_progress="hidden")
             gr.on(triggers=[v_lstyle.change, v_lpal.change], fn=list_design, inputs=[v_lstyle, v_lpal],
                   outputs=[v_lrow_ed, v_lrow_ch, v_lrow_chc, v_lfont], show_progress="hidden")
 

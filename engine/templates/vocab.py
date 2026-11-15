@@ -856,7 +856,8 @@ class VocabVideo:
                               mark=v.get("chalk_mark") or "circle", color=v.get("chalk_color") or "pink",
                               palette=v.get("list_palette") or "navy_juice", font=s.get("font_file") or "",
                               fonts=v.get("list_fonts") or 1, ex_style=v.get("list_ex_style") or "flip",
-                              karaoke=bool(v.get("list_karaoke")), hide=v.get("list_hide") or "none")
+                              karaoke=bool(v.get("list_karaoke")), hide=v.get("list_hide") or "none",
+                              wait=v.get("list_wait") or "dots")
         self.audio_gain = float(v.get("audio_gain") if v.get("audio_gain") is not None else 1.0)
         clips, _ = match_clips(v.get("audio") or [], self.items)
 
