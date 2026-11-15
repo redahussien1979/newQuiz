@@ -195,35 +195,24 @@ def _fit(im, max_w):
 IPA_GAP = 22  # between the English word and its IPA when they share a line
 
 
-def _share(make, avail, cut=0):
-    """make(k) -> (english, ipa or None, arabic, ...) at k x the normal size -> (images, two_lines).
-    One line: English (IPA under it) on the left, Arabic on the right, together at most `avail` px wide; when they
-    do not fit, both are re-rendered smaller together (never stretched). When that would make them much smaller,
-    the Arabic gets its own line under the English (two_lines, the IPA then follows the word) and both stay big;
-    `cut` = px of the first line kept free in that case (e.g. under a corner sticker)."""
-    def one(imgs):
+def _stack_k(makes, avail, max_h=None):
+    """ONE size factor for every row of a page with the meaning on its own line under the word (the IPA beside the
+    word): the largest k (<= 1) at which every row's word line and meaning line fit in `avail` px wide and `max_h` px
+    tall. makes = one make(k) -> (english, ipa or None, arabic, ...) per row. Every word of the page then has the same
+    size, and so has every meaning."""
+    def need(imgs):
         en, ipa, ar = imgs[:3]
-        return max(_vis_w(en), _vis_w(ipa) if ipa is not None else 0) + _vis_w(ar)
-
-    def two(imgs):
-        en, ipa, ar = imgs[:3]
-        return max(_vis_w(en) + (IPA_GAP + _vis_w(ipa) if ipa is not None else 0), _vis_w(ar))
-
-    def fit(need, room):
-        k = 1.0
-        for _ in range(6):
-            n = need(make(k))
-            if n <= room:
-                return k
-            k *= max(0.6, room / n) * 0.99
-        return k
-
-    k1 = fit(one, avail)
-    if k1 < 0.8:
-        k2 = fit(two, avail + 50 - cut)
-        if k2 > k1:
-            return make(k2), True
-    return make(k1), False
+        w = max(_vis_w(en) + (IPA_GAP + _vis_w(ipa) if ipa is not None else 0), _vis_w(ar))
+        h = (en.height - 60) + (ar.height - 60) * 1.2
+        return max(w / avail, h / max_h if max_h else 0.0)
+    k = 1.0
+    for mk in makes:  # k only goes down, so the rows already checked still fit
+        for _ in range(8):
+            r = need(mk(k))
+            if r <= 1:
+                break
+            k *= max(0.6, 1 / r) * 0.99
+    return k
 
 
 def _place(en, ipa, ar, two_lines, xl, xr, cy, sc):
@@ -405,15 +394,17 @@ class Glass:
         self.bd = int(min(76, ch * 0.5) * max(0.8, sc))  # badge diameter
         self.prog_w = self.CW - 80
         self.rows = []
+        tx = 38 + self.bd + 26  # where the words start, right of the badge
+
+        def make(k, w):
+            return (_t(POPPINS_B, w["en"], 54 * sc * k, WHITE, "Bold"),
+                    _ipa(w["ipa"], 31 * sc * k, (225, 222, 240)) if w["ipa"] else None,
+                    _t(TAJAWAL_K, w["ar"], 56 * sc * k, WHITE, "Black"), k)
+        kc = _stack_k([lambda k, w=w: make(k, w) for w in pg.words], self.CW - tx - 34, ch * 0.78)
         for j, w in enumerate(pg.words):
             cy = int(pg.cy[j])
             y0 = cy - ch // 2
-            def make(k, w=w):
-                return (_fit(_t(POPPINS_B, w["en"], 54 * sc * k, WHITE, "Bold"), 520),
-                        _fit(_ipa(w["ipa"], 31 * sc * k, (225, 222, 240)), 520) if w["ipa"] else None,
-                        _fit(_t(TAJAWAL_K, w["ar"], 56 * sc * k, WHITE, "Black"), 680), k)
-            tx = 38 + self.bd + 26  # where the words start, right of the badge
-            (en_n, ipa_n, ar_k, k), two = _share(make, self.CW - tx - 34 - 50)
+            (en_n, ipa_n, ar_k, k), two = make(kc, w), True  # one size for the page, the meaning under the word
             pos = _place(en_n, ipa_n, ar_k, two, tx, self.CW - 34, ch / 2, sc)
             ar_n = _fit(_t(TAJAWAL, w["ar"], 56 * sc * k, WHITE, "Bold"), _vis_w(ar_k))
             en_a = _fit(_t(POPPINS_B, w["en"], 54 * sc * k, dark, "Bold"), 520)
@@ -611,12 +602,15 @@ class Pop:
         for im in spk:
             self.burst.alpha_composite(im, (self.burst.width // 2 - im.width // 2 + 4,
                                             self.burst.height // 2 - im.height // 2))
+
+        def make(k, w):
+            return (_t(POPPINS_K, w["en"], 56 * sc * k, BLACK, "Black"),
+                    _ipa(w["ipa"], 30 * sc * k, (70, 70, 80)) if w["ipa"] else None,
+                    _t(LALEZAR, w["ar"], 64 * sc * k, BLACK, "Regular"))
+        # the corner sticker covers the top right of the card being read: the word line keeps clear of it
+        kc = _stack_k([lambda k, w=w: make(k, w) for w in pg.words], self.CW - (18 + tab + 26) - 28 - 110, ch * 0.8)
         for j, w in enumerate(pg.words):
-            (en, ipa, ar), two = _share(
-                lambda k, w=w: (_fit(_t(POPPINS_K, w["en"], 56 * sc * k, BLACK, "Black"), 500),
-                                _fit(_ipa(w["ipa"], 30 * sc * k, (70, 70, 80)), 500) if w["ipa"] else None,
-                                _fit(_t(LALEZAR, w["ar"], 64 * sc * k, BLACK, "Regular"), 720)),
-                self.CW - (18 + tab + 26) - 28 - 50, cut=110)
+            (en, ipa, ar), two = make(kc, w), True  # one size for the page, the meaning under the word
             pos = _place(en, ipa, ar, two, 18 + tab + 26, self.CW - 28, ch / 2, sc)
             num = _t(ANTON, str(j + 1), tab * 0.62, WHITE, "Regular")
             row = dict(norm=self._card(WHITE, en, ipa, ar, pos, num, 10),
@@ -1429,12 +1423,16 @@ class Bright:
         self.d = d = int(min(96, ch * 0.5))  # badge diameter
         cw, tx = self.CW, 30 + d + 30
         self.cards = []
+        kc = _stack_k([lambda k, w=w: (_t(POPPINS_B, w["en"], 62 * k0 * k, c["en"], "Bold"),
+                                       _ipa(w["ipa"], 34 * k0 * k, c["ipa"]) if w["ipa"] else None,
+                                       _t(PLEX_B, w["ar"], 64 * k0 * k, c["ar"], "Bold")) for w in pg.words],
+                      cw - tx - 34, ch * 0.8)
         for j, w in enumerate(pg.words):
             def make(k, w=w, sfx=""):
-                return (_fit(_t(POPPINS_B, w["en"], 62 * k0 * k, c["en" + sfx], "Bold"), 560),
-                        _fit(_ipa(w["ipa"], 34 * k0 * k, c["ipa" + sfx]), 560) if w["ipa"] else None,
-                        _fit(_t(PLEX_B, w["ar"], 64 * k0 * k, c["ar" + sfx], "Bold"), 760), k)
-            (en, ipa, ar, k), two = _share(make, cw - tx - 34 - 50)
+                return (_t(POPPINS_B, w["en"], 62 * k0 * k, c["en" + sfx], "Bold"),
+                        _ipa(w["ipa"], 34 * k0 * k, c["ipa" + sfx]) if w["ipa"] else None,
+                        _t(PLEX_B, w["ar"], 64 * k0 * k, c["ar" + sfx], "Bold"), k)
+            (en, ipa, ar, k), two = make(kc), True  # one size for the page, the meaning under the word
             en_a, ipa_a, ar_a, _ = make(k, sfx="_a")  # the same sizes in the colours of the card being read
             pos = {key: (x + PAD, y + PAD) for key, (x, y) in _place(en, ipa, ar, two, tx, cw - 34, ch / 2, k0).items()}
             out = {}
@@ -1749,18 +1747,22 @@ class Table(_Toned):
             if j:
                 d.line([(PAD + 30, yy), (PAD + pw - 30, yy)], fill=line, width=2)
         d.line([(PAD + 104, PAD + self.HH), (PAD + 104, PAD + ph - 20)], fill=line, width=2)
-        k = min(1.1, self.rh / 190)
+        k0 = min(1.1, self.rh / 190)
+
+        def make(k, w, ce=WHITE, ci=None, ca=None):
+            return (_t(POPPINS_B, w["en"], 56 * k0 * k, ce, "Bold"),
+                    _ipa(w["ipa"], 30 * k0 * k, ci or self.mute) if w["ipa"] else None,
+                    _t(PLEX_B, w["ar"], 54 * k0 * k, ca or x, "Bold"))
+        # one size for the page, the meaning on its own line under the word (right aligned like Arabic)
+        kc = _stack_k([lambda k, w=w: make(k, w) for w in pg.words], 986 - 170, self.rh * 0.8)
         self.rows = []
         for j, w in enumerate(pg.words):
-            r = {"num": _t(POPPINS_B, f"{j + 1:02d}", 34 * k, self.mute, "Bold"),
-                 "num_a": _t(POPPINS_B, f"{j + 1:02d}", 34 * k, dk, "Bold")}
+            r = {"num": _t(POPPINS_B, f"{j + 1:02d}", 34 * k0, self.mute, "Bold")}
             for s, (ce, ci, ca) in (("n", (WHITE, self.mute, x)), ("a", (dk, _mix(dk, x, 0.4), dk))):
-                r["en" + s] = _t(POPPINS_B, w["en"], 54 * k, ce, "Bold", 520)
-                r["ipa" + s] = _ipa(w["ipa"], 30 * k, ci) if w["ipa"] else None
-                room = 986 - 170 - (r["en" + s].width - 60) - 50  # the meaning takes what the word leaves
-                r["ar" + s] = _t(PLEX_B, w["ar"], 54 * k, ca, "Bold", max(200, min(420, room)))
+                r["en" + s], r["ipa" + s], r["ar" + s] = make(kc, w, ce, ci, ca)
                 if pg.hider:
-                    pg.hider.add(j, s, r["ar" + s], body if s == "n" else x, ca, PLEX_B, int(54 * k), "Bold")
+                    pg.hider.add(j, s, r["ar" + s], body if s == "n" else x, ca, PLEX_B, int(54 * k0 * kc), "Bold")
+            r["pos"] = _place(r["enn"], r["ipan"], r["arn"], True, 170, 986, 0, k0 * kc)
             self.rows.append(r)
         self.tick = _tick_img(44, x, 6)
         self.band = Image.new("RGBA", (pw - 20, int(self.rh - 14)), (0, 0, 0, 0))
@@ -1785,13 +1787,19 @@ class Table(_Toned):
                 paste(fr, self.tick, 102, cy, 1, a)
             elif not (hl > 0.5):
                 paste(fr, r["num"], 102, cy, 1, a)
-            ipa = r["ipa" + s]
-            paste(fr, r["en" + s], 170 - 30, cy - (18 if ipa else 0), 1, a, "l")
-            if ipa:
-                paste(fr, ipa, 170 - 30, cy + 34, 1, a, "l")
-            paste(fr, self._meaning(j, s, r["ar" + s], u), 1030 - 44 + 30, cy, 1, a, "r")
+            _draw_row(fr, r["en" + s], r["ipa" + s], self._meaning(j, s, r["ar" + s], u), r["pos"], cy, a)
             if hl > 0.5:  # the sound bars in the number column
                 _bars(fr, 102, cy, 34, self.dk, u, pg.speak[j], a * hl)
+
+
+def _draw_row(fr, en, ipa, ar, pos, cy, a):
+    """A row's texts at the places _place() gave (relative to the row centre cy)."""
+    for key, im in (("en", en), ("ipa", ipa)):
+        if im is not None:
+            x, y = pos[key]
+            paste(fr, im, x - 30, cy + y - 30 + im.height / 2, 1, a, "l")
+    x, y = pos["ar"]
+    paste(fr, ar, x + 30, cy + y, 1, a, "r")
 
 
 def _ring(d, col, w):
@@ -1815,14 +1823,19 @@ class Stepper(_Toned):
         self.row_ys = [y0 + self.p * (j + 0.5) for j in range(n)]
         k = min(1.1, self.p / 210)
         d = int(66 * k)
+
+        def make(kk, w):
+            return (_t(POPPINS_B, w["en"], 58 * k * kk, WHITE, "Bold"),
+                    _ipa(w["ipa"], 30 * k * kk, self.mute) if w["ipa"] else None,
+                    _t(PLEX_B, w["ar"], 56 * k * kk, x, "Bold"))
+        # one size for the page, the meaning on its own line under the word (right aligned like Arabic)
+        kc = _stack_k([lambda kk, w=w: make(kk, w) for w in pg.words], 1000 - 210, self.p * 0.8)
         self.rows = []
         for j, w in enumerate(pg.words):
-            en = _t(POPPINS_B, w["en"], 58 * k, WHITE, "Bold", 500)
-            room = 1000 - 210 - (en.width - 60) - 50  # the meaning takes what the word leaves
-            r = {"en": en, "ipa": _ipa(w["ipa"], 30 * k, self.mute) if w["ipa"] else None,
-                 "ar": _t(PLEX_B, w["ar"], 56 * k, x, "Bold", max(200, min(420, room)))}
+            en, ipa, ar = make(kc, w)
+            r = {"en": en, "ipa": ipa, "ar": ar, "pos": _place(en, ipa, ar, True, 210, 1000, 0, k * kc)}
             if pg.hider:
-                pg.hider.add(j, "n", r["ar"], _mix(dk, WHITE, 0.11), x, PLEX_B, int(56 * k), "Bold")
+                pg.hider.add(j, "n", r["ar"], _mix(dk, WHITE, 0.11), x, PLEX_B, int(56 * k * kc), "Bold")
             for s in "nad":
                 im = Image.new("RGBA", (d + 40, d + 40), (0, 0, 0, 0))
                 if s == "n":
@@ -1869,10 +1882,7 @@ class Stepper(_Toned):
                 paste(fr, r["a"], self.LX, cy, 1, a * hl)
                 if hl > 0.5:
                     _bars(fr, self.LX, cy, self.d * 0.42, self.dk, u, pg.speak[j], a * hl)
-            paste(fr, r["en"], 210 - 30, cy - (18 if r["ipa"] else 0), 1, a, "l")
-            if r["ipa"]:
-                paste(fr, r["ipa"], 210 - 30, cy + 36, 1, a * 0.9, "l")
-            paste(fr, self._meaning(j, "n", r["ar"], u), 1000 + 30, cy, 1, a, "r")
+            _draw_row(fr, r["en"], r["ipa"], self._meaning(j, "n", r["ar"], u), r["pos"], cy, a)
 
 
 DESIGNS = {"Bright": Bright, "Glass": Glass, "Pop": Pop, "Spotlight": Spotlight, "Table": Table, "Stepper": Stepper}
