@@ -52,7 +52,7 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   ListPage for its layout/timing): Bright (own full-screen layout `TOP..BOT`) / Glass / Pop / Spotlight, colours `list_palette` (`PALETTES` 12 +
   `DUOS`: 15 two-tone + 6 three-tone sets (base, accent, 2nd accent); the menu `PALETTE_CHOICES` = "own" (`OWN_LOOK`;
   Editorial / Chalkboard keep their highlight / board pickers) + the sets (single `PALETTES` only for older projects);
-  Editorial = light-tone paper + dark ink, Chalkboard = dark-tone board (`tones()`)); `list_fonts` 1-5 = the design's font set (`FONT_SETS`: design font -> (font, weight), applied
+  Editorial = light-tone paper + dark ink, Chalkboard = dark-tone board (`tones()`)); `list_fonts` 1-10 = the design's font set (6-10 = fonts of well-known apps: Inter, Roboto, Nunito, Lexend, DM Sans … + Noto Sans / Naskh Arabic, Vazirmatn; `FONT_SETS`: design font -> (font, weight), applied
   in word_list `_t`; 1 = own fonts; a 🎨 Style & sound font wins). `engine/word_import.py` = 📃 Word list's Excel import (English | Arabic | IPA, any number of
   rows -> pages -> videos; optional Sample sentence, Title, Subtitle columns: a title goes on until the next,
   a page takes the one at its first word) + ElevenLabs voice per word (`voice_clips` -> w<page>_<word>.mp3, cache DATA_DIR/tts). Sample sentence: an `example:` line under a

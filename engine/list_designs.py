@@ -19,6 +19,7 @@ import math
 import numpy as np
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
+from .core import DEFAULT_FONT as CAIRO
 from .core import H, W, ease_io, ease_out_back, paste, prog
 from .word_list import MESSIRI, PATRICK, PLAYFAIR, RUQAA, _font, _gradient, _ipa, _speaker, _t, resolve_font
 
@@ -48,6 +49,18 @@ OSWALD = _font("Oswald", "Oswald[wght].ttf")
 PLEX_S = _font("IBMPlexSansArabic", "IBMPlexSansArabic-SemiBold.ttf")
 REEM = _font("ReemKufi", "ReemKufi[wght].ttf")
 RIGHTEOUS = _font("Righteous", "Righteous-Regular.ttf")
+# fonts of well-known apps (Google Fonts, OFL): Figma / GitHub, Android / YouTube, Google, learning apps …
+INTER = _font("Inter", "Inter[opsz,wght].ttf")
+ROBOTO = _font("Roboto", "Roboto[wdth,wght].ttf")
+OPENSANS = _font("OpenSans", "OpenSans[wdth,wght].ttf")
+NUNITO = _font("Nunito", "Nunito[wght].ttf")
+LEXEND = _font("Lexend", "Lexend[wght].ttf")
+DMSANS = _font("DMSans", "DMSans[opsz,wght].ttf")
+JAKARTA = _font("PlusJakartaSans", "PlusJakartaSans[wght].ttf")
+RUBIK = _font("Rubik", "Rubik[wght].ttf")
+NOTO_AR = _font("NotoSansArabic", "NotoSansArabic[wdth,wght].ttf")
+NASKH = _font("NotoNaskhArabic", "NotoNaskhArabic[wght].ttf")
+VAZIR = _font("Vazirmatn", "Vazirmatn[wght].ttf")
 
 # (main colour A, second colour B); Bright uses them as its background gradient (A at the top, B at the bottom)
 PALETTES = {"sky": ((56, 152, 236), (99, 182, 255)),
@@ -1478,7 +1491,8 @@ def _same(src, to, w=None):
     return {f: (to, w) for f in src}
 
 
-# Each design: 5 sets of (name, {design font: (new font, weight or None)}); set 1 = the design's own fonts.
+# Each design: 10 sets of (name, {design font: (new font, weight or None)}); set 1 = the design's own fonts,
+# sets 6-10 = fonts of well-known apps (Inter, Roboto, Open Sans, Nunito, Lexend, DM Sans … + Noto / Vazirmatn / Cairo).
 # English parts only ever map to fonts with Latin letters, Arabic parts to fonts with Arabic letters.
 FONT_SETS = {
     "Bright": [  # English: POPPINS_B · Arabic: PLEX_B
@@ -1487,6 +1501,13 @@ FONT_SETS = {
         ("Alexandria (one family)", {POPPINS_B: (ALEXANDRIA, "SemiBold"), PLEX_B: (ALEXANDRIA, "SemiBold")}),
         ("Fredoka + Baloo (rounded)", {POPPINS_B: (FREDOKA, "SemiBold"), PLEX_B: (BALOO, "Bold")}),
         ("Oswald + Changa (condensed)", {POPPINS_B: (OSWALD, "SemiBold"), PLEX_B: (CHANGA, "SemiBold")}),
+        # sets 6-10: the fonts of well-known apps
+        ("Inter + Noto Sans Arabic (Figma · GitHub)", {POPPINS_B: (INTER, "Bold"), PLEX_B: (NOTO_AR, "Bold")}),
+        ("Roboto + Cairo (Android · YouTube)", {POPPINS_B: (ROBOTO, "Bold"), PLEX_B: (CAIRO, "Bold")}),
+        ("Nunito + Vazirmatn (friendly learning apps)", {POPPINS_B: (NUNITO, "ExtraBold"), PLEX_B: (VAZIR, "Bold")}),
+        ("Lexend + Almarai (made for reading)", {POPPINS_B: (LEXEND, "SemiBold"), PLEX_B: (ALMARAI, "Bold")}),
+        ("DM Sans + Noto Naskh Arabic (Google · classic naskh)", {POPPINS_B: (DMSANS, "Bold"),
+                                                                  PLEX_B: (NASKH, "Bold")}),
     ],
     "Glass": [  # title POPPINS_K · words POPPINS_B · lesson line MONTSERRAT · Arabic TAJAWAL / TAJAWAL_K
         ("Poppins + Tajawal", {}),
@@ -1499,6 +1520,23 @@ FONT_SETS = {
                                              TAJAWAL: (MESSIRI, "SemiBold"), TAJAWAL_K: (MESSIRI, "Bold")}),
         ("Fredoka + Baloo (rounded)", {POPPINS_K: (FREDOKA, "Bold"), POPPINS_B: (FREDOKA, "SemiBold"),
                                        TAJAWAL: (BALOO, "SemiBold"), TAJAWAL_K: (BALOO, "Bold")}),
+        ("Inter + Noto Sans Arabic (Figma · GitHub)", {POPPINS_K: (INTER, "ExtraBold"), POPPINS_B: (INTER, "SemiBold"),
+                                                       MONTSERRAT: (INTER, "SemiBold"), TAJAWAL: (NOTO_AR, "SemiBold"),
+                                                       TAJAWAL_K: (NOTO_AR, "Bold")}),
+        ("Plus Jakarta Sans + Vazirmatn (fintech apps)", {POPPINS_K: (JAKARTA, "ExtraBold"),
+                                                          POPPINS_B: (JAKARTA, "Bold"), MONTSERRAT: (JAKARTA, "Bold"),
+                                                          TAJAWAL: (VAZIR, "SemiBold"), TAJAWAL_K: (VAZIR, "Bold")}),
+        ("Roboto + Cairo (Android · YouTube)", {POPPINS_K: (ROBOTO, "Black"), POPPINS_B: (ROBOTO, "Bold"),
+                                                MONTSERRAT: (ROBOTO, "Medium"), TAJAWAL: (CAIRO, "SemiBold"),
+                                                TAJAWAL_K: (CAIRO, "Bold")}),
+        ("DM Sans + Almarai (Google)", {POPPINS_K: (DMSANS, "ExtraBold"), POPPINS_B: (DMSANS, "Bold"),
+                                       MONTSERRAT: (DMSANS, "Bold"), TAJAWAL: (ALMARAI, "Bold"),
+                                       TAJAWAL_K: (ALMARAI, "ExtraBold")}),
+        ("Open Sans + Noto Naskh Arabic (Google · WordPress)", {POPPINS_K: (OPENSANS, "ExtraBold"),
+                                                                POPPINS_B: (OPENSANS, "Bold"),
+                                                                MONTSERRAT: (OPENSANS, "SemiBold"),
+                                                                TAJAWAL: (NASKH, "SemiBold"),
+                                                                TAJAWAL_K: (NASKH, "Bold")}),
     ],
     "Pop": [  # title + numbers ANTON · words POPPINS_K · lesson line MONTSERRAT · Arabic LALEZAR
         ("Anton + Poppins + Lalezar", {}),
@@ -1510,6 +1548,16 @@ FONT_SETS = {
                                           LALEZAR: (LEMONADA, "Bold")}),
         ("Oswald + Alexandria (heavy)", {ANTON: (OSWALD, "Bold"), POPPINS_K: (OSWALD, "Bold"),
                                          LALEZAR: (ALEXANDRIA, "Black")}),
+        ("Rubik + Vazirmatn (bold app look)", {ANTON: (RUBIK, "Black"), POPPINS_K: (RUBIK, "Bold"),
+                                               LALEZAR: (VAZIR, "Black")}),
+        ("Inter + Noto Sans Arabic (Figma · GitHub)", {ANTON: (INTER, "Black"), POPPINS_K: (INTER, "ExtraBold"),
+                                                       LALEZAR: (NOTO_AR, "Black")}),
+        ("Nunito + Almarai (friendly learning apps)", {ANTON: (NUNITO, "Black"), POPPINS_K: (NUNITO, "Black"),
+                                                       LALEZAR: (ALMARAI, "ExtraBold")}),
+        ("Lexend + Cairo (made for reading)", {ANTON: (LEXEND, "Black"), POPPINS_K: (LEXEND, "Bold"),
+                                               LALEZAR: (CAIRO, "Black")}),
+        ("DM Sans + Tajawal (Google)", {ANTON: (DMSANS, "Black"), POPPINS_K: (DMSANS, "ExtraBold"),
+                                        LALEZAR: (TAJAWAL, "Black")}),
     ],
     "Spotlight": [  # lesson line + title + words MONTSERRAT · Arabic READEX
         ("Montserrat + Readex Pro", {}),
@@ -1517,6 +1565,11 @@ FONT_SETS = {
         ("Playfair + El Messiri (elegant)", {MONTSERRAT: (PLAYFAIR, None), READEX: (MESSIRI, "Bold")}),
         ("Oswald + Noto Kufi (condensed)", {MONTSERRAT: (OSWALD, None), READEX: (NOTO_KUFI, "Bold")}),
         ("Alexandria (one family)", {MONTSERRAT: (ALEXANDRIA, None), READEX: (ALEXANDRIA, "SemiBold")}),
+        ("Inter + Noto Sans Arabic (Figma · GitHub)", {MONTSERRAT: (INTER, None), READEX: (NOTO_AR, "Bold")}),
+        ("DM Sans + Vazirmatn (Google)", {MONTSERRAT: (DMSANS, None), READEX: (VAZIR, "Bold")}),
+        ("Plus Jakarta Sans + Almarai (fintech apps)", {MONTSERRAT: (JAKARTA, None), READEX: (ALMARAI, "Bold")}),
+        ("Roboto + Cairo (Android · YouTube)", {MONTSERRAT: (ROBOTO, None), READEX: (CAIRO, "Bold")}),
+        ("Lexend + Noto Naskh Arabic (made for reading)", {MONTSERRAT: (LEXEND, None), READEX: (NASKH, "Bold")}),
     ],
     "Editorial": [  # English PLAYFAIR · Arabic MESSIRI
         ("Playfair + El Messiri", {}),
@@ -1524,6 +1577,12 @@ FONT_SETS = {
         ("Montserrat + IBM Plex Arabic (modern)", {PLAYFAIR: (MONTSERRAT, None), MESSIRI: (PLEX_S, "SemiBold")}),
         ("Oswald + Changa (newsroom)", {PLAYFAIR: (OSWALD, None), MESSIRI: (CHANGA, "SemiBold")}),
         ("Poppins + Tajawal (clean)", {PLAYFAIR: (POPPINS_B, None), MESSIRI: (TAJAWAL, "Bold")}),
+        ("Inter + Noto Naskh Arabic (modern magazine)", {PLAYFAIR: (INTER, None), MESSIRI: (NASKH, "Bold")}),
+        ("Roboto + Noto Sans Arabic (news apps)", {PLAYFAIR: (ROBOTO, None), MESSIRI: (NOTO_AR, "SemiBold")}),
+        ("Open Sans + Vazirmatn (Google · WordPress)", {PLAYFAIR: (OPENSANS, None), MESSIRI: (VAZIR, "SemiBold")}),
+        ("Literata + Noto Naskh Arabic (Google Play Books)", {PLAYFAIR: (LITERATA, None),
+                                                              MESSIRI: (NASKH, "SemiBold")}),
+        ("DM Sans + Cairo (Google)", {PLAYFAIR: (DMSANS, None), MESSIRI: (CAIRO, "SemiBold")}),
     ],
     "Chalkboard": [  # English PATRICK · Arabic RUQAA
         ("Patrick Hand + Aref Ruqaa", {}),
@@ -1531,12 +1590,17 @@ FONT_SETS = {
         ("Fredoka + Baloo (rounded)", {PATRICK: (FREDOKA, "Medium"), RUQAA: (BALOO, "SemiBold")}),
         ("Lobster + Aref Ruqaa (script)", {PATRICK: (LOBSTER, None)}),
         ("Patrick Hand + Reem Kufi", {RUQAA: (REEM, "SemiBold")}),
+        ("Nunito + Vazirmatn (rounded)", {PATRICK: (NUNITO, "SemiBold"), RUQAA: (VAZIR, "Medium")}),
+        ("Lexend + Noto Sans Arabic (made for reading)", {PATRICK: (LEXEND, "Regular"), RUQAA: (NOTO_AR, "Medium")}),
+        ("Rubik + Cairo (clean)", {PATRICK: (RUBIK, "Regular"), RUQAA: (CAIRO, "SemiBold")}),
+        ("Patrick Hand + Noto Naskh Arabic (classic naskh)", {RUQAA: (NASKH, "Medium")}),
+        ("Inter + Almarai (Figma · GitHub)", {PATRICK: (INTER, "Medium"), RUQAA: (ALMARAI, "Bold")}),
     ],
 }
 
 
 def font_set(style, k):
-    """{design font: (font, weight)} of font set k (1-5) of a design; {} = its own fonts."""
+    """{design font: (font, weight)} of font set k (1-10) of a design; {} = its own fonts."""
     sets = FONT_SETS.get(style) or [("", {})]
     try:
         k = int(k or 1)
