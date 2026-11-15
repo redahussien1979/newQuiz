@@ -173,17 +173,23 @@ def _blob(arr, cx, cy, r, col, s):
     return arr * (1 - g) + np.array(col, np.float32) * g
 
 
-def _paper():
-    if "paper" not in _bg_cache:
-        arr = _gradient([(0, PAPER), (1, (240, 234, 224))])
-        _bg_cache["paper"] = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
-    return _bg_cache["paper"]
+def _mix(a, b, k):
+    return tuple(int(round(x + (y - x) * k)) for x, y in zip(a, b))
+
+
+def _paper(col=PAPER):
+    key = ("paper", tuple(col))
+    if key not in _bg_cache:
+        arr = _gradient([(0, col), (1, _mix(col, (120, 100, 70), 0.06))])
+        _bg_cache[key] = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
+    return _bg_cache[key]
 
 
 def _board(name):
-    key = "board_" + name
+    """A chalkboard: a name from BOARDS, or (top, mid, bottom, wood) colours (a colour set's dark tone)."""
+    key = ("board", name if isinstance(name, str) else tuple(map(tuple, name)))
     if key not in _bg_cache:
-        top, mid, bot, wood = BOARDS[name]
+        top, mid, bot, wood = BOARDS[name] if isinstance(name, str) else name
         arr = _gradient([(0, top), (0.5, mid), (1, bot)])
         arr = _blob(arr, 300, 500, 420, tuple(min(255, c + 30) for c in mid), 0.35)
         arr = _blob(arr, 800, 1300, 520, tuple(min(255, c + 22) for c in mid), 0.3)
@@ -230,6 +236,14 @@ class ListPage:
                 self._build_chalk(opts, title, subtitle)
             else:
                 self._build_editorial(opts, title, subtitle, kicker)
+            self.overlay = None  # sample sentences for the designs that draw no card of their own for them
+            look = getattr(self.impl if self.impl is not None else self, "sentence_look", None)
+            if look and style != "Bright" and any(self.examples):
+                from .list_designs import EX_STYLES, SentenceKit, SentenceOverlay
+                theme, scrim, font, w_txt, w_hl, radius, scrim_k = look
+                kit = SentenceKit(theme, bool(opts.get("karaoke")), font, w_txt, w_hl, radius)
+                st = opts.get("ex_style") if opts.get("ex_style") in [v for _, v in EX_STYLES] else "flip"
+                self.overlay = SentenceOverlay(self, st, kit, scrim, scrim_k)
         finally:
             _USER.clear()
             _SET.clear()
@@ -263,14 +277,29 @@ class ListPage:
             self._draw_chalk(page, u)
         else:
             self._draw_editorial(page, u)
+        if self.overlay is not None:
+            self.overlay.draw(page, u, getattr(self.impl, "row_ys", None))
         if page is not frame:
             frame.paste(Image.blend(frame, page, a))
 
     # ============================================================ Editorial
     def _build_editorial(self, opts, title, subtitle, kicker):
-        hl = opts.get("highlight") if opts.get("highlight") in _HL else "cream"
+        from .list_designs import tones
+        tn = tones(opts.get("palette"))
+        if tn:  # a colour set: paper = its light tone, ink = its dark tone, the row being read = a dark band
+            dk, lt, lt2 = tn
+            INK = RED = dk  # noqa: N806 (the design's names for its colours)
+            NUM = _mix(dk, lt, 0.25)  # noqa: N806
+            self.paper = _mix(lt, (255, 255, 255), 0.55)
+            self.sep_col, self.ipa_col = _mix(dk, self.paper, 0.72), _mix(dk, self.paper, 0.4)
+            hl = "navy"
+            band, en_a, ar_a, num_a, ipa_a = dk, (255, 255, 255), lt2, lt2, _mix(lt, dk, 0.25)
+        else:
+            INK, RED, NUM = globals()["INK"], globals()["RED"], globals()["NUM"]  # noqa: N806
+            self.paper, self.sep_col, self.ipa_col = PAPER, (180, 170, 155), (120, 110, 100)
+            hl = opts.get("highlight") if opts.get("highlight") in _HL else "cream"
+            band, en_a, ar_a, num_a, ipa_a = _HL[hl]
         self.hl = hl
-        band, en_a, ar_a, num_a, ipa_a = _HL[hl]
         sc = self.sc
         head = Image.new("RGBA", (W, 450), (0, 0, 0, 0))
         d = ImageDraw.Draw(head)
@@ -285,7 +314,7 @@ class ListPage:
             head.alpha_composite(st, (W // 2 - st.width // 2, 380 - st.height // 2))
         d.rectangle([60, 428, 1020, 430], fill=INK + (255,))
         self.head = head
-        self.sep = _rect(960, 2, (180, 170, 155))
+        self.sep = _rect(960, 2, self.sep_col)
         self.rule = _rect(960, 2, INK)
         self.spk = _speaker(INK if band is None or hl in ("cream", "outline", "gold") else (255, 250, 242))
         bh = int(self.pitch - 16)
@@ -298,10 +327,16 @@ class ListPage:
             if hl == "cream":
                 self.band.paste((170, 34, 34, 255), (0, 0, 12, bh))
         self.recolor = hl in ("red", "navy", "gold")
+        # sample sentences: a paper card, ink text, the word on the row colour, the page fades back to paper
+        card = _mix(self.paper, (255, 255, 255), 0.6)
+        pill = dk if tn else (170, 34, 34)
+        self.sentence_look = (dict(back=card, ex=INK, hl=pill, hl_txt=(255, 255, 255) if not tn else lt2,
+                                   label=NUM, head=RED, shadow=(70, 55, 40), bars_b=RED, border=INK, border_w=2),
+                              self.paper, PLAYFAIR, "SemiBold", "Bold", 6, 0.62)
         self.erows = []
         for j, w in enumerate(self.words):
             r = {}
-            for state, (ce, ca, cn, ci) in (("n", (INK, RED, NUM, (120, 110, 100))), ("a", (en_a, ar_a, num_a, ipa_a))):
+            for state, (ce, ca, cn, ci) in (("n", (INK, RED, NUM, self.ipa_col)), ("a", (en_a, ar_a, num_a, ipa_a))):
                 if state == "a" and not self.recolor:
                     break
                 r["num" + state] = _t(PLAYFAIR, f"{j + 1:02d}", 64 * sc, cn, "Bold")
@@ -324,7 +359,7 @@ class ListPage:
         return im.resize((w + 40, h + 20), Image.LANCZOS).filter(ImageFilter.GaussianBlur(1.2))
 
     def _draw_editorial(self, fr, u):
-        fr.paste(_paper(), (0, 0))
+        fr.paste(_paper(self.paper), (0, 0))
         hp = prog(u, 0.1, 0.5)
         paste(fr, self.head, W / 2, 225 + 20 * (1 - ease_io(hp)), 1, hp)
         sc, p = self.sc, self.pitch
@@ -368,21 +403,37 @@ class ListPage:
 
     # ============================================================ Chalkboard
     def _build_chalk(self, opts, title, subtitle):
-        self.board = opts.get("board") if opts.get("board") in BOARDS else "green"
+        from .list_designs import tones
+        tn = tones(opts.get("palette"))
         self.mark = opts.get("mark") if opts.get("mark") in dict((v, k) for k, v in MARKS) else "circle"
-        self.mcol = CHALK_COLORS.get(opts.get("color"), CHALK_COLORS["pink"])
+        if tn:  # a colour set: the board = its dark tone, the Arabic / tick = its light tone, the mark = its 2nd tone
+            dk, lt, lt2 = tn
+            self.board = (_mix(dk, (255, 255, 255), 0.06), _mix(dk, (255, 255, 255), 0.12), _mix(dk, (0, 0, 0), 0.25),
+                          (120, 80, 44))
+            self.chalk_ar, self.tick = lt, lt
+            self.mcol = lt2 if lt2 != lt else _mix(lt, (255, 255, 255), 0.45)
+        else:
+            self.board = opts.get("board") if opts.get("board") in BOARDS else "green"
+            self.mcol = CHALK_COLORS.get(opts.get("color"), CHALK_COLORS["pink"])
+            self.chalk_ar, self.tick = CHALK_AR, TICK
         sc = self.sc
         self.title_img = _chalkify(_t(PATRICK, title, 96, (245, 245, 240), "Regular", max_w=960), 1)
-        self.sub_img = _chalkify(_t(RUQAA, subtitle, 66, CHALK_AR, "Bold", max_w=960), 2) if subtitle else None
+        self.sub_img = _chalkify(_t(RUQAA, subtitle, 66, self.chalk_ar, "Bold", max_w=960), 2) if subtitle else None
         self.crows = []
         for j, w in enumerate(self.words):
             en = _chalkify(_t(PATRICK, f"{j + 1}. {w['en']}", 70 * sc, CHALK, "Regular", max_w=940), 10 + j)
-            arn = _chalkify(_t(RUQAA, w["ar"], 60 * sc, CHALK_AR, "Bold", max_w=940), 20 + j)
+            arn = _chalkify(_t(RUQAA, w["ar"], 60 * sc, self.chalk_ar, "Bold", max_w=940), 20 + j)
             ara = _chalkify(_t(RUQAA, w["ar"], 60 * sc, self.mcol, "Bold", max_w=940), 30 + j)
             ew = en.width - 60
             self.crows.append(dict(en=en, arn=arn, ara=ara, ew=ew, mark=self._mark_paths(j, ew),
                                    tick=self._tick_path(j, ew)))
         self._done_cache = {}
+        # sample sentences: a darker slate with chalk text, the word on the chalk colour
+        top, mid, bot = (BOARDS[self.board] if isinstance(self.board, str) else self.board)[:3]
+        self.sentence_look = (dict(back=_mix(mid, (0, 0, 0), 0.15), ex=CHALK, hl=self.mcol,
+                                   hl_txt=_mix(bot, (0, 0, 0), 0.3), label=self.chalk_ar, head=self.chalk_ar, shadow=(0, 0, 0), bars_b=self.mcol,
+                                   border=_mix(CHALK, mid, 0.55), border_w=3),
+                              _mix(bot, (0, 0, 0), 0.3), PATRICK, "Regular", "Regular", 14, 0.5)
 
     def _mark_paths(self, j, ew):
         """The chalk mark around row j as polylines in row coordinates (y = 0 is the row centre)."""
@@ -465,8 +516,9 @@ class ListPage:
                 key = ("tick", j)
                 if pt >= 1:
                     if key not in self._done_cache:
-                        self._done_cache[key] = self._stroke_img([(r["tick"], r["tick"])], 1.0, TICK, 7, 60 + j, box_h)
+                        self._done_cache[key] = self._stroke_img([(r["tick"], r["tick"])], 1.0, self.tick, 7, 60 + j,
+                                                                 box_h)
                     img = self._done_cache[key]
                 else:
-                    img = self._stroke_img([(r["tick"], r["tick"])], pt, TICK, 7, 60 + j, box_h)
+                    img = self._stroke_img([(r["tick"], r["tick"])], pt, self.tick, 7, 60 + j, box_h)
                 paste(fr, img, W / 2, cy, 1, a)
