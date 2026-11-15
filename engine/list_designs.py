@@ -15,6 +15,7 @@ that depends only on the item time u. They share ListPage's layout (`pg.cy`, `pg
 `list_palette` colours all four: PALETTES (12 colour pairs) or DUOS (10 two-tone sets: deep base + bright accent,
 6 three-tone sets with a second accent; Navy + juice is the default)."""
 import math
+import random
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
@@ -116,7 +117,8 @@ DUO_CHOICES = [("Navy + juice", "navy_juice"), ("Navy + orange", "navy_orange"),
                ("Charcoal · lime · sky", "charcoal_lime_sky"), ("Forest · mustard · cream", "forest_mustard_cream")]
 DEFAULT_PALETTE = "navy_juice"
 OWN = "own"  # "the design's own colours": Editorial / Chalkboard use their own pickers, the others their first look
-OWN_LOOK = {"Bright": "navy_juice", "Glass": "violet", "Pop": "violet", "Spotlight": "violet"}
+OWN_LOOK = {"Bright": "navy_juice", "Glass": "violet", "Pop": "violet", "Spotlight": "violet",
+            "Table": "navy_juice", "Stepper": "navy_juice"}
 # the menu: the two- and three-tone sets (the single colours stay in PALETTES only so older projects still render)
 PALETTE_CHOICES = [("🎨 Design's own colours", OWN)] + DUO_CHOICES
 
@@ -428,15 +430,28 @@ class Glass:
             card.alpha_composite(_colored(hi, WHITE))
             norm = self._content(card.copy(), en_n, ipa_n, ar_n, pos, ch, self._badge(str(j + 1), False))
             done = self._content(card.copy(), en_n, ipa_n, ar_n, pos, ch, self._badge(None, False))
-            white = Image.new("RGBA", (self.CW, ch), (0, 0, 0, 0))
-            white.paste(Image.new("RGBA", (self.CW, ch), (255, 255, 255, 250)), (0, 0), mask)
-            white = self._content(white, en_a, ipa_a, ar_a, pos, ch, None)
-            act = Image.new("RGBA", (self.CW + 2 * PAD, ch + 2 * PAD), (0, 0, 0, 0))
             glow = _gradient_fill(_padded_alpha(Image.merge("RGBA", [mask] * 4)), a, b).filter(
                 ImageFilter.GaussianBlur(20))
-            act.alpha_composite(_colored(glow.split()[3], _mix(a, b, 0.5), 0.75))
-            act.alpha_composite(white, (PAD, PAD))
-            self.rows.append(dict(norm=norm, done=done, act=act))
+
+            def active(ar_img):
+                white = Image.new("RGBA", (self.CW, ch), (0, 0, 0, 0))
+                white.paste(Image.new("RGBA", (self.CW, ch), (255, 255, 255, 250)), (0, 0), mask)
+                white = self._content(white, en_a, ipa_a, ar_img, pos, ch, None)
+                act = Image.new("RGBA", (self.CW + 2 * PAD, ch + 2 * PAD), (0, 0, 0, 0))
+                act.alpha_composite(_colored(glow.split()[3], _mix(a, b, 0.5), 0.75))
+                act.alpha_composite(white, (PAD, PAD))
+                return act
+            row = dict(norm=norm, done=done, act=active(ar_a))
+            if pg.hider:  # the cards without their meaning, and where it goes
+                row["norm_h"] = self._content(card.copy(), en_n, ipa_n, blank_like(ar_n), pos, ch,
+                                              self._badge(str(j + 1), False))
+                row["act_h"] = active(blank_like(ar_a))
+                xr, yc = pos["ar"]
+                row["off_n"] = (xr + 30 - ar_n.width, yc - ar_n.height / 2)
+                row["off_a"] = (PAD + xr + 30 - ar_a.width, PAD + yc - ar_a.height / 2)
+                pg.hider.add(j, "n", ar_n, _mix(dark, WHITE, 0.25), WHITE, TAJAWAL, int(56 * sc * k), "Bold")
+                pg.hider.add(j, "a", ar_a, WHITE, _on_white(a), TAJAWAL_K, int(56 * sc * k), "Black")
+            self.rows.append(row)
         self.badge_ring = self._badge("", True)
 
     def _badge(self, txt, active):
@@ -474,12 +489,16 @@ class Glass:
             cy = pg.cy[j] + dy
             hl, done = _row_state(pg, j, u)
             started = u >= pg.starts[j] - 0.12
+            hid = pg.hider is not None and pg.hider.hidden(j, u)
             base = r["done"] if started and done > 0 else r["norm"]
+            if hid:
+                base = with_meaning(r["norm_h"], pg.hider.render(j, "n", u), r["off_n"])
             paste(fr, base, W / 2, cy, 1, a)
             if hl > 0.005:
                 c_in, _ = pg._lit(j, u)
                 s = 1 + 0.035 * ease_out_back(c_in)
-                paste(fr, r["act"], W / 2, cy, s, a * hl)
+                act = with_meaning(r["act_h"], pg.hider.render(j, "a", u), r["off_a"]) if hid else r["act"]
+                paste(fr, act, W / 2, cy, s, a * hl)
                 bx = W / 2 + (self.X0 + 38 + self.bd / 2 - W / 2) * s
                 paste(fr, self.badge_ring, bx, cy, s, a * hl)
                 _bars(fr, bx, cy, self.bd * 0.48 * s, WHITE, u, pg.speak[j], a * hl, n=4,
@@ -600,9 +619,16 @@ class Pop:
                 self.CW - (18 + tab + 26) - 28 - 50, cut=110)
             pos = _place(en, ipa, ar, two, 18 + tab + 26, self.CW - 28, ch / 2, sc)
             num = _t(ANTON, str(j + 1), tab * 0.62, WHITE, "Regular")
-            self.rows.append(dict(norm=self._card(WHITE, en, ipa, ar, pos, num, 10),
-                                  done=self._card(WHITE, en, ipa, ar, pos, None, 10),
-                                  act=self._card(YELLOW, en, ipa, ar, pos, num, 20)))
+            row = dict(norm=self._card(WHITE, en, ipa, ar, pos, num, 10),
+                       done=self._card(WHITE, en, ipa, ar, pos, None, 10),
+                       act=self._card(YELLOW, en, ipa, ar, pos, num, 20))
+            if pg.hider:  # the cards without their meaning, and where it goes
+                row["norm_h"] = self._card(WHITE, en, ipa, blank_like(ar), pos, num, 10)
+                row["act_h"] = self._card(YELLOW, en, ipa, blank_like(ar), pos, num, 20)
+                row["off"] = (pos["ar"][0] + 30 - ar.width, pos["ar"][1] - ar.height / 2)
+                for key, card_col in (("n", WHITE), ("a", YELLOW)):
+                    pg.hider.add(j, key, ar, card_col, BLACK, LALEZAR, int(64 * sc), "Regular")
+            self.rows.append(row)
 
     def _card(self, fill, en, ipa, ar, pos, num, sh):
         ch, cw, tab = self.ch, self.CW, self.tab
@@ -637,14 +663,17 @@ class Pop:
             hl, done = _row_state(pg, j, u)
             started = u >= pg.starts[j] - 0.12
             base = r["done"] if started and done > 0 else r["norm"]
+            hid = pg.hider is not None and pg.hider.hidden(j, u)
+            if hid:
+                base = with_meaning(r["norm_h"], pg.hider.render(j, "n", u), r["off"])
             cx = self.X0 + base.width / 2
             paste(fr, base, cx, cy + 6, 1, a)
             if hl > 0.005:
                 c_in, _ = pg._lit(j, u)
                 k = ease_out_back(c_in)
                 ang = -1.6 * k
-                act = r["act"]
-                if c_in >= 0.999:  # settled tilt: rotated once per row of this page
+                act = with_meaning(r["act_h"], pg.hider.render(j, "a", u), r["off"]) if hid else r["act"]
+                if c_in >= 0.999 and not hid:  # settled tilt: rotated once per row of this page
                     if j not in self._tilted:
                         self._tilted[j] = act.rotate(-1.6, Image.BICUBIC, expand=True)
                     img = self._tilted[j]
@@ -695,13 +724,17 @@ class Spotlight:
         self.kick = _t(MONTSERRAT, "  ".join((kicker or "Vocabulary").upper()), 26, _mix(b, WHITE, 0.55), "Bold", 900)
         self.title = _t(MONTSERRAT, title, 88, WHITE, "Black", 960)
         self.sub = _t(READEX, subtitle, 52, (235, 232, 245), "Bold", 940) if subtitle else None
-        self.blocks, self.en_w = [], []
-        for w in pg.words:
+        self.blocks, self.en_w, self.hblocks, self.ar_off = [], [], [], []
+        for j, w in enumerate(pg.words):
             en = _fit(_t(MONTSERRAT, w["en"], 100, WHITE, "ExtraBold"), 900)
             ipa = _fit(_ipa(w["ipa"], 40, (225, 222, 238)), 900) if w["ipa"] else None
             ar = _fit(_t(READEX, w["ar"], 70, self.ar_col, "Bold"), 920)
             self.blocks.append(self._block(en, ipa, ar))
             self.en_w.append(_vis_w(en))
+            if pg.hider:  # the block without its meaning, and where it goes
+                self.hblocks.append(self._block(en, ipa, blank_like(ar)))
+                self.ar_off.append((480 - ar.width // 2, int(104 + 54 + 96 / 2 - ar.height / 2)))
+                pg.hider.add(j, "n", ar, _mix(_pair(self.pal)[0], BLACK, 0.55), self.ar_col, READEX, 70, "Bold")
         self.bh = max(b.height for b in self.blocks)
         n = len(self.blocks)
         need = self.bh * (1 + self.MIN * (n - 1)) + 18 * (n - 1)
@@ -757,6 +790,8 @@ class Spotlight:
                 paste(fr, spot, W / 2, cy, 0.6 + 0.4 * s / self.k, a * f)
             alpha = 0.38 + 0.2 * state[j]
             alpha = alpha + (1 - alpha) * f
+            if pg.hider is not None and pg.hider.hidden(j, u):
+                blk = with_meaning(self.hblocks[j], pg.hider.render(j, "n", u), self.ar_off[j])
             paste(fr, blk, W / 2, cy + dy, s, a * alpha)
             if f > 0.05:
                 half = self.en_w[j] * s / 2
@@ -1196,15 +1231,170 @@ class SentenceOverlay:
 
 def kit_theme(pal, design):
     """A sentence-panel look from a design's colours: a two- / three-tone set, or its single colour pair."""
+    pal = _pal_key(pal, design)
     tn = tones(pal)
     if tn:
         dk, x, y = tn
         return dict(back=x, ex=dk, hl=dk, hl_txt=y if y != x and _lum(y) > 0.35 else x, label=_mix(dk, x, 0.4),
                     head=dk, shadow=_mix(dk, BLACK, 0.7), bars_b=dk), _mix(dk, BLACK, 0.35)
-    a, b = PALETTES[_pal_key(pal, design)]
+    a, b = PALETTES[pal]
     acc = _on_white(a)
     return dict(back=WHITE, ex=(24, 26, 36), hl=acc, hl_txt=WHITE, label=(122, 126, 142), head=acc,
                 shadow=_mix(a, BLACK, 0.6), bars_b=acc), _mix(a, BLACK, 0.75)
+
+
+# ================================================================ meanings hidden until the word is spoken
+# vocab `list_hide`: the Arabic meanings start hidden and are uncovered just after their word is heard
+HIDE_STYLES = [("Off — the meanings show from the start", "none"),
+               ("Reveal — blurred, wiped clear with a shine", "reveal"),
+               ("Typewriter — typed in letter by letter", "typewriter"),
+               ("Split-flap — letters flip like a departure board, then settle", "splitflap")]
+_HIDE_WIN = {"reveal": (0.3, 0.85), "typewriter": (0.25, 1.3), "splitflap": (0.2, 1.1)}
+_AR_LETTERS = "ابتثجحخدذرزسشصضطظعغفقكلمنهوي"
+
+
+def hide_window(style, start, word_end):
+    """(t0, t1): the meaning of a word heard from `start` is uncovered between t0 and t1 (before word_end, when the
+    card may flip over to its sample sentence)."""
+    a, b = _HIDE_WIN.get(style, (0.3, 0.85))
+    t1 = max(start + 0.35, min(start + b, word_end - 0.05))
+    return min(start + a, t1 - 0.3), t1
+
+
+def hide_sounds(style, t0, t1, n_letters):
+    """Sound cues (kind, time, gain) of a meaning being uncovered."""
+    if style == "reveal":
+        return [("swish", t0 - 0.05, 0.1)]
+    if style == "typewriter":
+        n = max(1, n_letters)
+        return [("tap", t0 + (t1 - t0) * k / n, 0.07) for k in range(n)]
+    if style == "splitflap":
+        steps = max(4, int((t1 - t0) / 0.05))
+        return [("tap", t0 + (t1 - t0) * k / steps, 0.045) for k in range(steps)] + [("click", t1, 0.14)]
+    return []
+
+
+class MeaningHider:
+    """Hides the Arabic meanings of a page until each word is spoken. A design registers every meaning image it
+    would draw (`add`, while the page is built, so its fonts apply); while `hidden(j, u)` it draws `render(j, key, u)`
+    instead: an image of the same size, placed exactly like the meaning (so it follows the card's scale / tilt).
+    reveal = a frosted pill with the word blurred under it, wiped clear right to left with a shine; typewriter = one
+    dash per letter, typed in right to left with a cursor; splitflap = scrambled letters that flip and settle."""
+    LEVELS = 10
+
+    def __init__(self, pg, style):
+        self.pg, self.style = pg, style
+        self.m = {}
+        self.win = []
+        for j in range(len(pg.words)):
+            e = pg.examples[j] if j < len(pg.examples) else None
+            self.win.append(hide_window(style, pg.starts[j], e["f0"] if e else pg.ends[j]))
+
+    def add(self, j, key, img, card_col, text_col, font=None, size=None, weight="Bold", post=None):
+        """img = the meaning as drawn (state `key`: 'n' normal / 'a' being read); card_col = what it sits on;
+        text_col = its colour; font / size / weight / post (e.g. chalk texture) let the split-flap redraw it."""
+        txt = self.pg.words[j]["ar"]
+        cover = _mix(card_col, WHITE if _lum(card_col) < 0.45 else BLACK, 0.16)
+        it = dict(img=img, cover=cover, col=tuple(text_col), n=max(1, len(txt.replace(" ", ""))))
+        vw, vh = img.width - 60, img.height - 60
+        if self.style == "reveal":
+            pw, ph = vw + 36, vh + 22
+            pill = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            pill.paste(Image.new("RGBA", (pw, ph), tuple(cover) + (255,)),
+                       ((img.width - pw) // 2, (img.height - ph) // 2), _round_mask(pw, ph, ph // 2))
+            pill.alpha_composite(img.filter(ImageFilter.GaussianBlur(max(6, vh * 0.2))))
+            q = _t(POPPINS_B, "?", max(18, vh * 0.55), text_col, "Bold")
+            pill.alpha_composite(q, ((img.width - q.width) // 2, (img.height - q.height) // 2))
+            it["pill"] = pill
+            sh = Image.new("L", (44, img.height), 0)
+            for i in range(44):
+                ImageDraw.Draw(sh).line([(i, 0), (i, img.height)], fill=int(170 * math.sin(math.pi * i / 43)))
+            it["shine"] = _colored(sh, WHITE)
+        elif self.style == "splitflap" and font:
+            frames = []
+            for lv in range(self.LEVELS + 1):
+                row = []
+                for var in range(2):
+                    rnd = random.Random(j * 1000 + lv * 10 + var + (7 if key == "a" else 0))
+                    settled = int(len(txt) * lv / self.LEVELS)
+                    s = "".join(c if (k < settled or c == " ") else rnd.choice(_AR_LETTERS) for k, c in enumerate(txt))
+                    im = _t(font, s, size, text_col, weight, vw)
+                    if post:
+                        im = post(im)
+                    canvas = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                    x = img.width - im.width  # right aligned like the meaning
+                    canvas.alpha_composite(im.crop((max(0, -x), 0, im.width, im.height)),
+                                           (max(0, x), (img.height - im.height) // 2))
+                    row.append(canvas)
+                frames.append(row)
+            it["frames"] = frames
+        self.m[(j, key)] = it
+
+    def hidden(self, j, u):
+        return u < self.win[j][1]
+
+    def render(self, j, key, u):
+        it = self.m.get((j, key)) or self.m.get((j, "n"))
+        if it is None:
+            return None
+        img = it["img"]
+        t0, t1 = self.win[j]
+        p = prog(u, t0, t1)
+        if p >= 1:
+            return img
+        out = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        vw = img.width - 60
+        if self.style == "reveal":
+            if p <= 0:
+                return it["pill"]
+            out.alpha_composite(_fade(it["pill"], 1 - p))
+            cw = max(1, int(vw * ease_io(p))) + 30
+            out.alpha_composite(img.crop((img.width - cw, 0, img.width, img.height)), (img.width - cw, 0))
+            sx = img.width - cw - 22
+            if 0 <= sx < img.width:
+                out.alpha_composite(it["shine"].crop((0, 0, min(44, img.width - sx), img.height)), (sx, 0))
+            return out
+        if self.style == "typewriter":
+            n = it["n"]
+            shown = int(n * p)
+            cw = int(vw * shown / n)
+            if cw > 0:
+                out.alpha_composite(img.crop((img.width - 30 - cw, 0, img.width, img.height)), (img.width - 30 - cw, 0))
+            d = ImageDraw.Draw(out)
+            step = vw / n
+            yb = img.height - 30 - 2
+            col = it["col"]
+            for k in range(shown, n):  # the letters still to come
+                xr = img.width - 30 - step * k
+                d.rounded_rectangle([xr - step + 4, yb - 5, xr - 3, yb], 2, fill=col + (150,))
+            if p > 0:  # the cursor
+                cx = img.width - 30 - cw - 5
+                d.rectangle([cx - 4, 34, cx, img.height - 30], fill=col + (255,))
+            return out
+        if self.style == "splitflap" and "frames" in it:
+            if p <= 0:
+                return _fade(it["frames"][0][0], 0.55)
+            lv = min(self.LEVELS, int(p * self.LEVELS))
+            return it["frames"][lv][int(u * 22) % 2]
+        return img if p >= 1 else _fade(img, p)
+
+
+def _fade(img, k):
+    out = img.copy()
+    out.putalpha(img.split()[3].point(lambda v: int(v * k)))
+    return out
+
+
+def blank_like(img):
+    return Image.new("RGBA", img.size, (0, 0, 0, 0))
+
+
+def with_meaning(card, layer, off):
+    """card (without its meaning) + the hider's picture of the meaning at offset off."""
+    out = card.copy()
+    if layer is not None:
+        out.alpha_composite(layer, tuple(int(round(v)) for v in off))
+    return out
 
 
 # how a word-list card shows its sample sentence (vocab `list_ex_style`; `list_karaoke` lights its words in turn)
@@ -1262,11 +1452,17 @@ class Bright:
                     nm = _t(POPPINS_B, str(j + 1), d * 0.5, c["num"], "Bold")
                     disc.alpha_composite(nm, (d // 2 - nm.width // 2, d // 2 - nm.height // 2))
                 im.alpha_composite(disc, (PAD + 30, PAD + ch // 2 - d // 2))
-                if state == "a":
-                    _put_row(im, en_a, ipa_a, ar_a, pos)
-                else:
-                    _put_row(im, en, ipa, ar, pos)
+                row = (en_a, ipa_a, ar_a) if state == "a" else (en, ipa, ar)
+                if pg.hider and state != "d":  # the same card without its meaning (drawn by the hider)
+                    h = im.copy()
+                    _put_row(h, row[0], row[1], blank_like(row[2]), pos)
+                    out[state + "_h"] = h
+                _put_row(im, *row, pos)
                 out[state] = im
+            if pg.hider:
+                out["ar_off"] = (pos["ar"][0] + 30 - ar.width, pos["ar"][1] - ar.height / 2)
+                for key, img, card_col, col in (("n", ar, c["card"], c["ar"]), ("a", ar_a, c["card_a"], c["ar_a"])):
+                    pg.hider.add(j, key, img, card_col, col, PLEX_B, int(64 * k0 * k), "Bold")
             self.cards.append(out)
         for j, w in enumerate(pg.words):  # sample sentences: the pictures the chosen style needs
             ex = pg.examples[j] if j < len(pg.examples) else None
@@ -1395,12 +1591,16 @@ class Bright:
             if dim and not keep:
                 a *= 1 - dim
             hl, done = _row_state(pg, j, u)
+            hid = pg.hider is not None and pg.hider.hidden(j, u)
             base = c["d"] if u >= pg.starts[j] and done > 0 else c["n"]
+            if hid:
+                base = with_meaning(c["n_h"], pg.hider.render(j, "n", u), c["ar_off"])
             paste(fr, base, W / 2, y, s0, a)
             if hl > 0.005:
                 c_in, _ = pg._lit(j, u)
                 s = s0 * (1 + 0.035 * ease_out_back(c_in))
-                paste(fr, c["a"], W / 2, y, s, a * hl)
+                act = with_meaning(c["a_h"], pg.hider.render(j, "a", u), c["ar_off"]) if hid else c["a"]
+                paste(fr, act, W / 2, y, s, a * hl)
                 bx = W / 2 + (60 + 30 + self.d / 2 - W / 2) * s
                 _bars(fr, bx, y, self.d * 0.45 * s, self.c["bars"], u, pg.speak[j], a * hl, n=4,
                       bw=max(5, int(self.d * 0.08)), gap=max(3, int(self.d * 0.06)))
@@ -1482,7 +1682,200 @@ class Bright:
             px, py = c["panel_bars"]
             self._sent_bars(fr, W / 2 - pw / 2 + px, by - ph / 2 + py, e, u, a)
 
-DESIGNS = {"Bright": Bright, "Glass": Glass, "Pop": Pop, "Spotlight": Spotlight}
+# ================================================================ Table / Stepper (two-tone looks)
+class _Toned:
+    """Shared by Table and Stepper: the colour set (dark, accent, second accent), the background and the heading."""
+    TOP, BOT = 430, 1660
+
+    def _setup(self, pg, opts, title, subtitle, kicker, design):
+        self.pg, self.n = pg, len(pg.words)
+        key = _pal_key(opts.get("palette"), design)
+        self.dk, self.x, self.y = tones(key) or tones(DEFAULT_PALETTE)
+        dk = self.dk
+        self.bg = (_mix(dk, WHITE, 0.07), _mix(dk, BLACK, 0.28))
+        self.mute = _mix(dk, WHITE, 0.62)
+        self.kick = _t(POPPINS_B, (kicker or "Vocabulary").upper(), 28, self.y, "Bold", 800)
+        self.title = _t(POPPINS_B, title, 80, WHITE, "Bold", 960)
+        self.sub = _t(PLEX_B, subtitle, 50, self.y, "Bold", 940) if subtitle else None
+        theme, scrim = kit_theme(key, design)
+        self.sentence_look = (theme, scrim, POPPINS_B, "SemiBold", "Bold", 34, 0.5)
+
+    def _head(self, fr, u):
+        fr.paste(_bright_bg(*self.bg), (0, 0))
+        hp = prog(u, 0.05, 0.45)
+        paste(fr, self.kick, W / 2, 150, 1, hp)
+        _top(fr, self.title, W / 2, 192 + 20 * (1 - ease_io(hp)), hp)
+        if self.sub is not None:
+            paste(fr, self.sub, W / 2, 340, 1, prog(u, 0.15, 0.55))
+
+    def _state(self, j, u):
+        a, dy = self.pg._row_in(j, u)
+        hl, done = _row_state(self.pg, j, u)
+        return a, dy, hl, u >= self.pg.starts[j] and done > 0
+
+    def _meaning(self, j, key, img, u):
+        """The meaning to draw now: the hider's picture while it is hidden, else the meaning itself."""
+        h = self.pg.hider
+        return h.render(j, key, u) if h is not None and h.hidden(j, u) else img
+
+
+class Table(_Toned):
+    """A clean two-column table (ENGLISH | العربية) in a rounded panel: numbers in their own column, soft zebra rows;
+    the row being read becomes an accent band (wiping in), read rows get a tick."""
+    HH = 92  # header strip
+
+    def __init__(self, pg, opts, title, subtitle, kicker):
+        self._setup(pg, opts, title, subtitle, kicker, "Table")
+        dk, x, n = self.dk, self.x, self.n
+        self.rh = min(205, (self.BOT - self.TOP - self.HH) / n)
+        pw, ph = 980, int(self.HH + n * self.rh)
+        self.cy = (self.TOP + self.BOT) / 2
+        self.y0 = self.cy - ph / 2
+        self.row_ys = [self.y0 + self.HH + (j + 0.5) * self.rh for j in range(n)]
+        body = _mix(dk, WHITE, 0.09)
+        self.panel = _shadow_card(pw, ph, 30, body, _mix(dk, BLACK, 0.7), 0.4)
+        d = ImageDraw.Draw(self.panel)
+        m = _round_mask(pw, self.HH + 60, 30).crop((0, 0, pw, self.HH))
+        self.panel.paste(Image.new("RGBA", (pw, self.HH), x + (255,)), (PAD, PAD), m)
+        e = _t(POPPINS_B, "  ".join("ENGLISH"), 26, dk, "Bold")
+        ar_h = _t(PLEX_B, "العربية", 36, dk, "Bold")
+        self.panel.alpha_composite(e, (PAD + 130 - 30, PAD + self.HH // 2 - e.height // 2))
+        self.panel.alpha_composite(ar_h, (PAD + pw - 44 + 30 - ar_h.width, PAD + self.HH // 2 - ar_h.height // 2))
+        line = _mix(dk, WHITE, 0.2) + (255,)
+        for j in range(n):
+            yy = PAD + self.HH + j * self.rh
+            if j % 2 and j < n - 1:
+                d.rectangle([PAD, yy, PAD + pw - 1, yy + self.rh], fill=_mix(dk, WHITE, 0.13) + (255,))
+            if j:
+                d.line([(PAD + 30, yy), (PAD + pw - 30, yy)], fill=line, width=2)
+        d.line([(PAD + 104, PAD + self.HH), (PAD + 104, PAD + ph - 20)], fill=line, width=2)
+        k = min(1.1, self.rh / 190)
+        self.rows = []
+        for j, w in enumerate(pg.words):
+            r = {"num": _t(POPPINS_B, f"{j + 1:02d}", 34 * k, self.mute, "Bold"),
+                 "num_a": _t(POPPINS_B, f"{j + 1:02d}", 34 * k, dk, "Bold")}
+            for s, (ce, ci, ca) in (("n", (WHITE, self.mute, x)), ("a", (dk, _mix(dk, x, 0.4), dk))):
+                r["en" + s] = _t(POPPINS_B, w["en"], 54 * k, ce, "Bold", 520)
+                r["ipa" + s] = _ipa(w["ipa"], 30 * k, ci) if w["ipa"] else None
+                room = 986 - 170 - (r["en" + s].width - 60) - 50  # the meaning takes what the word leaves
+                r["ar" + s] = _t(PLEX_B, w["ar"], 54 * k, ca, "Bold", max(200, min(420, room)))
+                if pg.hider:
+                    pg.hider.add(j, s, r["ar" + s], body if s == "n" else x, ca, PLEX_B, int(54 * k), "Bold")
+            self.rows.append(r)
+        self.tick = _tick_img(44, x, 6)
+        self.band = Image.new("RGBA", (pw - 20, int(self.rh - 14)), (0, 0, 0, 0))
+        self.band.paste(Image.new("RGBA", self.band.size, x + (255,)), (0, 0), _round_mask(*self.band.size, 18))
+
+    def draw(self, fr, u):
+        self._head(fr, u)
+        pg = self.pg
+        paste(fr, self.panel, W / 2, self.cy, 1, prog(u, 0.2, 0.6))
+        for j, r in enumerate(self.rows):
+            a, dy, hl, read = self._state(j, u)
+            if a <= 0.01:
+                continue
+            cy = self.row_ys[j] + dy
+            if hl > 0.005:  # the band wipes in from the left
+                c_in, _ = pg._lit(j, u)
+                bw = max(1, int(self.band.width * ease_io(min(1.0, c_in * 1.3))))
+                paste(fr, self.band.crop((0, 0, bw, self.band.height)), W / 2 - self.band.width / 2, cy, 1,
+                      a * hl, "l")
+            s = "a" if hl > 0.5 else "n"
+            if read and hl < 0.5:
+                paste(fr, self.tick, 102, cy, 1, a)
+            elif not (hl > 0.5):
+                paste(fr, r["num"], 102, cy, 1, a)
+            ipa = r["ipa" + s]
+            paste(fr, r["en" + s], 170 - 30, cy - (18 if ipa else 0), 1, a, "l")
+            if ipa:
+                paste(fr, ipa, 170 - 30, cy + 34, 1, a, "l")
+            paste(fr, self._meaning(j, s, r["ar" + s], u), 1030 - 44 + 30, cy, 1, a, "r")
+            if hl > 0.5:  # the sound bars in the number column
+                _bars(fr, 102, cy, 34, self.dk, u, pg.speak[j], a * hl)
+
+
+def _ring(d, col, w):
+    s = 3
+    big = Image.new("L", (int(d) * s, int(d) * s), 0)
+    ImageDraw.Draw(big).ellipse([w * s / 2, w * s / 2, d * s - w * s / 2, d * s - w * s / 2], outline=255,
+                                width=int(w * s))
+    return _colored(big.resize((int(d), int(d)), Image.LANCZOS), col)
+
+
+class Stepper(_Toned):
+    """A progress line with a step dot per word (like an app's set-up steps): the line fills as the words are read,
+    the current step glows with a soft card behind it, finished steps get a tick."""
+    LX = 120
+
+    def __init__(self, pg, opts, title, subtitle, kicker):
+        self._setup(pg, opts, title, subtitle, kicker, "Stepper")
+        dk, x, n = self.dk, self.x, self.n
+        self.p = min(235, (self.BOT - self.TOP) / n)
+        y0 = (self.TOP + self.BOT) / 2 - self.p * n / 2
+        self.row_ys = [y0 + self.p * (j + 0.5) for j in range(n)]
+        k = min(1.1, self.p / 210)
+        d = int(66 * k)
+        self.rows = []
+        for j, w in enumerate(pg.words):
+            en = _t(POPPINS_B, w["en"], 58 * k, WHITE, "Bold", 500)
+            room = 1000 - 210 - (en.width - 60) - 50  # the meaning takes what the word leaves
+            r = {"en": en, "ipa": _ipa(w["ipa"], 30 * k, self.mute) if w["ipa"] else None,
+                 "ar": _t(PLEX_B, w["ar"], 56 * k, x, "Bold", max(200, min(420, room)))}
+            if pg.hider:
+                pg.hider.add(j, "n", r["ar"], _mix(dk, WHITE, 0.11), x, PLEX_B, int(56 * k), "Bold")
+            for s in "nad":
+                im = Image.new("RGBA", (d + 40, d + 40), (0, 0, 0, 0))
+                if s == "n":
+                    im.alpha_composite(_ring(d, _mix(dk, WHITE, 0.35), 4), (20, 20))
+                    im.alpha_composite(_colored(_circle_mask(d - 8), _mix(dk, WHITE, 0.06)), (24, 24))
+                    nm = _t(POPPINS_B, str(j + 1), d * 0.42, self.mute, "Bold")
+                else:
+                    if s == "a":
+                        im.alpha_composite(_colored(_circle_mask(d + 36), x, 0.25), (2, 2))
+                    im.alpha_composite(_colored(_circle_mask(d), x), (20, 20))
+                    nm = None
+                    if s == "d":
+                        tk = _tick_img(d * 0.6, dk, max(5, d * 0.1))
+                        im.alpha_composite(tk, (20 + d // 2 - tk.width // 2, 20 + d // 2 - tk.height // 2))
+                if nm is not None:
+                    im.alpha_composite(nm, (20 + d // 2 - nm.width // 2, 20 + d // 2 - nm.height // 2))
+                r[s] = im
+            self.rows.append(r)
+        self.d = d
+        cw, ch = 1030 - 175, int(self.p - 22)
+        self.card = _shadow_card(cw, ch, 26, _mix(dk, WHITE, 0.11), _mix(dk, BLACK, 0.7), 0.3)
+
+    def draw(self, fr, u):
+        self._head(fr, u)
+        pg, ys = self.pg, self.row_ys
+        dr = ImageDraw.Draw(fr)
+        dr.line([(self.LX, ys[0]), (self.LX, ys[-1])], fill=_mix(self.dk, WHITE, 0.25), width=6)
+        reach = ys[0]
+        for j in range(self.n):  # the line fills down to the step being read
+            if u >= pg.starts[j] - 0.12:
+                c_in, _ = pg._lit(j, u)
+                reach = ys[j - 1] + (ys[j] - ys[j - 1]) * ease_io(c_in) if j else ys[0]
+        dr.line([(self.LX, ys[0]), (self.LX, reach)], fill=self.x, width=6)
+        for j, r in enumerate(self.rows):
+            a, dy, hl, read = self._state(j, u)
+            if a <= 0.01:
+                continue
+            cy = ys[j] + dy
+            if hl > 0.005:
+                c_in, _ = pg._lit(j, u)
+                paste(fr, self.card, 175 + (1030 - 175) / 2, cy, 0.97 + 0.03 * ease_out_back(c_in), a * hl)
+            paste(fr, r["d" if read else "n"], self.LX, cy, 1, a)
+            if hl > 0.005:
+                paste(fr, r["a"], self.LX, cy, 1, a * hl)
+                if hl > 0.5:
+                    _bars(fr, self.LX, cy, self.d * 0.42, self.dk, u, pg.speak[j], a * hl)
+            paste(fr, r["en"], 210 - 30, cy - (18 if r["ipa"] else 0), 1, a, "l")
+            if r["ipa"]:
+                paste(fr, r["ipa"], 210 - 30, cy + 36, 1, a * 0.9, "l")
+            paste(fr, self._meaning(j, "n", r["ar"], u), 1000 + 30, cy, 1, a, "r")
+
+
+DESIGNS = {"Bright": Bright, "Glass": Glass, "Pop": Pop, "Spotlight": Spotlight, "Table": Table, "Stepper": Stepper}
 
 
 # ================================================================ font sets
@@ -1597,6 +1990,9 @@ FONT_SETS = {
         ("Inter + Almarai (Figma · GitHub)", {PATRICK: (INTER, "Medium"), RUQAA: (ALMARAI, "Bold")}),
     ],
 }
+
+
+FONT_SETS["Table"] = FONT_SETS["Stepper"] = FONT_SETS["Bright"]  # the same design fonts as Bright
 
 
 def font_set(style, k):

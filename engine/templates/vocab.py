@@ -455,7 +455,7 @@ PACES = [("Slow", "slow"), ("Normal", "normal"), ("Fast", "fast")]
 PACE_K = {"slow": 1.25, "normal": 1.0, "fast": 0.82}
 TITLE_STYLES = ["Fancy", "Simple", "None"]  # None = no title page: the first item starts at 0
 RECAP_MAX = 14  # recap rows on one screen (a word list adds one row per word)
-LIST_STYLES = ["Bright", "Glass", "Pop", "Spotlight", "Editorial", "Chalkboard"]
+LIST_STYLES = ["Bright", "Table", "Stepper", "Glass", "Pop", "Spotlight", "Editorial", "Chalkboard"]
 
 IPA_FONT = os.path.join(ROOT, "fonts", "NotoSans-Bold.ttf")
 INK = (20, 20, 30)
@@ -856,7 +856,7 @@ class VocabVideo:
                               mark=v.get("chalk_mark") or "circle", color=v.get("chalk_color") or "pink",
                               palette=v.get("list_palette") or "navy_juice", font=s.get("font_file") or "",
                               fonts=v.get("list_fonts") or 1, ex_style=v.get("list_ex_style") or "flip",
-                              karaoke=bool(v.get("list_karaoke")))
+                              karaoke=bool(v.get("list_karaoke")), hide=v.get("list_hide") or "none")
         self.audio_gain = float(v.get("audio_gain") if v.get("audio_gain") is not None else 1.0)
         clips, _ = match_clips(v.get("audio") or [], self.items)
 
@@ -1182,6 +1182,13 @@ class VocabVideo:
         it["reveal"] = None
         it["snd"] = ([("tap", r, 0.14) for r in rows] + [("click", s - 0.08, 0.16) for s in starts]
                      + [("swish", f, 0.1) for f in flips])
+        hide = self.list_opts.get("hide")
+        if hide and hide != "none":  # the meanings uncovered as they are heard: their own little sounds
+            from ..list_designs import hide_sounds, hide_window
+            for k, w in enumerate(it["words"]):
+                ex = examples[k]
+                t0, t1 = hide_window(hide, starts[k], ex["f0"] if ex else ends[k])
+                it["snd"] += hide_sounds(hide, t0, t1, len(w["ar"].replace(" ", "")))
         title = it["title"] or it["label"]
         sub = it["subtitle"] or it["gsub"].replace("{count}", str(n))
         it["page"] = ListPage(self.list_style, self.list_opts, it["words"], title, sub, it["lesson"],

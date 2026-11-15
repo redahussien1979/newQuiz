@@ -223,8 +223,10 @@ class ListPage:
         self.pitch = min(240.0, (ROWS_BOTTOM - ROWS_TOP) / self.n)
         self.sc = min(1.12, self.pitch / 209)
         self.cy = [ROWS_TOP + self.pitch * (j + 0.5) for j in range(self.n)]
-        from .list_designs import DESIGNS, font_set
+        from .list_designs import DESIGNS, HIDE_STYLES, MeaningHider, font_set
         self.impl = None
+        hide = opts.get("hide")
+        self.hider = MeaningHider(self, hide) if hide in [v for _, v in HIDE_STYLES] and hide != "none" else None
         _USER.clear()
         _USER.update(user_fonts(opts.get("font")))  # every text image is made here, in __init__ (not per frame)
         _SET.clear()
@@ -344,6 +346,9 @@ class ListPage:
                 r["ipa" + state] = _ipa(w["ipa"], 34 * sc, ci) if w["ipa"] else None
                 ipa_w = (r["ipa" + state].width - 60 + 40) if w["ipa"] else 0
                 r["ar" + state] = _t(MESSIRI, w["ar"], 50 * sc, ca, "Bold", max_w=800 - ipa_w)
+                if self.hider:  # meanings hidden until spoken: what each one sits on and its colour
+                    on = self.paper if state == "n" or band is None else band
+                    self.hider.add(j, state, r["ar" + state], on, ca, MESSIRI, int(50 * sc), "Bold")
             if hl == "marker":
                 r["marker"] = self._marker(r["enn"].width - 60, int(52 * sc), j)
             self.erows.append(r)
@@ -387,9 +392,13 @@ class ListPage:
                 im_n = r[key + "n"]
                 if im_n is None:
                     continue
+                im_a = r.get(key + "a")
+                if key == "ar" and self.hider is not None and self.hider.hidden(j, u):
+                    im_n = self.hider.render(j, "n", u)
+                    im_a = self.hider.render(j, "a", u)
                 paste(fr, im_n, x, y, 1, a * (1 - c), anchor=anchor)
                 if c > 0.001:
-                    paste(fr, r[key + "a"], x, y, 1, a * c, anchor=anchor)
+                    paste(fr, im_a, x, y, 1, a * c, anchor=anchor)
             if cs[j] > 0.01:
                 a1, a2 = self._speaker_alpha(j, u)
                 body, w1, w2 = self.spk
@@ -424,6 +433,11 @@ class ListPage:
             en = _chalkify(_t(PATRICK, f"{j + 1}. {w['en']}", 70 * sc, CHALK, "Regular", max_w=940), 10 + j)
             arn = _chalkify(_t(RUQAA, w["ar"], 60 * sc, self.chalk_ar, "Bold", max_w=940), 20 + j)
             ara = _chalkify(_t(RUQAA, w["ar"], 60 * sc, self.mcol, "Bold", max_w=940), 30 + j)
+            if self.hider:  # meanings hidden until spoken (the split-flap letters get the chalk texture too)
+                board = (BOARDS[self.board] if isinstance(self.board, str) else self.board)[1]
+                for key, img, col, seed in (("n", arn, self.chalk_ar, 20 + j), ("a", ara, self.mcol, 30 + j)):
+                    self.hider.add(j, key, img, board, col, RUQAA, int(60 * sc), "Bold",
+                                   post=lambda im, seed=seed: _chalkify(im, seed))
             ew = en.width - 60
             self.crows.append(dict(en=en, arn=arn, ara=ara, ew=ew, mark=self._mark_paths(j, ew),
                                    tick=self._tick_path(j, ew)))
@@ -431,7 +445,8 @@ class ListPage:
         # sample sentences: a darker slate with chalk text, the word on the chalk colour
         top, mid, bot = (BOARDS[self.board] if isinstance(self.board, str) else self.board)[:3]
         self.sentence_look = (dict(back=_mix(mid, (0, 0, 0), 0.15), ex=CHALK, hl=self.mcol,
-                                   hl_txt=_mix(bot, (0, 0, 0), 0.3), label=self.chalk_ar, head=self.chalk_ar, shadow=(0, 0, 0), bars_b=self.mcol,
+                                   hl_txt=_mix(bot, (0, 0, 0), 0.3), label=self.chalk_ar, head=self.chalk_ar,
+                                   shadow=(0, 0, 0), bars_b=self.mcol,
                                    border=_mix(CHALK, mid, 0.55), border_w=3),
                               _mix(bot, (0, 0, 0), 0.3), PATRICK, "Regular", "Regular", 14, 0.5)
 
@@ -498,9 +513,12 @@ class ListPage:
             c = c_in * (1 - c_out)
             bright = 0.72 + 0.28 * prog(u, self.starts[j] - 0.15, self.starts[j] + 0.15)  # not read yet = faded
             paste(fr, r["en"], W / 2, cy - 38 * sc, 1, a * bright)
-            paste(fr, r["arn"], W / 2, cy + 46 * sc, 1, a * bright * (1 - c))
+            arn, ara = r["arn"], r["ara"]
+            if self.hider is not None and self.hider.hidden(j, u):
+                arn, ara = self.hider.render(j, "n", u), self.hider.render(j, "a", u)
+            paste(fr, arn, W / 2, cy + 46 * sc, 1, a * bright * (1 - c))
             if c > 0.001:
-                paste(fr, r["ara"], W / 2, cy + 46 * sc, 1, a * c)
+                paste(fr, ara, W / 2, cy + 46 * sc, 1, a * c)
             pm = prog(u, self.starts[j] - 0.05, self.starts[j] + 0.5)
             if pm > 0 and c_out < 1:
                 key = ("mark", j)
