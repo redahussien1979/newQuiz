@@ -18,7 +18,7 @@ import math
 import random
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter
 
 from .core import DEFAULT_FONT as CAIRO
 from .core import H, W, ease_io, ease_out_back, paste, prog
@@ -1275,9 +1275,11 @@ class MeaningHider:
     reveal = a frosted pill with the word blurred under it, wiped clear right to left with a shine; typewriter = one
     dash per letter, typed in right to left with a cursor; splitflap = scrambled letters that flip and settle."""
     LEVELS = 10
+    WAITS = ("dashes", "shimmer", "dots", "ghost", "caret")
 
-    def __init__(self, pg, style):
+    def __init__(self, pg, style, wait="dashes"):
         self.pg, self.style = pg, style
+        self.wait = wait if wait in self.WAITS else "dashes"
         self.m = {}
         self.win = []
         for j in range(len(pg.words)):
@@ -1327,6 +1329,53 @@ class MeaningHider:
     def hidden(self, j, u):
         return u < self.win[j][1]
 
+    def _waiting(self, out, it, img, cw, u):
+        """Typewriter: what holds the place of the letters not typed yet (x from the left of the text to the cursor).
+        wait = dashes / shimmer (a skeleton bar with light sweeping over it) / dots (three bouncing dots, "is
+        typing…") / ghost (the meaning faint and blurred: its shape, not its letters) / caret (only the cursor)."""
+        vw, vh = img.width - 60, img.height - 60
+        x0, x1 = 30, img.width - 30 - cw - (14 if cw else 0)
+        if x1 - x0 < 4:
+            return
+        col = it["col"]
+        d = ImageDraw.Draw(out)
+        if self.wait == "dashes":
+            n = it["n"]
+            step = vw / n
+            yb = img.height - 30 - 2
+            for k in range(int(n * cw / vw + 0.5), n):
+                xr = img.width - 30 - step * k
+                d.rounded_rectangle([xr - step + 4, yb - 5, xr - 3, yb], 2, fill=col + (150,))
+        elif self.wait == "shimmer":
+            bh = max(10, vh * 0.42)
+            y0 = img.height / 2 - bh / 2
+            bar = Image.new("L", out.size, 0)
+            ImageDraw.Draw(bar).rounded_rectangle([x0, y0, x1, y0 + bh], bh / 2, fill=255)
+            base = _colored(bar, col, 0.22)
+            sweep = Image.new("L", out.size, 0)  # a soft band of light running right to left, again and again
+            sx = img.width - ((u * 1.1) % 1.0) * (img.width + 160) + 80
+            sd = ImageDraw.Draw(sweep)
+            for i in range(-70, 71, 2):
+                sd.line([(sx + i, 0), (sx + i + 30, out.height)], fill=int(150 * (1 - abs(i) / 70)), width=3)
+            base.alpha_composite(_colored(ImageChops.multiply(sweep, bar), WHITE, 0.55))
+            out.alpha_composite(base)
+        elif self.wait == "dots":
+            r = max(6, vh * 0.15)
+            cy = img.height / 2
+            for i in range(3):  # bouncing one after another, like a chat app's "is typing…"
+                ph = (u * 2.4 - i * 0.18) % 1.0
+                lift = math.sin(math.pi * min(1.0, ph * 2.2)) * r * 1.3 if ph < 0.45 else 0.0
+                k = 0.45 + 0.55 * (lift / (r * 1.3))
+                x = x1 - r - i * r * 3.0
+                if x - r < x0:
+                    break
+                d.ellipse([x - r, cy - r - lift, x + r, cy + r - lift], fill=col + (int(255 * k),))
+        elif self.wait == "ghost":
+            if "ghost" not in it:
+                it["ghost"] = _fade(img.filter(ImageFilter.GaussianBlur(max(5, vh * 0.16))), 0.32)
+            g = it["ghost"].crop((0, 0, int(x1) + 6, img.height))
+            out.alpha_composite(g)
+
     def render(self, j, key, u):
         it = self.m.get((j, key)) or self.m.get((j, "n"))
         if it is None:
@@ -1354,16 +1403,13 @@ class MeaningHider:
             cw = int(vw * shown / n)
             if cw > 0:
                 out.alpha_composite(img.crop((img.width - 30 - cw, 0, img.width, img.height)), (img.width - 30 - cw, 0))
+            self._waiting(out, it, img, cw, u)  # what holds the place of the letters still to come
             d = ImageDraw.Draw(out)
-            step = vw / n
-            yb = img.height - 30 - 2
             col = it["col"]
-            for k in range(shown, n):  # the letters still to come
-                xr = img.width - 30 - step * k
-                d.rounded_rectangle([xr - step + 4, yb - 5, xr - 3, yb], 2, fill=col + (150,))
-            if p > 0:  # the cursor
-                cx = img.width - 30 - cw - 5
-                d.rectangle([cx - 4, 34, cx, img.height - 30], fill=col + (255,))
+            if p > 0 or self.wait == "caret":  # the cursor (blinking while it waits)
+                if p > 0 or (u * 1.6) % 1 < 0.6:
+                    cx = img.width - 30 - cw - 5
+                    d.rounded_rectangle([cx - 5, 32, cx, img.height - 28], 2, fill=col + (255,))
             return out
         if self.style == "splitflap" and "frames" in it:
             if p <= 0:
