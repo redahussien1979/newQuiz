@@ -180,11 +180,13 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   with clips `w1_1`, `w1_2` … — the word being read lights up. Six designs in 📃 Word list: **Editorial**
   (magazine page, 6 highlight colours), **Chalkboard** (hand-written chalk; board, mark and chalk colour), **Bright**
   (the default: the list fills the screen with big cards), **Glass** (frosted app cards), **Pop** (bold pop-art) and
-  **Spotlight** (big lyrics-style words); these four take one of 15 colours (Navy + juice is the default).
+  **Spotlight** (big lyrics-style words). Every design takes a two- or three-colour set (Navy + juice is the default)
+  or its own colours, a font set, and the sample-sentence style + 🎤 karaoke.
   In Excel: Type = list, one word per row with its Audio; "Words per list page" sets how many go on one page.
-  **Sample sentences** (Bright): an `example:` line under a word (or a *Sample sentence* column in 📥 Words from
-  Excel) — after the word is read its card flips over to the sentence, the word highlighted (found in any form:
-  battle → battles, or marked with `*stars*`), read with clip `w1_1e` (or ElevenLabs), then flips back.
+  **Sample sentences** (every design): an `example:` line under a word (or a *Sample sentence* column in 📥 Words from
+  Excel) — after the word is read the sentence is shown (6 styles: flip, expand, bottom sheet, speech bubble, focus
+  zoom, drawer), justified, the word highlighted (found in any form: battle → battles, or marked with `*stars*`), read
+  with clip `w1_1e` (or ElevenLabs); 🎤 karaoke lights its words in turn.
 
 ### English Texts tips
 - **✍️ Paragraphs** (the easiest way): paste paragraphs (an empty line between them, optional `# Title` line), click
@@ -1142,7 +1144,7 @@ VC_ITEMS_HELP = """**One item per block, an empty line between items** (max 10).
 Guess options are lines starting with `-`; put `*` after the correct one.
 **Word list** (several words on one page, read one after another): `type: list`, optional `title:` / `subtitle:`,
 then one line per word (up to 6): `- Airport = مطار` or `- Airport = /ˈeəpɔːt/ = مطار`; an optional
-`example: …` line right under a word = its sample sentence (Bright flips the card over to show it)."""
+`example: …` line right under a word = its sample sentence (shown after the word: 📃 Word list → Sample sentences)."""
 VC_AUDIO_HELP = """**Your own audio per item.** Name each clip after its item: `w1` = item 1 (the word, proverb or
 correct sentence — it plays when it appears and the 🔊 icon animates) · `w1e` = item 1's example sentence ·
 `w1_1`, `w1_2` … = word 1, word 2 … of a word list in item 1 (each word lights up while its clip plays) ·
@@ -1293,8 +1295,8 @@ def wire_vc_batch(xl, pv, fields):
 # ------------------------------------------------------------------ English Words: 📃 Word list from Excel + ElevenLabs
 WL_IMPORT_HELP = ("**📥 Words from Excel** — one word per row: **English | Arabic | IPA | Sample sentence** (IPA and "
                   "sentence optional; headers in English or Arabic, or none: A = English, B = Arabic, C = IPA, "
-                  "D = sentence). With a sentence, the card (Bright) flips over to it, the word highlighted, read "
-                  "aloud too. Any number of words: they are cut into pages, and the pages into videos.")
+                  "D = sentence). With a sentence, it is shown after the word (📃 Sample sentences style), the word "
+                  "highlighted, read aloud too. Any number of words: they are cut into pages, and the pages into videos.")
 
 
 def _wl_template_path():
@@ -2635,15 +2637,16 @@ def build_ui():
                                                          "Spotlight = big lyrics-style words · Editorial = magazine "
                                                          "page · Chalkboard = hand-written chalk")
                                 with gr.Row():
-                                    with gr.Column(visible=True, min_width=200) as v_lrow_pal:
+                                    with gr.Column(visible=True, min_width=200):
                                         v_lpal = gr.Dropdown(PALETTE_CHOICES, value="navy_juice", label="Colours",
-                                                             info="Bright / Glass / Pop / Spotlight — the two-tone "
-                                                                  "sets look best in Bright")
+                                                             allow_custom_value=True,
+                                                             info="Every design: a two- or three-colour set, or the "
+                                                                  "design's own colours")
                                     v_lfont = gr.Dropdown(font_choices("Bright"), value=1, label="Font set",
                                                           info="5 English + Arabic font pairs made for this design "
                                                                "(a font picked in 🎨 Style & sound is used instead)")
-                                with gr.Row(visible=True, equal_height=True) as v_lrow_ex:
-                                    v_lex = gr.Dropdown(EX_STYLES, value="flip", label="Sample sentences (Bright)",
+                                with gr.Row(visible=True, equal_height=True):
+                                    v_lex = gr.Dropdown(EX_STYLES, value="flip", label="Sample sentences",
                                                         info="How a word's sample sentence (example: line / Excel "
                                                              "column) is shown after the word is read", scale=3)
                                     v_lkar = gr.Checkbox(value=False, label="🎤 Karaoke",
@@ -2651,13 +2654,16 @@ def build_ui():
                                                          scale=1)
                                 with gr.Row(visible=False) as v_lrow_ed:
                                     v_lhl = gr.Dropdown(HIGHLIGHTS, value="cream", label="Editorial: highlight",
-                                                        info="How the row being read is marked")
+                                                        info="With 🎨 Design's own colours: how the row being read is "
+                                                             "marked")
                                 with gr.Row(visible=False) as v_lrow_ch:
-                                    v_cboard = gr.Dropdown(BOARD_CHOICES, value="green", label="Chalkboard: board")
                                     v_cmark = gr.Dropdown(MARKS, value="circle", label="Chalkboard: mark",
                                                           info="Drawn live around the word being read")
-                                    v_ccol = gr.Dropdown(CHALK_COLOR_CHOICES, value="pink",
-                                                         label="Chalkboard: chalk colour")
+                                    with gr.Column(visible=False, min_width=200) as v_lrow_chc:
+                                        v_cboard = gr.Dropdown(BOARD_CHOICES, value="green", label="Chalkboard: board",
+                                                               info="With 🎨 Design's own colours")
+                                        v_ccol = gr.Dropdown(CHALK_COLOR_CHOICES, value="pink",
+                                                             label="Chalkboard: chalk colour")
                                 wl = wl_import_ui()
                         with gr.Tab("🎙️ Audio"):
                             with gr.Column(elem_classes="pane"):
@@ -2684,15 +2690,14 @@ def build_ui():
                   outputs=v_ainfo, trigger_mode="always_last", show_progress="hidden")
             v_add.click(add_item, [v_items, v_type], v_items)
 
-            def list_design(style):
-                """📃 Word list: show only the options of the chosen page design."""
-                # the font-set list follows the design; the number (1-5) stays, every design has 5 sets
-                return (gr.update(visible=style in (None, "", "Editorial")), gr.update(visible=style == "Chalkboard"),
-                        gr.update(visible=style in ("Bright", "Glass", "Pop", "Spotlight")),
-                        gr.update(choices=font_choices(style or "Bright")),
-                        gr.update(visible=style in (None, "", "Bright")))
-            v_lstyle.change(list_design, v_lstyle, [v_lrow_ed, v_lrow_ch, v_lrow_pal, v_lfont, v_lrow_ex],
-                            show_progress="hidden")
+            def list_design(style, pal):
+                """📃 Word list: Colours, Font set and Sample sentences work in every design; Editorial's highlight
+                and Chalkboard's board / chalk colour only matter with the design's own colours (its mark always)."""
+                own = pal == "own"
+                return (gr.update(visible=style == "Editorial" and own), gr.update(visible=style == "Chalkboard"),
+                        gr.update(visible=own), gr.update(choices=font_choices(style or "Bright")))
+            gr.on(triggers=[v_lstyle.change, v_lpal.change], fn=list_design, inputs=[v_lstyle, v_lpal],
+                  outputs=[v_lrow_ed, v_lrow_ch, v_lrow_chc, v_lfont], show_progress="hidden")
 
             def make_words(text):
                 try:

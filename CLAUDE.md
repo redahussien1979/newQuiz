@@ -50,14 +50,18 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `list_style` (app: 📃 Word list sub-tab; default Bright + `navy_juice`) Editorial (`list_highlight`) / Chalkboard (`chalk_board`, `chalk_mark`, `chalk_color`;
   font `fonts/library/PatrickHand`); `engine/list_designs.py` = more designs (classes in `DESIGNS`, built with the
   ListPage for its layout/timing): Bright (own full-screen layout `TOP..BOT`) / Glass / Pop / Spotlight, colours `list_palette` (`PALETTES` 12 +
-  two-tone `DUOS`: 10 two-tone + 6 three-tone (base, accent, 2nd accent for titles / ticks / pill text)); `list_fonts` 1-5 = the design's font set (`FONT_SETS`: design font -> (font, weight), applied
+  `DUOS`: 15 two-tone + 6 three-tone sets (base, accent, 2nd accent); the menu `PALETTE_CHOICES` = "own" (`OWN_LOOK`;
+  Editorial / Chalkboard keep their highlight / board pickers) + the sets (single `PALETTES` only for older projects);
+  Editorial = light-tone paper + dark ink, Chalkboard = dark-tone board (`tones()`)); `list_fonts` 1-5 = the design's font set (`FONT_SETS`: design font -> (font, weight), applied
   in word_list `_t`; 1 = own fonts; a 🎨 Style & sound font wins). `engine/word_import.py` = 📃 Word list's Excel import (English | Arabic | IPA, any number of
   rows -> pages -> videos; optional Sample sentence column) + ElevenLabs voice per word (`voice_clips` -> w<page>_<word>.mp3, cache DATA_DIR/tts). Sample sentence: an `example:` line under a
   word (word dict `ex`, clip `w<i>_<k>e`); `_build_list` times word → flip (`LIST_FLIP`) → sentence → flip back and
   passes `examples` to ListPage; Bright draws it in the style `list_ex_style` (`EX_STYLES`: flip / expand / sheet /
-  bubble / zoom / drawer = `_draw_<style>`; `_open` = how far it is shown) from `_sentence` (lit + dim layers + word
-  boxes; the word on a pill via `_ex_tokens` = find_phrase / *stars*, `_wrap`), `list_karaoke` = `_sent_now` lights
-  the words in turn; `_turn` = QUAD perspective, `_reveal` = a card shown shorter; other designs just stay lit.
+  bubble / zoom / drawer = `_draw_<style>`) with its cards; the other designs get `SentenceOverlay` (a panel in
+  their look: each sets `sentence_look`, Spotlight `row_ys`; built in ListPage, drawn after the design). Both use
+  `SentenceKit` (`sentence` = lit + dim layers + word boxes, lines by `_optimal` = least squared free space, justified,
+  the word on a pill via `_ex_tokens` = find_phrase / *stars*; `now` = karaoke; `panel`), `open_amount`, `turn`
+  (QUAD perspective), `reveal` (a card shown shorter).
   Excel: Type = list, one word per row with its Audio;
   `vocab_batch.merge_lists` joins rows into pages (`list_size` words, a new Page title starts a page)
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording

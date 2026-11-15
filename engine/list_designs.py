@@ -71,6 +71,11 @@ PALETTE_CHOICES = [("Royal blue", "royal"), ("Ocean", "ocean"), ("Lavender", "la
 DUOS = {"navy_juice": ((37, 26, 102), (229, 245, 24)),
         "navy_orange": ((20, 33, 61), (252, 163, 17)),
         "slate_yellow": ((43, 50, 63), (253, 239, 75)),
+        "darkgreen_butter": ((0, 54, 49), (255, 237, 168)),
+        "deepblue_warmyellow": ((1, 17, 123), (255, 186, 9)),
+        "deepblue_vividyellow": ((1, 17, 123), (255, 219, 0)),
+        "teal_beige": ((0, 128, 128), (245, 245, 220)),
+        "customs_lemon": ((1, 62, 55), (255, 239, 178)),
         "midnight_coral": ((22, 30, 58), (255, 122, 105)),
         "forest_gold": ((17, 56, 46), (240, 190, 80)),
         "charcoal_mint": ((32, 38, 46), (88, 226, 190)),
@@ -86,19 +91,35 @@ DUOS = {"navy_juice": ((37, 26, 102), (229, 245, 24)),
         "charcoal_lime_sky": ((32, 36, 42), (182, 236, 92), (110, 200, 255)),
         "forest_mustard_cream": ((20, 50, 40), (236, 178, 58), (247, 236, 214))}
 DUO_CHOICES = [("Navy + juice", "navy_juice"), ("Navy + orange", "navy_orange"), ("Gray blue + yellow", "slate_yellow"),
+               ("Dark green + butter yellow", "darkgreen_butter"), ("Deep blue + warm yellow", "deepblue_warmyellow"),
+               ("Deep blue + vivid yellow", "deepblue_vividyellow"), ("Teal + beige", "teal_beige"),
+               ("Customs green + creamy lemon", "customs_lemon"),
                ("Midnight + coral", "midnight_coral"), ("Forest + gold", "forest_gold"),
-               ("Charcoal + mint", "charcoal_mint"), ("Plum + peach", "plum_peach"), ("Deep teal + sunflower", "teal_sun"),
+               ("Charcoal + mint", "charcoal_mint"), ("Plum + peach", "plum_peach"),
+               ("Deep teal + sunflower", "teal_sun"),
                ("Wine + blush", "wine_blush"), ("Indigo + lime", "indigo_lime"),
                ("Navy · red · gold", "navy_red_gold"), ("Midnight · coral · aqua", "midnight_coral_aqua"),
                ("Deep teal · gold · coral", "teal_gold_coral"), ("Plum · pink · yellow", "plum_pink_yellow"),
                ("Charcoal · lime · sky", "charcoal_lime_sky"), ("Forest · mustard · cream", "forest_mustard_cream")]
 DEFAULT_PALETTE = "navy_juice"
-# the four favourites first (the two-tone sets and Sky blue), then the other colours
-PALETTE_CHOICES = DUO_CHOICES + [("Sky blue", "sky")] + PALETTE_CHOICES
+OWN = "own"  # "the design's own colours": Editorial / Chalkboard use their own pickers, the others their first look
+OWN_LOOK = {"Bright": "navy_juice", "Glass": "violet", "Pop": "violet", "Spotlight": "violet"}
+# the menu: the two- and three-tone sets (the single colours stay in PALETTES only so older projects still render)
+PALETTE_CHOICES = [("🎨 Design's own colours", OWN)] + DUO_CHOICES
 
 
-def _pal_key(pal):
+def _pal_key(pal, design="Bright"):
+    if pal == OWN:
+        return OWN_LOOK.get(design, DEFAULT_PALETTE)
     return pal if pal in PALETTES or pal in DUOS else DEFAULT_PALETTE
+
+
+def tones(pal):
+    """(dark, light, second light) of a two- / three-tone set, or None (single colours / own colours)."""
+    if pal not in DUOS:
+        return None
+    t = DUOS[pal]
+    return t[0], t[1], (t[2] if len(t) > 2 else t[1])
 
 
 def _pair(pal):
@@ -345,7 +366,9 @@ class Glass:
 
     def __init__(self, pg, opts, title, subtitle, kicker):
         self.pg = pg
-        self.pal = _pal_key(opts.get("palette"))
+        self.pal = _pal_key(opts.get("palette"), type(self).__name__)
+        theme, scrim = kit_theme(self.pal, "Glass")
+        self.sentence_look = (theme, scrim, POPPINS_B, "SemiBold", "Bold", 34, 0.5)
         a, b = _pair(self.pal)
         self.a, self.b = a, b
         dark = (22, 18, 40)
@@ -526,7 +549,10 @@ class Pop:
 
     def __init__(self, pg, opts, title, subtitle, kicker):
         self.pg = pg
-        self.pal = _pal_key(opts.get("palette"))
+        self.pal = _pal_key(opts.get("palette"), type(self).__name__)
+        self.sentence_look = (dict(back=YELLOW, ex=BLACK, hl=BLACK, hl_txt=YELLOW, label=(70, 70, 70), head=BLACK,
+                                   shadow=BLACK, bars_b=BLACK, border=BLACK, border_w=5),
+                              BLACK, POPPINS_K, "Bold", "Black", 16, 0.45)
         sc = pg.sc
         kt = _t(MONTSERRAT, (kicker or "Vocabulary").upper(), 28, WHITE, "Black", 800)
         pill = Image.new("RGBA", (_vis_w(kt) + 56, 60), (0, 0, 0, 0))
@@ -648,7 +674,9 @@ class Spotlight:
 
     def __init__(self, pg, opts, title, subtitle, kicker):
         self.pg = pg
-        self.pal = _pal_key(opts.get("palette"))
+        self.pal = _pal_key(opts.get("palette"), type(self).__name__)
+        theme, scrim = kit_theme(self.pal, "Spotlight")
+        self.sentence_look = (theme, scrim, MONTSERRAT, "SemiBold", "ExtraBold", 34, 0.5)
         a, b = _pair(self.pal)
         self.ar_col = _mix(b, WHITE, 0.35)
         self.kick = _t(MONTSERRAT, "  ".join((kicker or "Vocabulary").upper()), 26, _mix(b, WHITE, 0.55), "Bold", 900)
@@ -701,10 +729,12 @@ class Spotlight:
         gap = 18 * self.k
         total = sum(self.bh * s for s in scales) + gap * (n - 1)
         y = (self.TOP + self.BOT) / 2 - total / 2
+        self.row_ys = []
         for j, blk in enumerate(self.blocks):
             s = scales[j]
             h = self.bh * s
             cy = y + h / 2
+            self.row_ys.append(cy)
             y += h + gap
             a, dy = pg._row_in(j, u)
             if a <= 0.01:
@@ -870,6 +900,300 @@ def _bright_scheme(pal):
                 back=WHITE, ex=ink, hl=acc, hl_txt=WHITE, label=(122, 126, 142), bars_b=acc)
 
 
+# ================================================================ sample sentences (shared)
+def _optimal(toks, fn, fh, width, room):
+    """Lines chosen like a typesetter does (all break points weighed at once, not line by line): the sum of the
+    squared free space of every line but the last is as small as possible, and a very short last line costs extra.
+    The highlighted words stay together. Returns lines of [(text, highlighted, width)] (as _wrap)."""
+    units = _wrap(toks, fn, fh, 1, room)  # width 1: every unbreakable unit on a line of its own
+    sp = fn.getlength(" ")
+    ws = [sum(p[2] for p in u) for u in units]
+    n = len(units)
+    best = [0.0] + [math.inf] * n  # best[j] = cost of setting units[:j]
+    cut = [0] * (n + 1)
+    for j in range(1, n + 1):
+        lw = -sp
+        for i in range(j - 1, -1, -1):
+            lw += ws[i] + sp
+            if lw > width and i < j - 1:
+                break
+            free = max(0.0, width - lw)
+            cost = (free / width) ** 2 if j < n else 2.0 * (max(0.0, 0.5 * width - lw) / width) ** 2
+            if best[i] + cost < best[j]:
+                best[j], cut[j] = best[i] + cost, i
+    lines, j = [], n
+    while j > 0:
+        i = cut[j]
+        line = []
+        for k in range(i, j):
+            if k > i:
+                line.append((" ", False, sp))
+            line += units[k]
+        lines.append(line)
+        j = i
+    return lines[::-1]
+
+
+def open_amount(pg, j, u):
+    """How far word j's sample sentence is shown (0-1, eased) and its example dict, or (0, None) outside its time."""
+    e = pg.examples[j] if j < len(pg.examples) else None
+    if not e or u < e["f0"] or u >= e["f1"] + e["flip"]:
+        return 0.0, None
+    fl = e["flip"]
+    if u < e["f0"] + fl:
+        return ease_io(prog(u, e["f0"], e["f0"] + fl)), e
+    if u < e["f1"]:
+        return 1.0, e
+    return 1 - ease_io(prog(u, e["f1"], e["f1"] + fl)), e
+
+
+def turn(img, ang):
+    """img seen while it turns over on its horizontal middle: squashed, with a little perspective and shade."""
+    rad = math.radians(ang)
+    cos, sin = abs(math.cos(rad)), abs(math.sin(rad))
+    w, h = img.size
+    nh = max(2, int(round(h * cos)))
+    back = 90 < ang % 360 < 270
+    k = 0.07 * sin  # the edge coming towards us is wider
+    wt, wb = (w * (1 - k), w * (1 + k)) if back else (w * (1 + k), w * (1 - k))
+    W0 = int(max(wt, wb)) + 2
+    qx = lambda edge: (W0 - edge) / 2 * w / edge  # noqa: E731  (source x reached by the output's left side)
+    quad = (-qx(wt), 0, -qx(wb), h, w + qx(wb), h, w + qx(wt), 0)
+    out = img.transform((W0, nh), Image.QUAD, quad, Image.BICUBIC)
+    if sin > 0.02:
+        a = out.split()[3]
+        out = ImageEnhance.Brightness(out.convert("RGB")).enhance(1 - 0.35 * sin).convert("RGBA")
+        out.putalpha(a)
+    return out
+
+
+def reveal(img, full_h, h, r=40):
+    """A card image (PAD margin) of card height full_h shown at height h: its top and its rounded bottom edge."""
+    h = int(max(r + 2, min(full_h, h)))
+    top = img.crop((0, 0, img.width, PAD + h - r))
+    bot = img.crop((0, PAD + full_h - r, img.width, img.height))
+    out = Image.new("RGBA", (img.width, top.height + bot.height), (0, 0, 0, 0))
+    out.alpha_composite(top)
+    out.alpha_composite(bot, (0, top.height))
+    return out
+
+
+class SentenceKit:
+    """Draws sample sentences in one look. theme = dict(back = panel colour, ex = text, hl / hl_txt = the word's
+    pill and its text, label = EXAMPLE, head = the word above the sentence, shadow, bars_b = sound bars);
+    font / weights = the design's (the font set and a 🎨 Style & sound font apply: resolve_font)."""
+
+    def __init__(self, theme, karaoke=False, font=POPPINS_B, w_text="SemiBold", w_hl="Bold", radius=36):
+        self.c, self.karaoke, self.radius = theme, karaoke, radius
+        self.f_txt = resolve_font(font, w_text)
+        self.f_hl = resolve_font(font, w_hl)
+        self.f_lab = resolve_font(font, "Bold")
+
+    def sentence(self, phrase, text, width, size_max=50, size_min=34, max_lines=4, max_h=None):
+        """The sentence set in `width` px, the word / expression on a pill (find_phrase in any form, or *stars*):
+        lines chosen together (_optimal), then justified (a single line is centred, the last line is flush left,
+        a line that would need wide gaps stays ragged); the biggest size that fits. Returns dict(lit =
+        full colours, dim = karaoke start, boxes = per word (x0, y0, x1, y1, weight), w, h)."""
+        from .core import get_font
+        c, S = self.c, 2  # drawn at twice the size, then scaled down
+        toks = _ex_tokens(text, phrase)
+        size = size_max * S
+        while True:
+            fn, fh = get_font(size, self.f_txt[1], self.f_txt[0]), get_font(size, self.f_hl[1], self.f_hl[0])
+            lines = _optimal(toks, fn, fh, width * S, size * 0.2)
+            block = max(sum(p[2] for p in ln) for ln in lines) if len(lines) > 1 else width * S
+            asc, desc = fn.getmetrics()
+            lh = int((asc + desc) * 1.1)
+            if (len(lines) <= max_lines and (max_h is None or len(lines) * lh <= max_h * S)) or size <= size_min * S:
+                break
+            size -= 2 * S
+        H0 = len(lines) * lh
+        x_left = (width * S - block) / 2
+        placed = []  # per line: [(x, text, highlighted, width)]
+        for n, line in enumerate(lines):
+            lw = sum(p[2] for p in line)
+            gaps = [k for k, p in enumerate(line) if p[0] == " "]
+            last = n == len(lines) - 1
+            extra = 0.0
+            if len(lines) > 1 and not last and gaps:
+                extra = (block - lw) / len(gaps)
+                if extra > size * 0.45:  # too loose to justify cleanly: keep it ragged
+                    extra = 0.0
+            x = (width * S - lw) / 2 if len(lines) == 1 else x_left
+            row = []
+            for k, (txt, hl, wdt) in enumerate(line):
+                row.append((x, txt, hl, wdt))
+                x += wdt + (extra if k in gaps else 0.0)
+            placed.append(row)
+        layers, boxes = {}, []
+        for mode in ("lit", "dim"):
+            k_txt, k_pill, k_hl = (1.0, 1.0, 1.0) if mode == "lit" else (0.34, 0.3, 0.5)
+            lay = Image.new("RGBA", (width * S, H0), (0, 0, 0, 0))
+            d = ImageDraw.Draw(lay)
+            y = asc
+            for row in placed:
+                run = [p for p in row if p[2]]
+                pad = size * 0.14
+                if run:  # one pill under the highlighted words of this line
+                    d.rounded_rectangle([run[0][0] - pad, y - asc * 0.84, run[-1][0] + run[-1][3] + pad,
+                                         y + desc * 0.58], size * 0.24, fill=tuple(c["hl"]) + (int(255 * k_pill),))
+                for x0, txt, hl, wdt in row:
+                    if txt.strip():
+                        col = c["hl_txt"] if hl else c["ex"]
+                        d.text((x0, y), txt, font=fh if hl else fn,
+                               fill=tuple(col) + (int(255 * (k_hl if hl else k_txt)),), anchor="ls")
+                        if mode == "lit":
+                            e = pad if hl else 2
+                            boxes.append(((x0 - e) / S, (y - lh * 0.82) / S, (x0 + wdt + e) / S, (y + lh * 0.3) / S,
+                                          len(txt) + 1))
+                y += lh
+            layers[mode] = lay.resize((width, max(1, H0 // S)), Image.LANCZOS)
+        return dict(lit=layers["lit"], dim=layers["dim"], boxes=boxes, w=width, h=max(1, H0 // S))
+
+    def now(self, sl, e, u):
+        """The sentence as it looks at time u: all lit, or (karaoke) its words lit one after another while it is read
+        (word times from the clip length, by letters)."""
+        if not self.karaoke or u >= e["e1"]:
+            return sl["lit"]
+        img = sl["dim"].copy()
+        p = prog(u, e["e0"], e["e1"])
+        total = sum(b[4] for b in sl["boxes"]) or 1
+        acc = 0.0
+        for x0, y0, x1, y1, wt in sl["boxes"]:
+            if acc / total >= p:
+                break
+            box = tuple(int(round(v)) for v in (max(0, x0), max(0, y0), min(sl["w"], x1), min(sl["h"], y1)))
+            if box[2] > box[0] and box[3] > box[1]:
+                img.paste(sl["lit"].crop(box), box[:2])
+            acc += wt
+        return img
+
+    def label(self, size=22):
+        return _t(self.f_lab[0], "  ".join("EXAMPLE"), size, self.c["label"], self.f_lab[1])
+
+    def panel(self, phrase, text, pw, handle=False, max_h=520):
+        """A panel of its own: (grab handle) · the word + EXAMPLE label (+ sound bars) · the sentence."""
+        c = self.c
+        lab = self.label()
+        sl = self.sentence(phrase, text, pw - 110, max_h=max_h)
+        word = _fit(_t(self.f_hl[0], phrase, 34, c["head"], self.f_hl[1]), pw - 300)
+        head = max(lab.height, word.height) - 60
+        ph = (30 if handle else 0) + 28 + head + 22 + sl["h"] + 36
+        panel = _shadow_card(pw, ph, self.radius, c["back"], c["shadow"], 0.4, 26, 14)
+        if c.get("border"):
+            ImageDraw.Draw(panel).rounded_rectangle([PAD, PAD, PAD + pw - 1, PAD + ph - 1], self.radius,
+                                                    outline=tuple(c["border"]) + (255,), width=c.get("border_w", 3))
+        y0 = PAD + 28
+        if handle:  # the grab handle of a bottom sheet
+            ImageDraw.Draw(panel).rounded_rectangle([PAD + pw / 2 - 40, PAD + 14, PAD + pw / 2 + 40, PAD + 22], 4,
+                                                    fill=tuple(c["label"]) + (140,))
+            y0 += 30
+        panel.alpha_composite(word, (PAD + 40 - 30, y0 - 30))
+        lx = PAD + pw - 40 - (lab.width - 60) - 30 - 50  # the label, left of the sound bars
+        panel.alpha_composite(lab, (lx, y0 + (word.height - 60 - (lab.height - 60)) // 2 - 30))
+        return dict(panel=panel, h=ph, w=pw, sent=sl, sent_xy=(PAD + 55, y0 + head + 22),
+                    bars=(pw - 40 - 18, y0 - PAD + (word.height - 60) / 2))
+
+    def compose(self, base, sent, xy, e, u):
+        img = base.copy()
+        img.alpha_composite(self.now(sent, e, u), tuple(int(v) for v in xy))
+        return img
+
+    def bars(self, fr, x, y, e, u, a, s=1.0):
+        _bars(fr, x, y, 26 * s, self.c["bars_b"], u, e["speak"], a, n=4, bw=5, gap=4)
+
+
+class SentenceOverlay:
+    """The six ways to show a sample sentence for the designs that draw no card of their own for it (Glass, Pop,
+    Spotlight, Editorial, Chalkboard): a panel in the design's look, anchored at the row being read; the rest of the
+    page steps back under a scrim (the row itself stays clear, except in Focus zoom)."""
+    TOP, BOT, SHEET_BOT = 440, 1700, 1700
+
+    def __init__(self, pg, style, kit, scrim, scrim_k=0.5):
+        self.pg, self.st, self.kit, self.scrim, self.scrim_k = pg, style, kit, tuple(scrim), scrim_k
+        self.p = {}
+        for j, w in enumerate(pg.words):
+            e = pg.examples[j] if j < len(pg.examples) else None
+            if e:
+                self.p[j] = kit.panel(w["en"], e["text"], 980 if style == "sheet" else 960, handle=style == "sheet",
+                                      max_h=640)
+
+    def draw(self, fr, u, ys=None):
+        pg = self.pg
+        ys = ys or pg.cy
+        opens = [open_amount(pg, j, u) for j in range(len(pg.words))]
+        cur = max(range(len(opens)), key=lambda j: opens[j][0]) if opens else 0
+        o, e = opens[cur] if opens else (0.0, None)
+        if e is None or cur not in self.p:
+            return
+        P, y, half = self.p[cur], ys[cur], pg.pitch / 2
+        mask = Image.new("L", (W, H), int(255 * self.scrim_k * (1.2 if self.st == "zoom" else 1.0) * o))
+        if self.st != "zoom":  # the word's own row stays clear
+            ImageDraw.Draw(mask).rectangle([0, int(y - half), W, int(y + half)], fill=0)
+        fr.paste(self.scrim + (255,), (0, 0, W, H), mask)
+        img = self.kit.compose(P["panel"], P["sent"], P["sent_xy"], e, u) if o > 0.02 else P["panel"]
+        ph, pw = P["h"], P["w"]
+        clamp = lambda cy: min(max(cy, self.TOP + ph / 2), self.BOT - ph / 2)  # noqa: E731
+        bars_at = None
+        if self.st == "sheet":
+            rest = self.SHEET_BOT - ph / 2
+            cy = rest + (H + ph / 2 - rest) * (1 - o)
+            paste(fr, img, W / 2, cy, 1.0, 1.0)
+            bars_at = (W / 2 - pw / 2 + P["bars"][0], cy - ph / 2 + P["bars"][1], 1.0)
+        elif self.st == "bubble":
+            below = y < (self.TOP + self.BOT) / 2
+            edge = y + (half - 4) * (1 if below else -1)
+            cy = min(max(edge + (28 + ph / 2) * (1 if below else -1), self.TOP - 20 + ph / 2), 1720 - ph / 2)
+            k = 0.55 + 0.45 * ease_out_back(o) if o < 1 else 1.0
+            tail_x = W / 2 - pw / 2 + 150
+            tail = Image.new("RGBA", (120, 64), (0, 0, 0, 0))
+            pts = [(12, 64), (108, 64), (34, 0)] if below else [(12, 0), (108, 0), (34, 64)]
+            ImageDraw.Draw(tail).polygon(pts, fill=tuple(self.kit.c["back"]) + (255,))
+            tail = tail.resize((60, 32), Image.LANCZOS)
+            bx, by = tail_x + (W / 2 - tail_x) * k, edge + (cy - edge) * k
+            paste(fr, tail, tail_x + 18, edge + 16 * (1 if below else -1), k, min(1.0, o * 2))
+            paste(fr, img, bx, by, k, min(1.0, o * 2))
+            bars_at = (W / 2 - pw / 2 + P["bars"][0], by - ph / 2 + P["bars"][1], 1.0)
+        elif self.st == "zoom":
+            s = 0.86 + 0.14 * ease_out_back(o) if o < 1 else 1.0
+            cy = (self.TOP + self.BOT) / 2
+            paste(fr, img, W / 2, cy, s, min(1.0, o * 1.6))
+            bars_at = (W / 2 + (P["bars"][0] - pw / 2) * s, cy + (P["bars"][1] - ph / 2) * s, s)
+        elif self.st == "flip":  # the panel turns in over the row (edge-on -> facing) and away again
+            ang = 90 + 90 * o if u < e["f1"] else 270 - 90 * o
+            cy = clamp(y)
+            paste(fr, turn(img, ang), W / 2, cy, 1.0, 1.0)
+            bars_at = (W / 2 - pw / 2 + P["bars"][0], cy - ph / 2 + P["bars"][1], 1.0)
+        elif self.st == "expand":  # the panel unrolls from the row's edge (down, or up near the bottom)
+            hh = ph * o
+            down = y + half + ph <= self.BOT + 20
+            img = reveal(img, ph, hh)
+            vis = img.height - 2 * PAD
+            cy = (y + half - 8 + vis / 2) if down else (y - half + 8 - vis / 2)
+            paste(fr, img, W / 2, cy, 1.0, min(1.0, o * 3))
+            if o >= 0.999:
+                bars_at = (W / 2 - pw / 2 + P["bars"][0], cy - vis / 2 + P["bars"][1], 1.0)
+        else:  # drawer: slides in from the right over the row, and out again
+            cy = clamp(y)
+            paste(fr, img, W / 2 + W * (1 - o), cy, 1.0, 1.0)
+            bars_at = (W / 2 - pw / 2 + P["bars"][0], cy - ph / 2 + P["bars"][1], 1.0)
+        if o >= 0.999 and bars_at:
+            self.kit.bars(fr, bars_at[0], bars_at[1], e, u, 1.0, bars_at[2])
+
+
+def kit_theme(pal, design):
+    """A sentence-panel look from a design's colours: a two- / three-tone set, or its single colour pair."""
+    tn = tones(pal)
+    if tn:
+        dk, x, y = tn
+        return dict(back=x, ex=dk, hl=dk, hl_txt=y if y != x and _lum(y) > 0.35 else x, label=_mix(dk, x, 0.4),
+                    head=dk, shadow=_mix(dk, BLACK, 0.7), bars_b=dk), _mix(dk, BLACK, 0.35)
+    a, b = PALETTES[_pal_key(pal, design)]
+    acc = _on_white(a)
+    return dict(back=WHITE, ex=(24, 26, 36), hl=acc, hl_txt=WHITE, label=(122, 126, 142), head=acc,
+                shadow=_mix(a, BLACK, 0.6), bars_b=acc), _mix(a, BLACK, 0.75)
+
+
 # how a word-list card shows its sample sentence (vocab `list_ex_style`; `list_karaoke` lights its words in turn)
 EX_STYLES = [("Flip — the card turns over", "flip"), ("Expand — the card grows, the sentence slides out", "expand"),
              ("Bottom sheet — a panel slides up", "sheet"), ("Speech bubble — pops out of the card", "bubble"),
@@ -883,10 +1207,13 @@ class Bright:
     def __init__(self, pg, opts, title, subtitle, kicker):
         self.pg = pg
         pal = opts.get("palette")
-        self.c = c = _bright_scheme(_pal_key(pal))
+        self.c = c = _bright_scheme(_pal_key(pal, "Bright"))
         st = opts.get("ex_style")
         self.ex_style = st if st in dict((v, k) for k, v in EX_STYLES) else "flip"
         self.karaoke = bool(opts.get("karaoke"))
+        self.kit = SentenceKit(dict(back=c["back"], ex=c["ex"], hl=c["hl"], hl_txt=c["hl_txt"], label=c["label"],
+                                    head=c["hl"] if c["back"] == WHITE else c["ex"], shadow=c["shadow"],
+                                    bars_b=c["bars_b"]), self.karaoke)
         n = len(pg.words)
         self.kick = _t(POPPINS_B, (kicker or "Vocabulary").upper(), 28, c["kick"], "Bold", 800)
         self.title = _t(POPPINS_B, title, 80, c["title"], "Bold", 960)
@@ -935,77 +1262,13 @@ class Bright:
 
     # ------------------------------------------------------------ sample sentences
     def _sentence(self, w, text, width, size_max=50, size_min=34, max_lines=4, max_h=None):
-        """The sentence drawn centred in `width` px, the word / expression on a pill (found by find_phrase in any
-        form, or *starred*). The biggest size (size_max down to size_min) that fits in max_lines (and max_h).
-        Returns dict(lit = full colours, dim = karaoke start: faded text + faint pill, boxes = per word
-        (x0, y0, x1, y1, weight) to light up in turn, w, h)."""
-        from .core import get_font
-        c, S = self.c, 2  # drawn at twice the size, then scaled down (smooth pill edges)
-        toks = _ex_tokens(text, w["en"])
-        f_path, f_w = resolve_font(POPPINS_B, "SemiBold")
-        h_path, h_w = resolve_font(POPPINS_B, "Bold")
-        size = size_max * S
-        while True:
-            fn, fh = get_font(size, f_w, f_path), get_font(size, h_w, h_path)
-            lines = _wrap(toks, fn, fh, width * S, size * 0.2)
-            asc, desc = fn.getmetrics()
-            lh = int((asc + desc) * 1.08)
-            if (len(lines) <= max_lines and (max_h is None or len(lines) * lh <= max_h * S)) or size <= size_min * S:
-                break
-            size -= 2 * S
-        H0 = len(lines) * lh
-        layers = {}
-        for mode in ("lit", "dim"):
-            k_txt, k_pill, k_hl = (1.0, 1.0, 1.0) if mode == "lit" else (0.34, 0.3, 0.5)
-            lay = Image.new("RGBA", (width * S, H0), (0, 0, 0, 0))
-            d = ImageDraw.Draw(lay)
-            boxes = []
-            y = asc
-            for line in lines:
-                x, pieces = (width * S - sum(p[2] for p in line)) / 2, []
-                for txt, hl, wdt in line:
-                    pieces.append((x, txt, hl, wdt))
-                    x += wdt
-                run = [p for p in pieces if p[2]]
-                pad = size * 0.14
-                if run:  # one pill under the highlighted words of this line
-                    d.rounded_rectangle([run[0][0] - pad, y - asc * 0.84, run[-1][0] + run[-1][3] + pad,
-                                         y + desc * 0.58], size * 0.24, fill=tuple(c["hl"]) + (int(255 * k_pill),))
-                for x0, txt, hl, wdt in pieces:
-                    if txt.strip():
-                        col = c["hl_txt"] if hl else c["ex"]
-                        d.text((x0, y), txt, font=fh if hl else fn, fill=tuple(col) + (int(255 * (k_hl if hl else
-                                                                                                    k_txt)),),
-                               anchor="ls")
-                        e = pad if hl else 2
-                        boxes.append(((x0 - e) / S, (y - lh * 0.82) / S, (x0 + wdt + e) / S, (y + lh * 0.3) / S,
-                                      len(txt) + 1))
-                y += lh
-            layers[mode] = lay.resize((width, max(1, H0 // S)), Image.LANCZOS)
-            layers["boxes"] = boxes
-        return dict(lit=layers["lit"], dim=layers["dim"], boxes=layers["boxes"], w=width, h=max(1, H0 // S))
+        return self.kit.sentence(w["en"], text, width, size_max, size_min, max_lines, max_h)
 
     def _sent_now(self, sl, e, u):
-        """The sentence as it looks at time u: everything lit, or (karaoke) the words lit one after another while
-        the sentence is read (word times from the clip length, by letters)."""
-        if not self.karaoke or u >= e["e1"]:
-            return sl["lit"]
-        img = sl["dim"].copy()
-        p = prog(u, e["e0"], e["e1"])
-        total = sum(b[4] for b in sl["boxes"]) or 1
-        acc = 0.0
-        for x0, y0, x1, y1, wt in sl["boxes"]:
-            if acc / total >= p:
-                break
-            box = tuple(int(round(v)) for v in (max(0, x0), max(0, y0), min(sl["w"], x1), min(sl["h"], y1)))
-            if box[2] > box[0] and box[3] > box[1]:
-                img.paste(sl["lit"].crop(box), box[:2])
-            acc += wt
-        return img
+        return self.kit.now(sl, e, u)
 
     def _label(self, size=22):
-        f, wt = resolve_font(POPPINS_B, "Bold")
-        return _t(f, "  ".join("EXAMPLE"), size, self.c["label"], wt)
+        return self.kit.label(size)
 
     def _build_examples(self, j, w, e, out):
         """The images the chosen style needs for word j's sample sentence."""
@@ -1041,36 +1304,12 @@ class Bright:
             out["sent_xy"] = (PAD + 55, PAD + ch + 8 + (lab.height - 60) + 14)
             out["exp_lab"] = ch + 8 + (lab.height - 60) / 2
         else:  # sheet / bubble: a panel of its own
-            pw = 980 if st == "sheet" else 900
-            sl = self._sentence(w, e["text"], pw - 110, max_h=520)
-            word = _fit(_t(POPPINS_B, w["en"], 34, c["hl"] if c["back"] == WHITE else c["ex"], "Bold"), 560)
-            head = max(lab.height, word.height) - 60
-            ph = (30 if st == "sheet" else 0) + 28 + head + 22 + sl["h"] + 36
-            panel = _shadow_card(pw, ph, 36, c["back"], c["shadow"], 0.4, 26, 14)
-            dr = ImageDraw.Draw(panel)
-            y0 = PAD + 28
-            if st == "sheet":  # the grab handle of a bottom sheet
-                dr.rounded_rectangle([PAD + pw / 2 - 40, PAD + 14, PAD + pw / 2 + 40, PAD + 22], 4,
-                                     fill=tuple(c["label"]) + (140,))
-                y0 += 30
-            panel.alpha_composite(word, (PAD + 40 - 30, y0 - 30))
-            lx = PAD + pw - 40 - (lab.width - 60) - 30 - 50  # the label, left of the sound bars
-            panel.alpha_composite(lab, (lx, y0 + (word.height - 60 - (lab.height - 60)) // 2 - 30))
-            out["panel"], out["panel_h"], out["panel_w"], out["sent"] = panel, ph, pw, sl
-            out["sent_xy"] = (PAD + 55, y0 + head + 22)
-            out["panel_bars"] = (pw - 40 - 18, y0 - PAD + (word.height - 60) / 2)
+            P = self.kit.panel(w["en"], e["text"], 980 if st == "sheet" else 900, handle=st == "sheet")
+            out["panel"], out["panel_h"], out["panel_w"], out["sent"] = P["panel"], P["h"], P["w"], P["sent"]
+            out["sent_xy"], out["panel_bars"] = P["sent_xy"], P["bars"]
 
     def _open(self, j, u):
-        """How far word j's sentence is shown (0-1, eased) and its example dict, or (0, None) outside its time."""
-        e = self.pg.examples[j] if j < len(self.pg.examples) else None
-        if not e or u < e["f0"] or u >= e["f1"] + e["flip"]:
-            return 0.0, None
-        fl = e["flip"]
-        if u < e["f0"] + fl:
-            return ease_io(prog(u, e["f0"], e["f0"] + fl)), e
-        if u < e["f1"]:
-            return 1.0, e
-        return 1 - ease_io(prog(u, e["f1"], e["f1"] + fl)), e
+        return open_amount(self.pg, j, u)
 
     def _flip(self, j, u):
         """(angle 0-360 of the card turning over, how far the sentence is shown 0-1) or (None, 0)."""
@@ -1086,36 +1325,8 @@ class Bright:
         p = prog(u, e["f1"], e["f1"] + fl)
         return 180 + 180 * ease_io(p), 1 - p
 
-    @staticmethod
-    def _turn(img, ang):
-        """img seen while it turns over on its horizontal middle: squashed, with a little perspective and shade."""
-        rad = math.radians(ang)
-        cos, sin = abs(math.cos(rad)), abs(math.sin(rad))
-        w, h = img.size
-        nh = max(2, int(round(h * cos)))
-        back = 90 < ang % 360 < 270
-        k = 0.07 * sin  # the edge coming towards us is wider
-        wt, wb = (w * (1 - k), w * (1 + k)) if back else (w * (1 + k), w * (1 - k))
-        W0 = int(max(wt, wb)) + 2
-        qx = lambda edge: (W0 - edge) / 2 * w / edge  # noqa: E731  (source x reached by the output's left side)
-        quad = (-qx(wt), 0, -qx(wb), h, w + qx(wb), h, w + qx(wt), 0)
-        out = img.transform((W0, nh), Image.QUAD, quad, Image.BICUBIC)
-        if sin > 0.02:
-            a = out.split()[3]
-            out = ImageEnhance.Brightness(out.convert("RGB")).enhance(1 - 0.35 * sin).convert("RGBA")
-            out.putalpha(a)
-        return out
-
-    @staticmethod
-    def _reveal(img, full_h, h, r=40):
-        """A card image (PAD margin) of card height full_h shown at height h: its top and its rounded bottom edge."""
-        h = int(max(r + 2, min(full_h, h)))
-        top = img.crop((0, 0, img.width, PAD + h - r))
-        bot = img.crop((0, PAD + full_h - r, img.width, img.height))
-        out = Image.new("RGBA", (img.width, top.height + bot.height), (0, 0, 0, 0))
-        out.alpha_composite(top)
-        out.alpha_composite(bot, (0, top.height))
-        return out
+    _turn = staticmethod(turn)
+    _reveal = staticmethod(reveal)
 
     def _with_sentence(self, base, c, e, u):
         """base (a card / panel picture) with the sentence as it looks at time u."""
