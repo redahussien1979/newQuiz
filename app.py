@@ -1293,10 +1293,12 @@ def wire_vc_batch(xl, pv, fields):
 
 
 # ------------------------------------------------------------------ English Words: 📃 Word list from Excel + ElevenLabs
-WL_IMPORT_HELP = ("**📥 Words from Excel** — one word per row: **English | Arabic | IPA | Sample sentence** (IPA and "
-                  "sentence optional; headers in English or Arabic, or none: A = English, B = Arabic, C = IPA, "
-                  "D = sentence). With a sentence, it is shown after the word (📃 Sample sentences style), the word "
-                  "highlighted, read aloud too. Any number of words: they are cut into pages, and the pages into videos.")
+WL_IMPORT_HELP = ("**📥 Words from Excel** — one word per row: **English | Arabic | IPA | Sample sentence | Title | "
+                  "Subtitle** (all but English and Arabic optional; headers in English or Arabic, or none: A–F in "
+                  "this order). With a sentence, it is shown after the word (📃 Sample sentences style), the word "
+                  "highlighted, read aloud too. A **Title** (+ Subtitle) written once goes on to the next pages until "
+                  "a new one; a page takes the one in effect at its first word. Any number of words: they are cut "
+                  "into pages, and the pages into videos.")
 
 
 def _wl_template_path():
@@ -1324,7 +1326,8 @@ def wl_import_ui():
                           info="Pages are filled in order: only the last page / video gets what is left")
     with gr.Row():
         title = gr.Textbox(label="Page title (optional)", placeholder="Words in the News",
-                           info="{n} = the page number · empty = the title of the group")
+                           info="For pages without a Title in the sheet · {n} = the page number · empty = the "
+                                "title of the group")
         sub = gr.Textbox(label="Page subtitle (optional)", placeholder="كلمات من الأخبار", rtl=True)
     voice = gr.Checkbox(value=True, label="🎙️ Make the voice of every word with my ElevenLabs voice",
                         info="Uses 🔑 ElevenLabs voice in 📖 English Texts → ✍️ Paragraphs. Each word costs credits "

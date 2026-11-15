@@ -54,7 +54,8 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   Editorial / Chalkboard keep their highlight / board pickers) + the sets (single `PALETTES` only for older projects);
   Editorial = light-tone paper + dark ink, Chalkboard = dark-tone board (`tones()`)); `list_fonts` 1-5 = the design's font set (`FONT_SETS`: design font -> (font, weight), applied
   in word_list `_t`; 1 = own fonts; a 🎨 Style & sound font wins). `engine/word_import.py` = 📃 Word list's Excel import (English | Arabic | IPA, any number of
-  rows -> pages -> videos; optional Sample sentence column) + ElevenLabs voice per word (`voice_clips` -> w<page>_<word>.mp3, cache DATA_DIR/tts). Sample sentence: an `example:` line under a
+  rows -> pages -> videos; optional Sample sentence, Title, Subtitle columns: a title goes on until the next,
+  a page takes the one at its first word) + ElevenLabs voice per word (`voice_clips` -> w<page>_<word>.mp3, cache DATA_DIR/tts). Sample sentence: an `example:` line under a
   word (word dict `ex`, clip `w<i>_<k>e`); `_build_list` times word → flip (`LIST_FLIP`) → sentence → flip back and
   passes `examples` to ListPage; Bright draws it in the style `list_ex_style` (`EX_STYLES`: flip / expand / sheet /
   bubble / zoom / drawer = `_draw_<style>`) with its cards; the other designs get `SentenceOverlay` (a panel in

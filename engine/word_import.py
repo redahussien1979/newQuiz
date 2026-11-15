@@ -1,7 +1,8 @@
 """English Words — 📃 Word list from an Excel / CSV sheet, with the voice of every word made by ElevenLabs.
 
-The sheet is one word per row: English | Arabic | IPA (optional) | Sample sentence (optional: the card flips over to
-show it, the word highlighted, read with its own clip). Headers are recognised in English or Arabic
+The sheet is one word per row: English | Arabic | IPA (optional) | Sample sentence (optional: shown after the word,
+highlighted, read with its own clip) | Title | Subtitle (optional: written once, they go on to the next pages until
+a new title; a page takes the one in effect at its first word). Headers are recognised in English or Arabic
 (English / Word, Arabic / Meaning, IPA / Pronunciation); without a header row the columns are A = English,
 B = Arabic, C = IPA. Any number of rows: `plan()` cuts them in order into pages of `per_page` words (one
 `type: list` item each) and the pages into videos of `per_video` pages (vocab.MAX_ITEMS); only the last page / video
@@ -21,7 +22,10 @@ _HEAD = {"en": ("english", "word", "words", "wordphrase", "phrase", "term", "ا�
          "ar": ("arabic", "meaning", "translation", "arabicmeaning", "المعنى", "العربية", "الترجمة", "عربي", "معنى"),
          "ipa": ("ipa", "pronunciation", "phonetic", "phonetics", "النطق"),
          "ex": ("samplesentence", "sentence", "example", "examplesentence", "sample", "usage", "مثال", "جملة",
-                "الجملة", "المثال")}
+                "الجملة", "المثال"),
+         # page title / subtitle (subtitle first: "العنوان الفرعي" also starts like "العنوان")
+         "sub": ("subtitle", "pagesubtitle", "العنوانالفرعي", "عنوانفرعي"),
+         "title": ("title", "pagetitle", "heading", "العنوان", "عنوان")}
 _SEP = re.compile(r"[=|]")  # the separators of a word line in the editor: never inside a word
 
 
@@ -55,17 +59,22 @@ def read_words(path, sheet=None):
             start = i + 1
             break
     if cols is None:
-        cols = {"en": 0, "ar": 1, "ipa": 2, "ex": 3}
+        cols = {"en": 0, "ar": 1, "ipa": 2, "ex": 3, "title": 4, "sub": 5}
     words, problems = [], []
+    title = sub = ""  # a title / subtitle goes on until the next one (it may also sit on a row of its own)
     for r, row in enumerate(rows[start:], start + 1):
         cell = lambda k: _clean(row[cols[k]]) if k in cols and cols[k] < len(row) else ""  # noqa: E731
         en, ar, ipa, ex = cell("en"), cell("ar"), cell("ipa"), cell("ex")
+        if cell("title"):
+            title, sub = cell("title"), cell("sub")  # a new title starts with its own subtitle (or none)
+        elif cell("sub"):
+            sub = cell("sub")
         if not en and not ar:
             continue
         if not en or not ar:
             problems.append(f"row {r}: {'the English word' if not en else 'the Arabic meaning'} is empty — left out")
             continue
-        words.append(dict(en=en, ar=ar, ipa=clean_ipa(ipa) if ipa else "", ex=ex, row=r))
+        words.append(dict(en=en, ar=ar, ipa=clean_ipa(ipa) if ipa else "", ex=ex, row=r, title=title, sub=sub))
     return words, problems
 
 
@@ -84,12 +93,15 @@ def plan(words, per_page=5, per_video=4):
 
 
 def video_items(pages, title="", subtitle="", first_page=1):
-    """The editor's Items text for one video. {n} in the title = the page number counted over the whole sheet."""
+    """The editor's Items text for one video. A page takes the sheet's title / subtitle in effect at its first word,
+    else the ones typed in the app; {n} = the page number counted over the whole sheet."""
     items = []
     for k, page in enumerate(pages):
         n = str(first_page + k)
+        t = page[0].get("title") or title or ""
+        st = (page[0].get("sub") if page[0].get("title") else "") or subtitle or ""
         items.append(list_item([dict(en=w["en"], ipa=w["ipa"], ar=w["ar"], ex=w.get("ex", "")) for w in page],
-                               (title or "").replace("{n}", n), (subtitle or "").replace("{n}", n)))
+                               t.replace("{n}", n), st.replace("{n}", n)))
     return items_text(items)
 
 
@@ -149,8 +161,10 @@ def voice_clips(pages, data_dir, out_dir, progress=None):
     return paths
 
 
-TEMPLATE_ROWS = [("English", "Arabic", "IPA (optional)", "Sample sentence (optional)"),
-                 ("Tip of the iceberg", "قمة جبل الجليد", "", "This scandal is only the tip of the iceberg."),
+TEMPLATE_ROWS = [("English", "Arabic", "IPA (optional)", "Sample sentence (optional)", "Title (optional)",
+                  "Subtitle (optional)"),
+                 ("Tip of the iceberg", "قمة جبل الجليد", "", "This scandal is only the tip of the iceberg.",
+                  "Idioms You Should Know", "تعابير يجب أن تعرفها"),
                  ("Uphill battle", "معركة شاقة", "", "Getting the new law passed was an uphill battle."),
                  ("Cornerstone", "حجر الزاوية", "/ˈkɔːnəstəʊn/", "Trust is the cornerstone of every friendship."),
                  ("Litmus test", "المحك الحاسم", "", "The election will be a litmus test for the new party."),
@@ -169,10 +183,11 @@ def write_template(path):
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="251A66")
-    for row in ws.iter_rows(min_row=2, min_col=2, max_col=2):
-        for c in row:
-            c.alignment = Alignment(horizontal="right", readingOrder=2)
-    for col, w in zip("ABCD", (28, 34, 24, 60)):
+    for col in (2, 6):  # the Arabic columns read right to left
+        for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
+            for c in row:
+                c.alignment = Alignment(horizontal="right", readingOrder=2)
+    for col, w in zip("ABCDEF", (28, 34, 24, 60, 30, 30)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
     wb.save(path)
