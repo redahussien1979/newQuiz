@@ -2646,8 +2646,9 @@ def build_ui():
                                                              info="Every design: a two- or three-colour set, or the "
                                                                   "design's own colours")
                                     v_lfont = gr.Dropdown(font_choices("Bright"), value=1, label="Font set",
-                                                          info="5 English + Arabic font pairs made for this design "
-                                                               "(a font picked in 🎨 Style & sound is used instead)")
+                                                          info="10 English + Arabic font pairs made for this design "
+                                                               "(6-10 = fonts of well-known apps; a font picked in "
+                                                               "🎨 Style & sound is used instead)")
                                 with gr.Row(visible=True, equal_height=True):
                                     v_lex = gr.Dropdown(EX_STYLES, value="flip", label="Sample sentences",
                                                         info="How a word's sample sentence (example: line / Excel "
