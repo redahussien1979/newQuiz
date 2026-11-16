@@ -1258,6 +1258,12 @@ class NewsVideo:
         self.f_title = _fit_text(self.ending_title.upper(), 52, tcol, 940, "Black")
         self.f_sub = _fit_text(self.ending_sub or f"{k} word{'s' if k != 1 else ''} from this news", 28,
                                (220, 222, 228) if dark else (90, 96, 108), 900, "SemiBold")
+        # the title's underline: under the small line's letters (measured, whatever the font), above the cards
+        sub_ink = self.f_sub.getchannel("A").getbbox() or (0, 0, 0, self.f_sub.height)
+        self.f_sub_y = self.f_title.height + 2
+        self.f_line = min(self.f_sub_y + sub_ink[3] + 14, 150 - 22)
+        if self.f_line < self.f_sub_y + sub_ink[3] + 6:   # a tall font: lift the small line to keep the gap
+            self.f_sub_y = self.f_line - 6 - sub_ink[3]
         right = max(x for x, _ in self.f_slots) + cw
         self.f_corner = (min(W - 80, right - 10), self.f_slots[0][1] - 10)
         rng = np.random.default_rng(pi % (2 ** 32))
@@ -1273,10 +1279,11 @@ class NewsVideo:
             ty = self.f_ty
             _comp(layer, _fade(self.f_title, k), (W - self.f_title.width) // 2,
                   ty + int((1 - min(1.0, _spring_in(te - 0.1))) * -40))
-            _comp(layer, _fade(self.f_sub, k), (W - self.f_sub.width) // 2, ty + self.f_title.height + 2)
+            _comp(layer, _fade(self.f_sub, k), (W - self.f_sub.width) // 2, ty + self.f_sub_y)
             lw = int(220 * min(1.0, _spring_in(te - 0.35)))
             if lw > 0:
-                ImageDraw.Draw(layer).rounded_rectangle([W // 2 - lw // 2, ty + 112, W // 2 + lw // 2, ty + 118], 3,
+                ly = ty + self.f_line
+                ImageDraw.Draw(layer).rounded_rectangle([W // 2 - lw // 2, ly, W // 2 + lw // 2, ly + 6], 3,
                                                         fill=self.f_ring)
         w, h = self.f_cw, self.f_ch
         for i, (face, (fx, fy)) in enumerate(zip(self.f_faces, self.f_slots)):
