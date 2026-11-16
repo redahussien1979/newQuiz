@@ -733,11 +733,11 @@ class NewsVideo:
         f = get_font(size, L["cap_weight"], L["cap_font"])
         space = f.getlength(" ")
 
-        def lines_of(idx):
+        def lines_of(idx, max_w=CAP_MAX_W):
             lines, row, x = [], [], 0.0
             for i in idx:
                 w = f.getlength(self._cap_txt(i))
-                if row and x + space + w > CAP_MAX_W:
+                if row and x + space + w > max_w:
                     lines.append(row)
                     row, x = [], 0.0
                 row.append(i)
@@ -755,11 +755,17 @@ class NewsVideo:
                 too_long = w["e"] - self.words[cur[0]]["s"] > (1.6 if pop else 3.4)
                 sent = _SENT_END.search(prev["w"]) and (len(cur) >= 3 or pop)
                 comma = pop and prev["w"].endswith(",")
-                same_key = self.key_of.get(i) is not None and self.key_of.get(i) == self.key_of.get(cur[-1])
-                if not same_key and (gap > (0.45 if pop else 0.7) or too_long or sent or comma
-                                     or len(cur) >= L["max_words"] or len(lines_of(cur + [i])) > L["max_lines"]):
+                gi = self.key_of.get(i)
+                same_key = gi is not None and gi == self.key_of.get(cur[-1])
+                full = len(cur) >= L["max_words"] or len(lines_of(cur + [i])) > L["max_lines"]
+                if not same_key and (gap > (0.45 if pop else 0.7) or too_long or sent or comma or full):
                     pages.append(cur)
                     cur = []
+                elif same_key and full:   # a key phrase stays on one page: it starts a new page instead of
+                    j = next(k for k, c in enumerate(cur) if self.key_of.get(c) == gi)   # spilling onto a
+                    if j > 0:                                                        # line under the card
+                        pages.append(cur[:j])
+                        cur = cur[j:]
             cur.append(i)
         if cur:
             pages.append(cur)
@@ -771,8 +777,11 @@ class NewsVideo:
             t0 = self.words[idx[0]]["s"] - lead
             nxt = self.words[pages[k + 1][0]]["s"] - lead if k + 1 < len(pages) else self.clip
             t1 = min(nxt, self.words[idx[-1]]["e"] + (0.5 if pop else 1.2))
+            rows = lines_of(idx)
+            if len(rows) > L["max_lines"]:   # a key phrase too long on its own: one line, shrunk by fit below
+                rows = lines_of(idx, 1e9) if pop else rows
             items = []
-            for li, row in enumerate(lines_of(idx)):
+            for li, row in enumerate(rows):
                 ims = [self._cap_word(i) for i in row]
                 total = sum(im["w"] for im in ims) + space * (len(row) - 1)
                 x = (W - total) / 2
@@ -867,8 +876,10 @@ class NewsVideo:
                     if L["bg"] == "paper":  # newspaper: the spoken word is also underlined
                         d.line([(it["x"], y + b1 + 4), (it["x"] + it["w"], y + b1 + 4)], fill=self.accent,
                                width=4)
-            elif gi is not None:  # a key word not spoken yet: underlined
-                d.rounded_rectangle([it["x"], y + b1 + 3, it["x"] + it["w"], y + b1 + 8], 3,
+            elif gi is not None:  # a key word not spoken yet: underlined (as wide as the word is drawn)
+                cx, half, cy = it["x"] + it["w"] / 2, it["w"] * sc / 2, y + it["norm"].height / 2
+                uy = cy + (b1 - it["norm"].height / 2) * sc
+                d.rounded_rectangle([cx - half, uy + 3, cx + half, uy + 8], 3,
                                     fill=L["mark"] + (int(220 * alpha),))
             self._put_word(frame, im, it, y, sc, alpha)
 
