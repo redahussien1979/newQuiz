@@ -3,6 +3,7 @@
 Run:  python app.py   (opens http://127.0.0.1:7860 in your browser)
 """
 import copy
+import hashlib
 import datetime as dt
 import inspect
 import json
@@ -33,7 +34,7 @@ from engine.templates.text import BAND_CHOICES as TX_BANDS, MARKER_CHOICES as TX
 from engine.templates.text import LEVEL_CHOICES as TX_LEVELS, STYLE_CHOICES as TX_STYLES
 from engine.templates.text import DEFAULT_LOGO as TX_LOGO, LOGO_SHAPES as TX_LOGO_SHAPES
 from engine.templates.news import ACCENT_CHOICES as NW_ACCENTS, LOOK_CHOICES as NW_LOOKS, probe as nw_probe
-from engine.templates.news import length_report as nw_length
+from engine.templates.news import length_report as nw_length, RECAP_CHOICES as NW_RECAPS
 from engine import batch
 from engine import countries
 from engine import tl_batch
@@ -42,6 +43,7 @@ from engine import fonts as fontlib
 from engine import elevenlabs as el
 from engine import paragraphs as para
 from engine import news_words as nw
+from engine import translate as tr
 from engine import text_batch
 from engine import vocab_batch
 from engine import word_import
@@ -82,7 +84,7 @@ TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "
            "para_text", "para_store", "para_alias", "read_style",
            "text_size"]
 NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", "logo", "logo_shape", "trim_start",
-           "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed"]
+           "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed", "recap_style"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
                 "video"}
@@ -99,7 +101,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
             "para_text": "", "para_store": "{}", "para_alias": "",
-            "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0}  # for projects saved before these options existed
+            "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0, "recap_style": "flashcards"}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -219,6 +221,14 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   every clip (one MP4 each + a .zip). Save project keeps all the clips.
 - The video: big subtitles that follow the speech word by word, each key word marked when it is said, a card with the
   word and its Arabic meaning, and a recap card of all the key words at the end (🔚 Ending: its title, call to action).
+- **🤖 Automatic Arabic meanings (Claude)**: add your Anthropic API key (console.anthropic.com, saved on this computer
+  only). When you pause marking key words for a few seconds, Claude writes the Arabic of all the new ones in one
+  request — each word **as it is used in its sentence**, short and dictionary-style. Only empty meanings are filled
+  (what you type is never replaced); 🪄 fills every clip at once, and 🎬 Render all clips fills what is missing first.
+  Model: Opus 5.5 (best, ≈ 1 cent per clip), Sonnet 5.5 (half the price) or Haiku 5.5 (cheapest). The exact cost of
+  every request and the total so far are shown; each word is asked once (re-rendering costs nothing).
+  **Don't like a meaning?** Click its row in the table, add a hint if you like (*as a verb*, *political meaning*),
+  press 🔄 Suggest other meanings and click one of the 3 options — or type your own.
 - **⬇️ Key words → Excel (all clips)**: one row per key word of every clip, with its sentence for context. Fill the
   yellow columns (Arabic meaning, and Repeat if you like) in Excel, save, **⬆️ Upload the filled sheet**: the meanings
   go back onto their words in every clip.
@@ -226,6 +236,10 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   buttons shows the length it gives (with the repeats), e.g. *clip 8.0 s → 10.7 s at 0.75× + 2.7 s of repeats*.
 - **🔁 Repeat** (meanings table / Excel, 0–10): when the video reaches that key word it holds the frame
   (**REPEAT 1/2** badge), rewinds and plays the word again — as many extra times as you set — then carries on.
+- **Recap design** (⏱️ Design): **🃏 Flashcards** — one card per key word, dealt from a deck: each flips in, lands
+  and settles, a shine sweeps them, a ring counts the words and bursts into a ✓ — with **new colours for every video**
+  (12 matched colour sets, picked from the clip, always readable; a video keeps its colours when re-rendered); or
+  **📋 Table** (one card with every word). The Flashcards recap lasts longer with more words (≈ 4.6–8 s).
 - Five looks (⏱️ Design): **Pop** (1–3 huge words at a time, yellow stickers), Breaking (dark), Studio (light),
   TV broadcast (lower thirds + ticker) and Newspaper; five accent colours, shared by all the clips. Trim a clip with
   *Start / End the clip at*. The 🔚 Ending *Question* line (optional) becomes the recap card's subtitle.
@@ -1913,6 +1927,7 @@ never cover it. A vertical clip fills the screen (subtitles and cards go over it
 speaker, no subtitles burned into the picture, 4–6 key words. News footage is usually copyrighted: use clips you have
 the right to use."""
 NEWS_TYPES = [".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"]
+AUTO_PAUSE = 4.0   # automatic Arabic: ask once marking has paused this long (one request for all new key words)
 
 
 def news_tab():
@@ -1949,6 +1964,24 @@ def news_tab():
     join = gr.Checkbox(value=True, label="Click the next word to make a phrase (e.g. cooling → centres)")
     ht = gr.HighlightedText([], label="👆 Transcript — click words to make them key words (click again to remove)",
                             combine_adjacent=False, show_legend=False, interactive=False)
+    ts = tr.load_settings(DATA_DIR)
+    with gr.Accordion("🤖 Automatic Arabic meanings (Claude) — the key is saved on this computer only",
+                      open=not ts["api_key"]):
+        gr.Markdown("Claude writes the Arabic of every key word **as it is used in its sentence** (e.g. *opening* "
+                    "in “Cities are opening cooling centres” → تفتح), short and dictionary-style. It only fills "
+                    "empty meanings — what you type is never replaced — and each word is asked once (kept on this "
+                    "computer), so it costs a fraction of a cent per clip.")
+        ak = gr.Textbox(value=ts["api_key"], type="password", label="Anthropic API key",
+                        info="console.anthropic.com → API keys (and a little credit in Billing)")
+        with gr.Row(equal_height=True):
+            am = gr.Dropdown(tr.MODELS, value=ts["model"], label="Model", scale=2)
+            aauto = gr.Checkbox(value=bool(ts["auto"]), label="Fill the Arabic automatically when I pause marking key "
+                                "words (one request for all of them) and before 🎬 Render all clips", scale=3)
+            asave = gr.Button("💾 Save", min_width=90, scale=1)
+        u = tr.usage(DATA_DIR)
+        aspent = gr.Markdown(f"💳 Spent so far from this computer: **{tr.money(u['total'])}** "
+                             f"({u['requests']} request{'s' if u['requests'] != 1 else ''}) — the exact cost of every "
+                             "request, from the tokens Anthropic reports")
     params = inspect.signature(gr.Dataframe.__init__).parameters  # Gradio 5 and 6 name these differently
     kw = {"static_columns": [0, 1]} if "static_columns" in params else {}
     kw["column_count" if "column_count" in params else "col_count"] = (4, "fixed")
@@ -1956,6 +1989,18 @@ def news_tab():
                             datatype=["number", "str", "str", "number"], interactive=True, wrap=True,
                             label="🌐 Arabic meanings — and 🔁 how many times the video replays each key word "
                                   "(0 = once, as spoken)", elem_classes="nw-meanings", **kw)
+    with gr.Row(equal_height=True):
+        afill = gr.Button("🪄 Fill missing meanings (all clips)", min_width=220)
+        aredo = gr.Checkbox(value=False, label="Redo the meanings already there too", min_width=200)
+    acost = gr.Markdown()
+    with gr.Group():
+        asel = gr.Markdown("👆 **Don't like a meaning?** Click its row in the table, then 🔄.")
+        with gr.Row(equal_height=True):
+            ahint = gr.Textbox(label="Hint for Claude (optional)", scale=3,
+                               placeholder="as a verb · the political meaning · shorter · Egyptian Arabic …")
+            aalt = gr.Button("🔄 Suggest other meanings", min_width=200, scale=2)
+        apick = gr.Radio([], label="Pick the meaning you like (it replaces the old one) — or type your own in the "
+                                   "table", visible=False)
     with gr.Row(equal_height=True):
         mk_xl = gr.Button("⬇️ Key words → Excel (all clips)", min_width=200)
         up_xl = gr.UploadButton("⬆️ Upload the filled sheet", file_types=[".xlsx"], min_width=200)
@@ -1977,7 +2022,9 @@ def news_tab():
                 headline=headline, trim0=trim0, trim1=trim1, again=again, sug=sug, n_sug=n_sug, clr=clr,
                 status=status, join=join, ht=ht, meanings=meanings, words=words, go=go, info=info, zip=zipb,
                 files=files, video=video, clips=clips, cur=cur, speed=speed, mk_xl=mk_xl, up_xl=up_xl,
-                xl_file=xl_file)
+                xl_file=xl_file, ak=ak, am=am, aauto=aauto, asave=asave, afill=afill, aredo=aredo,
+                pending=gr.State({}), aspent=aspent, acost=acost, asel=asel, ahint=ahint, aalt=aalt,
+                apick=apick, arow=gr.State(-1), aseen=gr.State(None), atimer=gr.Timer(1.5))
 
 
 def news_design_tab():
@@ -1992,14 +2039,18 @@ def news_design_tab():
                 label = gr.Textbox(label="Small line under the name", placeholder="ENGLISH IN NEWS",
                                    info="Newspaper look: the paper's name")
             gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Clip volume")
-            ending_on = gr.Checkbox(value=True, label="Recap card of all key words at the end (texts in 🔚 Ending)")
+            ending_on = gr.Checkbox(value=True, label="Recap of all key words at the end (texts in 🔚 Ending)")
+            recap = gr.Radio(NW_RECAPS, value="flashcards", label="Recap design",
+                             info="Flashcards = cards dealt from a deck, flip in, land and shine; a ring counts the "
+                                  "words and bursts into a ✓ — every video gets its own colours. Table = one card "
+                                  "with every word and its Arabic.")
             gr.Markdown("**🏷️ Your logo** (remove the picture for no logo)")
             with gr.Row():
                 logo = gr.Image(value=TX_LOGO, type="filepath", label="Logo (square PNG)", height=170, scale=1)
                 with gr.Column(scale=2):
                     bname = gr.Textbox(value="LOGOLEPT", label="Name beside the logo", info="Empty = the logo alone")
                     lshape = gr.Radio(TX_LOGO_SHAPES, value="circle", label="Logo shape")
-    return dict(look=look, accent=accent, tag=tag, label=label, gain=gain, ending_on=ending_on, logo=logo,
+    return dict(look=look, accent=accent, tag=tag, label=label, gain=gain, ending_on=ending_on, recap=recap, logo=logo,
                 bname=bname, lshape=lshape)
 
 
@@ -2148,13 +2199,14 @@ def wire_news(ui, pv, fields):
             gr.Info("New transcript: the key words of this clip were cleared — click them again.", duration=8)
         return new
 
-    def refresh(text, path, t0, t1, speed):
+    def refresh(text, path, t0, t1, speed, recap):
         words = nw.load(text)
         rep = nw.report(words, _clip_len(path))
         ln = _clip_len(path)
         if ln:
             try:
-                rep += "  \n" + nw_length({"trim_start": t0, "trim_end": t1, "speed": speed, "words": text}, ln)
+                rep += "  \n" + nw_length({"trim_start": t0, "trim_end": t1, "speed": speed, "words": text,
+                                           "recap_style": recap}, ln)
             except Exception:
                 pass
         if path and words:
@@ -2189,6 +2241,118 @@ def wire_news(ui, pv, fields):
         el.save_settings(DATA_DIR, api_key=(key or "").strip())
         gr.Info("ElevenLabs key saved on this computer.", duration=4)
 
+    def ai(key, model):
+        return {"api_key": (key or "").strip() or tr.load_settings(DATA_DIR)["api_key"], "model": model}
+
+    def save_ai(key, model, auto):
+        tr.save_settings(DATA_DIR, api_key=(key or "").strip(), model=model, auto=bool(auto))
+        gr.Info("Saved on this computer.", duration=4)
+
+    asked, last_err = set(), [""]   # words already asked in this session (an empty answer is not asked again)
+
+    def spent_md():
+        u = tr.usage(DATA_DIR)
+        return (f"💳 Spent so far from this computer: **{tr.money(u['total'])}** ({u['requests']} request"
+                f"{'s' if u['requests'] != 1 else ''}) — the exact cost of every request, from the tokens Anthropic "
+                "reports")
+
+    def auto_ask(text, seen, key, model, auto):
+        """Every tick of the timer: once the key words have stopped changing for AUTO_PAUSE s, the Arabic of all the
+        new ones in ONE request (auto_merge puts it in) — not one request per click. `seen` = (words text hash,
+        when that text was first seen)."""
+        h = hashlib.sha1(str(text or "").encode("utf-8")).hexdigest()
+        now = time.time()
+        if not seen or seen[0] != h:                    # the words just changed: start waiting again
+            return {}, gr.update(), gr.update(), (h, now)
+        st = ai(key, model)
+        if not auto or not st["api_key"] or now - seen[1] < AUTO_PAUSE:
+            return {}, gr.update(), gr.update(), seen
+        words = nw.load(text)
+        todo = [(w, sn) for w, sn in nw.missing(words) if (st["model"], w, sn) not in asked]
+        if not todo:
+            return {}, gr.update(), gr.update(), seen
+        asked.update((st["model"], w, sn) for w, sn in todo)
+        try:
+            found, cost = nw.ask_missing(words, DATA_DIR, st)
+            last_err[0] = ""
+        except Exception as e:
+            asked.difference_update((st["model"], w, sn) for w, sn in todo)
+            if _msg(e) != last_err[0]:   # say it once, not on every click
+                last_err[0] = _msg(e)
+                gr.Warning(f"Automatic Arabic: {_msg(e)}", duration=10)
+            return {}, f"⚠️ Automatic Arabic: {_msg(e)}", gr.update(), seen
+        n = len(found)
+        line = (f"🤖 {n} meaning{'s' if n != 1 else ''} by Claude · " + tr.cost_line(DATA_DIR, cost)) if cost else \
+            f"🤖 {n} meaning{'s' if n != 1 else ''} from words already asked · cost $0"
+        return found, line, spent_md(), seen
+
+    def auto_merge(text, found):
+        if not found:
+            return gr.update()
+        words = nw.load(text)   # the words as they are NOW (more may have been marked meanwhile)
+        return nw.dump(words) if nw.apply_meanings(words, found) else gr.update()
+
+    def fill_all(js, cur, key, model, redo, *vals, progress=gr.Progress()):
+        st = ai(key, model)
+        if not st["api_key"]:
+            raise gr.Error("Add your Anthropic API key first (🤖 Automatic Arabic meanings).")
+        clips = commit(_clips(js), int(cur or 0), *vals)
+        total, spent, errors = 0, 0.0, []
+        for k, c in enumerate(clips):
+            words = nw.load(c.get("words"))
+            if not nw.missing(words, bool(redo)):
+                continue
+            progress(k / max(1, len(clips)), desc=f"Arabic for {os.path.basename(c.get('video') or '')}…")
+            try:
+                words, n, cost = nw.auto_fill(words, DATA_DIR, st, bool(redo))
+            except Exception as e:
+                errors.append(_msg(e))
+                break
+            c["words"] = nw.dump(words)
+            total, spent = total + n, spent + cost
+        if errors:
+            gr.Warning(f"Automatic Arabic: {errors[0]}", duration=10)
+        if total:
+            msg = f"🪄 {total} Arabic meaning{'s' if total != 1 else ''} filled · " + tr.cost_line(DATA_DIR, spent)
+        else:
+            msg = "Every key word already has its Arabic." if not errors else "⚠️ " + errors[0]
+        i = int(cur or 0)
+        return (json.dumps(clips, ensure_ascii=False), clips[i]["words"] if 0 <= i < len(clips) else gr.update(),
+                msg, spent_md())
+
+    def pick_row(text, evt: gr.SelectData):
+        """A click in the meanings table selects that key word for 🔄."""
+        row = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
+        ks = nw.key_sentence(nw.load(text), int(row))
+        if not ks:
+            return -1, gr.update()
+        ar = nw.table(nw.load(text))[int(row)][2]
+        return int(row), (f"Selected **{ks[0]}** → {ar or '_(no meaning yet)_'} — press 🔄 for 3 other meanings "
+                          "(≈ $0.002 with Opus)")
+
+    def other_meanings(text, row, hint, key, model):
+        st = ai(key, model)
+        if not st["api_key"]:
+            raise gr.Error("Add your Anthropic API key first (🤖 Automatic Arabic meanings).")
+        words = nw.load(text)
+        ks = nw.key_sentence(words, int(row if row is not None else -1))
+        if not ks:
+            raise gr.Error("Click the row of the word in the meanings table first.")
+        current = nw.table(words)[int(row)][2]
+        try:
+            opts, cost = tr.alternatives(ks[0], ks[1], [current], hint, DATA_DIR, st)
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        return (gr.update(choices=opts, value=None, visible=True,
+                          label=f"Other meanings for “{ks[0]}” — click one to use it ({tr.cost_line(DATA_DIR, cost)})"),
+                spent_md())
+
+    def use_meaning(text, row, choice):
+        if not choice:
+            return gr.update(), gr.update()
+        words = nw.set_meaning(nw.load(text), int(row), choice)
+        return nw.dump(words), gr.update(visible=False, value=None)
+
     def make_sheet(js, cur, *vals):
         clips = commit(_clips(js), int(cur or 0), *vals)
         if not clips:
@@ -2220,12 +2384,22 @@ def wire_news(ui, pv, fields):
                 gr.update(interactive=False), "⏳ Rendering all clips… each video appears below as soon as it is done.",
                 gr.update(value=None, visible=False), gr.update(value=None, visible=False))
 
-    def render_all(request: gr.Request, *vals, progress=gr.Progress()):
+    def render_all(request: gr.Request, key, model, auto, *vals, progress=gr.Progress()):
         def plan():
             base = values_to_project("news", vals)
             n = base["news"]
             clips = commit(_clips(n.get("clips")), int(n.get("clip_index") or 0), n.get("video"), n.get("headline"),
                            n.get("trim_start"), n.get("trim_end"), n.get("words"), n.get("speed"))
+            st = ai(key, model)
+            if auto and st["api_key"] and any(nw.missing(nw.load(c.get("words"))) for c in clips):
+                progress(0, desc="Filling the missing Arabic meanings…")
+                try:
+                    for c in clips:
+                        words, n, _ = nw.auto_fill(nw.load(c.get("words")), DATA_DIR, st)
+                        if n:
+                            c["words"] = nw.dump(words)
+                except Exception as e:   # the videos still render; the words without Arabic show none
+                    gr.Warning(f"Automatic Arabic: {_msg(e)}", duration=10)
             ready = [c for c in clips if os.path.isfile(_media_path(c.get("video")) or "") and nw.load(c.get("words"))]
             left = len(clips) - len(ready)
             if not ready:
@@ -2263,8 +2437,8 @@ def wire_news(ui, pv, fields):
     gr.on(triggers=[ui["clips"].change, ui["cur"].change], fn=show, inputs=[ui["clips"], ui["cur"]],
           outputs=ui["pick"], trigger_mode="always_last", show_progress="hidden")
     gr.on(triggers=[ui["words"].change, ui["video"].change, ui["trim0"].change, ui["trim1"].change,
-                    ui["speed"].change], fn=refresh,
-          inputs=[ui["words"], ui["video"], ui["trim0"], ui["trim1"], ui["speed"]],
+                    ui["speed"].change, ui["recap"].change], fn=refresh,
+          inputs=[ui["words"], ui["video"], ui["trim0"], ui["trim1"], ui["speed"], ui["recap"]],
           outputs=[ui["ht"], ui["meanings"], ui["status"]], trigger_mode="always_last", show_progress="hidden")
     ui["again"].click(retranscribe, [ui["video"], ui["words"]] + keys, ui["words"])
     ui["ht"].select(click, [ui["words"], ui["join"]], ui["words"], queue=False, show_progress="hidden")
@@ -2272,12 +2446,25 @@ def wire_news(ui, pv, fields):
     ui["clr"].click(do_clear, ui["words"], ui["words"])
     ui["meanings"].input(meanings_in, [ui["words"], ui["meanings"]], ui["words"], show_progress="hidden")
     ui["save_k"].click(save_key, ui["key"], None)
+    ui["asave"].click(save_ai, [ui["ak"], ui["am"], ui["aauto"]], None)
+    ui["atimer"].tick(auto_ask, [ui["words"], ui["aseen"], ui["ak"], ui["am"], ui["aauto"]],
+                      [ui["pending"], ui["acost"], ui["aspent"], ui["aseen"]], show_progress="hidden",
+                      concurrency_limit=1) \
+        .then(auto_merge, [ui["words"], ui["pending"]], ui["words"], queue=False, show_progress="hidden")
+    ui["afill"].click(fill_all, [ui["clips"], ui["cur"], ui["ak"], ui["am"], ui["aredo"]] + clip_in,
+                      [ui["clips"], ui["words"], ui["acost"], ui["aspent"]])
+    ui["meanings"].select(pick_row, ui["words"], [ui["arow"], ui["asel"]], queue=False, show_progress="hidden")
+    ui["aalt"].click(other_meanings, [ui["words"], ui["arow"], ui["ahint"], ui["ak"], ui["am"]],
+                     [ui["apick"], ui["aspent"]])
+    ui["apick"].input(use_meaning, [ui["words"], ui["arow"], ui["apick"]], [ui["words"], ui["apick"]])
+    ui["pick"].input(lambda: (-1, gr.update(visible=False), "👆 **Don't like a meaning?** Click its row in the "
+                              "table, then 🔄."), None, [ui["arow"], ui["apick"], ui["asel"]], queue=False)
     ui["mk_xl"].click(make_sheet, [ui["clips"], ui["cur"]] + clip_in, [ui["clips"], ui["xl_file"]])
     ui["up_xl"].upload(read_sheet, [ui["up_xl"], ui["clips"], ui["cur"]] + clip_in,
                        [ui["clips"], ui["words"], ui["info"]])
     dep = ui["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"], pv["info"],
                                        ui["files"], ui["zip"]], queue=False)
-    dep.success(render_all, fields,
+    dep.success(render_all, [ui["ak"], ui["am"], ui["aauto"]] + fields,
                 [pv["vid"], pv["info"], ui["files"], ui["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"]],
                 **_progress_on(dep, pv["vid"]))
 
@@ -2836,10 +3023,11 @@ def build_ui():
                         nw_end = ending_tab("The recap card shows the small intro line as its title (e.g. *Words from "
                                             "the news*), every key word with its Arabic, then the call to action and "
                                             "your handle (🎨 Style & sound).", rtl=False)
+                    nwu["recap"] = nwd["recap"]   # the length line under the buttons depends on it
                     nw_fields = shared_fields(nw_st, nw_end) + [
                         nwu["video"], nwd["look"], nwd["accent"], nwu["headline"], nwd["tag"], nwd["label"],
                         nwd["bname"], nwd["logo"], nwd["lshape"], nwu["trim0"], nwu["trim1"], nwd["gain"],
-                        nwd["ending_on"], nwu["words"], nwu["clips"], nwu["cur"], nwu["speed"]]
+                        nwd["ending_on"], nwu["words"], nwu["clips"], nwu["cur"], nwu["speed"], nwd["recap"]]
                 nw_pv = preview_panel("news")
             wire(nw_proj, nw_pv, nw_fields)
             wire_news(nwu, nw_pv, nw_fields)

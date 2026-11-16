@@ -133,12 +133,23 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   Recap (`_layout_ending`): ONE English and ONE Arabic size for all rows (measured on the widest, columns split by
   need, floor `REC_MIN`; only an outlier shrinks alone); English cut to its font band (`_tight_text`), Arabic on a
   fixed baseline (`_ar_row` = text.`_ar_line`, placed with `_ar_ref`) so rows line up; 2 columns from 9 words.
+  `news.recap_style` (`RECAP_CHOICES`): `flashcards` (default; `_layout_flash` / `_draw_flash` / `_flash_ring` /
+  `_flash_sounds`: cards dealt from a deck, `_spring_in` + `_warp` 3D flip-in, landing squash, shine, k/n ring -> ✓
+  + sparks, camera push-in; colours = one of `PALETTES` picked from a hash of file name + headline + key words, text /
+  Arabic made readable with `_readable` (WCAG contrast >= 4.5); length `recap_len`) or `table` (`_layout_ending`).
+  NB `_spring` (imported from text) = landing wobble 1->0 used by the subtitles; `_spring_in` = 0->1 with overshoot.
   Key-words Excel: `news_words.export_xlsx(clips)` / `import_xlsx(path, clips)` (Clip · # · Key word · Arabic · Repeat
   · Sentence; matched by clip file name + key word, then #).
   App: several clips per project — `news.clips` (JSON list of video / headline / trim / words / speed) + `news.clip_index`
   (the clip in the editor, mirrored in the editor fields; `wire_news.commit` only writes onto the same file);
   🎬 Render all clips = `_stream_batch` over `news_project(base, clip)`.
   `engine/news_words.py` = the tab's transcript editor (click to toggle key words / phrases, meanings table, suggest);
+  `engine/translate.py` = automatic Arabic meanings by Claude (Messages API via urllib, forced tool call = clean JSON;
+  key/model/auto in `DATA_DIR/anthropic.json`, answers cached per model+word+sentence in `meanings_cache.json`, exact
+  cost from the response `usage` x `PRICES` with a running total in `anthropic_usage.json`; `alternatives()` = 3 other
+  meanings for one word, told the rejected one + a hint). Tab: a `gr.Timer` asks once the words stop changing for
+  `AUTO_PAUSE` s (one request per batch, not per click; `auto_merge` only fills still-empty meanings), 🪄 all clips,
+  Render all fills first, table row select -> 🔄 options radio. `news_words.missing / ask_missing / apply_meanings`.
   `elevenlabs.transcribe` = speech-to-text (multipart urllib, `scribe_v1`), cached in `DATA_DIR/stt/<file hash>.json`
 - `engine/know_country/` — 🌍 Know a Country tab (not a template class: its own renderer). `video.py` = one Excel
   row -> one MP4 (scenes = list of (name, dur, cam_fn, draw_fn, sound cues); `render()` draws scenes on a spawn
