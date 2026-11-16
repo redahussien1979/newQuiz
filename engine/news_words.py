@@ -309,3 +309,58 @@ def import_xlsx(path, clips):
         msg += f" ⚠️ {len(missed)} row{'s' if len(missed) != 1 else ''} not found (key word changed or clip " \
                f"removed): " + ", ".join(missed[:5])
     return out, msg
+
+
+# ------------------------------------------------------------------ automatic Arabic meanings (engine/translate.py)
+def missing(words, replace=False):
+    """[(key word, sentence with the word in «»)] of the key words without Arabic (all of them with replace)."""
+    return [(g["text"], _sentence(words, g)) for g in _groups(words) if replace or not g["ar"]]
+
+
+def ask_missing(words, data_dir, settings, replace=False):
+    """({normalised key word + sentence: arabic} for the key words without a meaning, exact cost in USD)."""
+    from . import translate
+    items = missing(words, replace)
+    if not items:
+        return {}, 0.0
+    got, cost = translate.meanings(items, data_dir, settings)
+    return {_norm(w) + "\t" + s: ar for (w, s), ar in zip(items, got) if ar}, cost
+
+
+def apply_meanings(words, found, replace=False):
+    """Put asked meanings onto the key words they belong to — only words still without one (unless replace), so
+    nothing typed meanwhile is ever overwritten. Returns how many were filled."""
+    n = 0
+    for g in _groups(words):
+        if g["ar"] and not replace:
+            continue
+        ar = found.get(_norm(g["text"]) + "\t" + _sentence(words, g))
+        if ar:
+            for k in range(g["i0"], g["i1"] + 1):
+                words[k]["ar"] = ""
+            words[g["i0"]]["ar"] = ar
+            n += 1
+    return n
+
+
+def auto_fill(words, data_dir, settings, replace=False):
+    """(words with every missing meaning filled, how many, exact cost in USD)."""
+    found, cost = ask_missing(words, data_dir, settings, replace)
+    return words, apply_meanings(words, found, replace), cost
+
+
+def key_sentence(words, gi):
+    """(key word, its sentence with «») of key word number gi (0-based), or None."""
+    gs = _groups(words)
+    return (gs[gi]["text"], _sentence(words, gs[gi])) if 0 <= gi < len(gs) else None
+
+
+def set_meaning(words, gi, ar):
+    """Key word number gi gets this Arabic (replacing what it had)."""
+    gs = _groups(words)
+    if 0 <= gi < len(gs):
+        g = gs[gi]
+        for k in range(g["i0"], g["i1"] + 1):
+            words[k]["ar"] = ""
+        words[g["i0"]]["ar"] = " ".join(str(ar or "").split())
+    return words

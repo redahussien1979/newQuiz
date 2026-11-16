@@ -112,6 +112,12 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   (the clip in the editor, mirrored in the editor fields; `wire_news.commit` only writes onto the same file);
   🎬 Render all clips = `_stream_batch` over `news_project(base, clip)`.
   `engine/news_words.py` = the tab's transcript editor (click to toggle key words / phrases, meanings table, suggest);
+  `engine/translate.py` = automatic Arabic meanings by Claude (Messages API via urllib, forced tool call = clean JSON;
+  key/model/auto in `DATA_DIR/anthropic.json`, answers cached per model+word+sentence in `meanings_cache.json`, exact
+  cost from the response `usage` x `PRICES` with a running total in `anthropic_usage.json`; `alternatives()` = 3 other
+  meanings for one word, told the rejected one + a hint). Tab: a `gr.Timer` asks once the words stop changing for
+  `AUTO_PAUSE` s (one request per batch, not per click; `auto_merge` only fills still-empty meanings), 🪄 all clips,
+  Render all fills first, table row select -> 🔄 options radio. `news_words.missing / ask_missing / apply_meanings`.
   `elevenlabs.transcribe` = speech-to-text (multipart urllib, `scribe_v1`), cached in `DATA_DIR/stt/<file hash>.json`
 - `engine/know_country/` — 🌍 Know a Country tab (not a template class: its own renderer). `video.py` = one Excel
   row -> one MP4 (scenes = list of (name, dur, cam_fn, draw_fn, sound cues); `render()` draws scenes on a spawn
