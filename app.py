@@ -34,7 +34,7 @@ from engine.templates.text import BAND_CHOICES as TX_BANDS, MARKER_CHOICES as TX
 from engine.templates.text import LEVEL_CHOICES as TX_LEVELS, STYLE_CHOICES as TX_STYLES
 from engine.templates.text import DEFAULT_LOGO as TX_LOGO, LOGO_SHAPES as TX_LOGO_SHAPES
 from engine.templates.news import ACCENT_CHOICES as NW_ACCENTS, LOOK_CHOICES as NW_LOOKS, probe as nw_probe
-from engine.templates.news import length_report as nw_length
+from engine.templates.news import length_report as nw_length, RECAP_CHOICES as NW_RECAPS
 from engine import batch
 from engine import countries
 from engine import tl_batch
@@ -81,7 +81,7 @@ TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "
            "para_text", "para_store", "para_alias", "read_style",
            "text_size"]
 NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", "logo", "logo_shape", "trim_start",
-           "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed"]
+           "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed", "recap_style"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
                 "video"}
@@ -96,7 +96,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
             "para_text": "", "para_store": "{}", "para_alias": "",
-            "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0}  # for projects saved before these options existed
+            "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0, "recap_style": "flashcards"}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -224,6 +224,10 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   buttons shows the length it gives (with the repeats), e.g. *clip 8.0 s → 10.7 s at 0.75× + 2.7 s of repeats*.
 - **🔁 Repeat** (meanings table / Excel, 0–10): when the video reaches that key word it holds the frame
   (**REPEAT 1/2** badge), rewinds and plays the word again — as many extra times as you set — then carries on.
+- **Recap design** (⏱️ Design): **🃏 Flashcards** — one card per key word, dealt from a deck: each flips in, lands
+  and settles, a shine sweeps them, a ring counts the words and bursts into a ✓ — with **new colours for every video**
+  (12 matched colour sets, picked from the clip, always readable; a video keeps its colours when re-rendered); or
+  **📋 Table** (one card with every word). The Flashcards recap lasts longer with more words (≈ 4.6–8 s).
 - Five looks (⏱️ Design): **Pop** (1–3 huge words at a time, yellow stickers), Breaking (dark), Studio (light),
   TV broadcast (lower thirds + ticker) and Newspaper; five accent colours, shared by all the clips. Trim a clip with
   *Start / End the clip at*. The 🔚 Ending *Question* line (optional) becomes the recap card's subtitle.
@@ -1819,14 +1823,18 @@ def news_design_tab():
                 label = gr.Textbox(label="Small line under the name", placeholder="ENGLISH IN NEWS",
                                    info="Newspaper look: the paper's name")
             gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Clip volume")
-            ending_on = gr.Checkbox(value=True, label="Recap card of all key words at the end (texts in 🔚 Ending)")
+            ending_on = gr.Checkbox(value=True, label="Recap of all key words at the end (texts in 🔚 Ending)")
+            recap = gr.Radio(NW_RECAPS, value="flashcards", label="Recap design",
+                             info="Flashcards = cards dealt from a deck, flip in, land and shine; a ring counts the "
+                                  "words and bursts into a ✓ — every video gets its own colours. Table = one card "
+                                  "with every word and its Arabic.")
             gr.Markdown("**🏷️ Your logo** (remove the picture for no logo)")
             with gr.Row():
                 logo = gr.Image(value=TX_LOGO, type="filepath", label="Logo (square PNG)", height=170, scale=1)
                 with gr.Column(scale=2):
                     bname = gr.Textbox(value="LOGOLEPT", label="Name beside the logo", info="Empty = the logo alone")
                     lshape = gr.Radio(TX_LOGO_SHAPES, value="circle", label="Logo shape")
-    return dict(look=look, accent=accent, tag=tag, label=label, gain=gain, ending_on=ending_on, logo=logo,
+    return dict(look=look, accent=accent, tag=tag, label=label, gain=gain, ending_on=ending_on, recap=recap, logo=logo,
                 bname=bname, lshape=lshape)
 
 
@@ -1975,13 +1983,14 @@ def wire_news(ui, pv, fields):
             gr.Info("New transcript: the key words of this clip were cleared — click them again.", duration=8)
         return new
 
-    def refresh(text, path, t0, t1, speed):
+    def refresh(text, path, t0, t1, speed, recap):
         words = nw.load(text)
         rep = nw.report(words, _clip_len(path))
         ln = _clip_len(path)
         if ln:
             try:
-                rep += "  \n" + nw_length({"trim_start": t0, "trim_end": t1, "speed": speed, "words": text}, ln)
+                rep += "  \n" + nw_length({"trim_start": t0, "trim_end": t1, "speed": speed, "words": text,
+                                           "recap_style": recap}, ln)
             except Exception:
                 pass
         if path and words:
@@ -2212,8 +2221,8 @@ def wire_news(ui, pv, fields):
     gr.on(triggers=[ui["clips"].change, ui["cur"].change], fn=show, inputs=[ui["clips"], ui["cur"]],
           outputs=ui["pick"], trigger_mode="always_last", show_progress="hidden")
     gr.on(triggers=[ui["words"].change, ui["video"].change, ui["trim0"].change, ui["trim1"].change,
-                    ui["speed"].change], fn=refresh,
-          inputs=[ui["words"], ui["video"], ui["trim0"], ui["trim1"], ui["speed"]],
+                    ui["speed"].change, ui["recap"].change], fn=refresh,
+          inputs=[ui["words"], ui["video"], ui["trim0"], ui["trim1"], ui["speed"], ui["recap"]],
           outputs=[ui["ht"], ui["meanings"], ui["status"]], trigger_mode="always_last", show_progress="hidden")
     ui["again"].click(retranscribe, [ui["video"], ui["words"]] + keys, ui["words"])
     ui["ht"].select(click, [ui["words"], ui["join"]], ui["words"], queue=False, show_progress="hidden")
@@ -2747,10 +2756,11 @@ def build_ui():
                         nw_end = ending_tab("The recap card shows the small intro line as its title (e.g. *Words from "
                                             "the news*), every key word with its Arabic, then the call to action and "
                                             "your handle (🎨 Style & sound).", rtl=False)
+                    nwu["recap"] = nwd["recap"]   # the length line under the buttons depends on it
                     nw_fields = shared_fields(nw_st, nw_end) + [
                         nwu["video"], nwd["look"], nwd["accent"], nwu["headline"], nwd["tag"], nwd["label"],
                         nwd["bname"], nwd["logo"], nwd["lshape"], nwu["trim0"], nwu["trim1"], nwd["gain"],
-                        nwd["ending_on"], nwu["words"], nwu["clips"], nwu["cur"], nwu["speed"]]
+                        nwd["ending_on"], nwu["words"], nwu["clips"], nwu["cur"], nwu["speed"], nwd["recap"]]
                 nw_pv = preview_panel("news")
             wire(nw_proj, nw_pv, nw_fields)
             wire_news(nwu, nw_pv, nw_fields)

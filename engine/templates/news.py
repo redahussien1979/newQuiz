@@ -21,6 +21,7 @@ as it is needed; render(t) depends only on t (frames are drawn on several proces
 long runs of frames: `chunk`).
 """
 import bisect
+import hashlib
 import io
 import math
 import os
@@ -59,7 +60,35 @@ SPEED_MIN, SPEED_MAX = 0.5, 1.5
 REP_MAX = 10                # a key word is replayed at most this many extra times
 REP_PRE, REP_POST = 0.18, 0.15   # a replay starts this much before the key word and ends this much after it
 REP_GAP = 0.45              # the held frame (with REPEAT k/n) before each replay
-ENDING_LEN = 5.0
+ENDING_LEN = 5.0            # the table recap
+RECAP_CHOICES = [("🃏 Flashcards — new colours for every video", "flashcards"), ("📋 Table", "table")]
+DEFAULT_RECAP = "flashcards"
+# Flashcards: every video gets one of these colour sets (picked from the clip, so a video always keeps its own):
+# the cards cycle through `cards`; text is dark or white by each card's brightness; `hi` = the Arabic on dark
+# cards, `deep` = the Arabic on light cards and the progress ring.
+PALETTES = [
+    {"cards": ["#FF6B6B", "#FFD93D", "#6BCB77", "#4D96FF", "#8B4FD8"], "hi": "#FFF3B0", "deep": "#B5179E"},  # candy
+    {"cards": ["#0B3954", "#087E8B", "#3C91E6", "#145C9E", "#1B998B"], "hi": "#FFE66D", "deep": "#087E8B"},  # ocean
+    {"cards": ["#FF7B54", "#FFB26B", "#FFD56F", "#EA5455", "#F07B3F"], "hi": "#FFF6D6", "deep": "#B22222"},  # sunset
+    {"cards": ["#FFFFFF"], "hi": "#FFD166", "deep": "#E41E30"},                                            # classic
+    {"cards": ["#1E1E2E", "#24243A", "#1B1B2F", "#26263F", "#202036"], "hi": "#4CC9F0", "deep": "#F72585"},  # neon
+    {"cards": ["#FFC8DD", "#BDE0FE", "#CDB4DB", "#A2D2FF", "#FFAFCC"], "hi": "#FFFFFF", "deep": "#7A1F5C"},  # pastel
+    {"cards": ["#2D6A4F", "#40916C", "#1B4332", "#52B788", "#245C47"], "hi": "#D8F3DC", "deep": "#2D6A4F"},  # forest
+    {"cards": ["#3A0CA3", "#480CA8", "#3F37C9", "#560BAD", "#4361EE"], "hi": "#FFD166", "deep": "#3A0CA3"},  # royal
+    {"cards": ["#FF6F61", "#2E4057"], "hi": "#FFE5D9", "deep": "#C0392B"},                                 # coral & navy
+    {"cards": ["#F4A261", "#E76F51", "#2A9D8F", "#264653", "#E9C46A"], "hi": "#FFF1C1", "deep": "#264653"},  # desert
+    {"cards": ["#111111", "#FFD60A"], "hi": "#FFD60A", "deep": "#111111"},                                 # bold
+    {"cards": ["#E0FBFC", "#C2DFE3", "#9DB4C0", "#5C6B73", "#253237"], "hi": "#E0FBFC", "deep": "#253237"},  # steel
+]
+
+
+def recap_len(kind, n):
+    """How long the recap lasts (s) with n key words: the flashcards land one after another, then stay long enough
+    to read them (≈ 0.45 s a word, at most 8 s in all)."""
+    if kind == "table":
+        return ENDING_LEN
+    done = 0.5 + min(0.2, 2.0 / max(1, n)) * (n - 1) + 0.22
+    return min(8.0, max(4.6, done + 1.0 + 0.45 * n))
 CARD_MIN, CARD_HOLD = 1.0, 4.2   # a word card stays at least / at most this long (s): it gives way to the next
                                  # key word's card, but only after CARD_MIN
 REC_MIN = 0.72                   # the recap's common text size may go down to this share of its full size
@@ -140,6 +169,7 @@ EXAMPLE = {
         "video_gain": 1.0,
         "speed": 1.0,
         "ending_on": True,
+        "recap_style": DEFAULT_RECAP,
         "words": "\n".join([
             "Officials | 0.20 | 0.72 | * | المسؤولون",
             "say | 0.78 | 0.95", "the | 0.98 | 1.05",
@@ -230,8 +260,9 @@ def length_report(n, sdur):
         txt += f" → **{played:.1f} s at {speed:g}×**"
     if n_rep:
         txt += f" + {rep:.1f} s of repeats ({n_rep} replay{'s' if n_rep != 1 else ''})"
+    kind = n.get("recap_style") if n.get("recap_style") in ("flashcards", "table") else DEFAULT_RECAP
     return txt + f" = **{segs[-1]['o1'] - LEAD:.1f} s** (+ {LEAD:g} s intro" + \
-        (f", + {ENDING_LEN:g} s recap)" if groups else ")")
+        (f", + {recap_len(kind, len(groups)):.1f} s recap)" if groups else ")")
 
 
 # ------------------------------------------------------------------ the source video
@@ -423,6 +454,60 @@ def _scaled(im, sc):
     return im.resize((max(1, int(im.width * sc)), max(1, int(im.height * sc))), Image.BILINEAR)
 
 
+def _spring_in(t, damp=9.0, freq=14.0):
+    """0 -> 1 with a natural overshoot and settle (t = seconds since the start). (text._spring, used by the
+    subtitles, is the other kind: a landing wobble 1 -> 0.)"""
+    return 0.0 if t <= 0 else 1 - math.exp(-damp * t) * math.cos(freq * t)
+
+
+def _warp(im, quad, size):
+    """im drawn into the quadrilateral quad (TL, TR, BR, BL) of a transparent canvas of `size` (3D perspective)."""
+    w, h = im.size
+    src = [(0, 0), (w, 0), (w, h), (0, h)]
+    a = []
+    for (x, y), (u, v) in zip(quad, src):
+        a.append([x, y, 1, 0, 0, 0, -u * x, -u * y])
+        a.append([0, 0, 0, x, y, 1, -v * x, -v * y])
+    coeffs = np.linalg.solve(np.array(a, float), np.array([c for p in src for c in p], float)).tolist()
+    return im.transform(size, Image.PERSPECTIVE, coeffs, Image.BICUBIC)
+
+
+def _shade(im, k):
+    """An RGBA image darkened by k (0..1): a surface turning away from the light."""
+    if k <= 0.01:
+        return im
+    a = np.asarray(im, np.float32).copy()
+    a[..., :3] *= 1 - k
+    return Image.fromarray(a.astype(np.uint8))
+
+
+def _hex(c):
+    c = c.lstrip("#")
+    return tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _lum(rgb):
+    """0 (black) .. 1 (white): is a colour light enough for dark text on it?"""
+    return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255
+
+
+def _contrast(a, b):
+    """WCAG contrast ratio of two colours (1 = none .. 21 = black on white); text needs about 4.5 to read easily."""
+    def rel(c):
+        v = [x / 255 for x in c[:3]]
+        v = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in v]
+        return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]
+    la, lb = sorted((rel(a), rel(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def _readable(col, bg, minimum=4.5):
+    """col if it reads well on bg, else black or white (whichever reads better)."""
+    if _contrast(col, bg) >= minimum:
+        return col
+    return INK if _contrast(INK, bg) >= _contrast(WHITE, bg) else WHITE
+
+
 def _noise(size, amount, seed=3):
     rng = np.random.default_rng(seed)
     n = rng.normal(0, amount, (max(1, size[1] // 2), max(1, size[0] // 2))).astype(np.float32)
@@ -490,7 +575,8 @@ class NewsVideo:
         self.E = self.segs[-1]["o1"]                  # the clip (with its repeats) ends
         self._rep_ims = {}
         self.ending_on = bool(n.get("ending_on", True)) and bool(self.groups)
-        self.base_duration = self.E + (ENDING_LEN if self.ending_on else 0.6)
+        self.recap = n.get("recap_style") if n.get("recap_style") in ("flashcards", "table") else DEFAULT_RECAP
+        self.base_duration = self.E + (recap_len(self.recap, len(self.groups)) if self.ending_on else 0.6)
         self.dur = self.base_duration
         self._layout(n)
         self.dec = _Decoder(self.path, self.vsize, self.fps, self.trim0) if self.path else None
@@ -527,7 +613,10 @@ class NewsVideo:
         if L["ticker"]:
             self._layout_ticker()
         if self.ending_on:
-            self._layout_ending()
+            if self.recap == "table":
+                self._layout_ending()
+            else:
+                self._layout_flash(n)
 
     def _place(self):
         """Where the panel, the subtitles and the word card go, from their real heights: subtitles under the clip,
@@ -1085,24 +1174,234 @@ class NewsVideo:
         self.end_handle = _text(self.handle, 34, col, "Bold") if self.handle else None
         self.end_cta = _fit_text(self.cta, 32, col, 900, "SemiBold") if self.cta else None
 
-    def _ar_ref(self, size):
+    # ---------------------------------------------------------- 🃏 flashcards recap
+    def _layout_flash(self, n):
+        """Flashcards recap: one card per key word (1 column up to 5, then 2), dealt from a deck below the screen —
+        each flies in, flips from edge-on in 3D, lands with a squash and settles; a shine sweeps each card; a ring
+        counts the words (k/n) and bursts into a ✓ with sparks when the last lands; the camera pushes in slowly.
+        Colours: one of PALETTES, picked from the clip (file name + headline + words) — every video gets its own,
+        and the same video always the same. ONE English and ONE Arabic size on every card."""
+        rows = [(g["text"], g["ar"]) for g in self.groups]
+        k = len(rows)
+        key = "|".join([os.path.basename(self.path or ""), self.headline] + [e for e, _ in rows])
+        pi = int(hashlib.sha1(key.encode("utf-8")).hexdigest(), 16)
+        pal = PALETTES[pi % len(PALETTES)]
+        shift = (pi // len(PALETTES)) % len(pal["cards"])
+        cards = [_hex(c) for c in pal["cards"]]
+        hi, deep = _hex(pal["hi"]), _hex(pal["deep"])
+        self.f_ring = deep if _lum(deep) < 0.7 else self.accent
+        dark = self.static_bg is None or self.vertical          # the recap sits on a dark or a light veil
+        tcol = WHITE if dark else INK
+        self.f_cols = cols = 1 if k <= 5 else 2
+        per = -(-k // cols)
+        gap = 24
+        cw = 900 if cols == 1 else 439
+        ch = int(min(230 if cols == 1 else 200, (1400 - 170 - 150 - gap * (per - 1)) / per))
+        block = 150 + per * ch + (per - 1) * gap
+        ty = 170 + max(0, (1400 + 120 - 170 - block - 110) // 2)
+        self.f_ty, self.f_cw, self.f_ch, self.f_foot = ty, cw, ch, min(1428, ty + block + 26)
+        room = cw - 110
+        en0, ar0 = ch * 0.31, ch * 0.29
+        f = get_font(int(en0), "ExtraBold", MONT)
+        w_en = max(f.getlength(e) for e, _ in rows) + 12
+        w_ar = max((_ar_line(a, int(ar0), INK, PLEX_AR).width - 2 * _AR_PAD for _, a in rows if a), default=1)
+        kk = max(0.6, min(1.0, room / w_en, room / w_ar))
+        en_s, ar_s = int(en0 * kk), int(ar0 * kk)
+        up, dn = self._ar_ref(ar_s, PLEX_AR)
+        mask = _round_mask((cw, ch), 28)
+        self.f_faces, self.f_slots = [], []
+        for i, (en, ar) in enumerate(rows):
+            col, row = divmod(i, per)
+            bg = cards[(i + shift) % len(cards)]
+            light = _lum(bg) > 0.6
+            txt = _readable(INK if light else WHITE, bg)                   # the English, always easy to read
+            arc = _readable(deep if light else hi, bg)                      # the Arabic: the palette's colour if
+            edge = deep if light else hi                                    # it reads well on this card
+            face = Image.new("RGBA", (cw, ch), bg + (255,))
+            d = ImageDraw.Draw(face)
+            d.rectangle([0, 0, 10, ch], fill=edge)                                      # the accent edge
+            d.ellipse([24, 18, 70, 64], fill=edge)                                      # the number chip
+            nt = _text(str(i + 1), 24, WHITE if _lum(edge) < 0.6 else INK, "Black")
+            face.alpha_composite(nt, (47 - nt.width // 2, 41 - nt.height // 2 - 1))
+            et = _tight_text(en, en_s, txt, room, "ExtraBold", MONT, 16, pad=2)
+            at, base = self._ar_row(ar, ar_s, arc, room, PLEX_AR) if ar else (None, 0)
+            blk = et.height + 10 + (up + dn if at is not None else 0)
+            y0 = (ch - blk) // 2 + 4
+            face.alpha_composite(et, ((cw - et.width) // 2, y0))
+            if at is not None:
+                _comp(face, at, (cw - at.width) // 2, y0 + et.height + 10 + up - base)
+            face.putalpha(mask)
+            self.f_faces.append(face)
+            x = 90 + col * (cw + 22) if cols == 2 else (W - cw) // 2
+            self.f_slots.append((x, ty + 150 + row * (ch + gap)))
+        self.f_mask = mask
+        self.f_shadow = _shadow_box((cw + 120, ch + 120), (60, 60, 60 + cw, 60 + ch), 28, 18, 150, 0)
+        sh = Image.new("L", (cw, ch), 0)
+        dd = ImageDraw.Draw(sh)
+        for i in range(60):
+            dd.line([(i, 0), (i - ch * 0.35, ch)], fill=int(110 * math.sin(math.pi * i / 60)), width=1)
+        self.f_shine = sh
+        self.f_step = min(0.2, 2.0 / max(1, k))
+        self.f_lands = [0.5 + self.f_step * i + 0.22 for i in range(k)]
+        self.f_done = self.f_lands[-1] if self.f_lands else 1.0
+        self.f_title = _fit_text(self.ending_title.upper(), 52, tcol, 940, "Black")
+        self.f_sub = _fit_text(self.ending_sub or f"{k} word{'s' if k != 1 else ''} from this news", 28,
+                               (220, 222, 228) if dark else (90, 96, 108), 900, "SemiBold")
+        right = max(x for x, _ in self.f_slots) + cw
+        self.f_corner = (min(W - 80, right - 10), self.f_slots[0][1] - 10)
+        rng = np.random.default_rng(pi % (2 ** 32))
+        self.f_sparks = [(rng.uniform(0, 2 * math.pi), rng.uniform(380, 760), rng.uniform(5, 11),
+                          [YELLOW, self.f_ring, WHITE, cards[i % len(cards)]][i % 4]) for i in range(34)]
+        self.end_handle = _text(self.handle, 34, tcol, "Bold") if self.handle else None
+        self.end_cta = _fit_text(self.cta, 32, tcol, 900, "SemiBold") if self.cta else None
+
+    def _draw_flash(self, frame, te):
+        layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        k = _ease((te - 0.1) / 0.45)
+        if k > 0:                                                    # the title drops in, its underline grows
+            ty = self.f_ty
+            _comp(layer, _fade(self.f_title, k), (W - self.f_title.width) // 2,
+                  ty + int((1 - min(1.0, _spring_in(te - 0.1))) * -40))
+            _comp(layer, _fade(self.f_sub, k), (W - self.f_sub.width) // 2, ty + self.f_title.height + 2)
+            lw = int(220 * min(1.0, _spring_in(te - 0.35)))
+            if lw > 0:
+                ImageDraw.Draw(layer).rounded_rectangle([W // 2 - lw // 2, ty + 112, W // 2 + lw // 2, ty + 118], 3,
+                                                        fill=self.f_ring)
+        w, h = self.f_cw, self.f_ch
+        for i, (face, (fx, fy)) in enumerate(zip(self.f_faces, self.f_slots)):
+            t = te - (0.5 + self.f_step * i)
+            if t <= 0:
+                continue
+            p = _spring_in(t, 8.0, 12.0)                               # flies in, overshoots, settles
+            x0, y0 = W / 2 - w / 2, H + 120                            # the deck, under the screen
+            x, y = x0 + (fx - x0) * p, y0 + (fy - y0) * p
+            ay = math.radians(78) * max(0.0, 1 - _ease(t / 0.42))     # flips in from edge-on (around Y)
+            rz = (13 if i % 2 else -11) * max(0.0, 1 - _ease(t / 0.5))
+            lift = max(0.0, 1 - _ease(t / 0.5))                         # how high above the table it is
+            land = t - 0.22                                             # squash on impact, then settle
+            sq = 0.05 * math.exp(-10 * land) * math.cos(16 * land) if land > 0 else 0.0
+            card = face
+            st = te - (self.f_done + 0.25 + 0.07 * i)                  # a shine sweeps across once settled
+            if 0 < st < 0.5:
+                card = face.copy()
+                band = Image.new("L", card.size, 0)
+                band.paste(self.f_shine, (int(-80 + (w + 160) * (st / 0.5)), 0))
+                band = Image.fromarray((np.asarray(band, np.float32) * np.asarray(self.f_mask, np.float32) / 255)
+                                       .astype(np.uint8))
+                white = Image.new("RGBA", card.size, (255, 255, 255, 0))
+                white.putalpha(band)
+                card.alpha_composite(white)
+            if ay > 0.001:
+                cwp, far = w * math.cos(ay), h * (1 - 0.28 * math.sin(ay))
+                quad = [(w / 2 - cwp / 2, 0), (w / 2 + cwp / 2, (h - far) / 2), (w / 2 + cwp / 2, (h + far) / 2),
+                        (w / 2 - cwp / 2, h)]
+                card = _shade(_warp(card, quad, (w, h)), 0.35 * math.sin(ay))
+            if abs(sq) > 0.002:
+                card = card.resize((int(w * (1 + sq)), int(h * (1 - sq))), Image.BICUBIC)
+            if abs(rz) > 0.05:
+                card = card.rotate(rz, resample=Image.BICUBIC, expand=True)
+            card = _scaled(card, 0.82 + 0.18 * min(1.0, p) + 0.06 * lift)
+            cx, cy = x + w / 2, y + h / 2
+            sh = _scaled(self.f_shadow, 1 + 0.25 * lift)               # the shadow spreads while the card is high
+            _comp(layer, _fade(sh, 0.55 + 0.45 * (1 - lift)), int(cx - sh.width / 2 + 30 * lift),
+                  int(cy - sh.height / 2 + 14 + 70 * lift))
+            _comp(layer, card, int(cx - card.width / 2), int(cy - card.height / 2))
+        y = self.f_foot                                                 # CTA + handle (move with the camera)
+        for im, dl in ((self.end_cta, 0.0), (self.end_handle, 0.18)):
+            if im is None:
+                continue
+            kk = _ease((te - self.f_done - 0.3 - dl) / 0.4)
+            if kk > 0:
+                _comp(layer, _fade(im, kk), (W - im.width) // 2, y + int((1 - kk) * 18))
+            y += im.height + 4
+        self._flash_ring(layer, te)
+        z = 1 + 0.035 * _ease((te - self.f_done) / 1.6) if te > self.f_done else 1.0   # slow camera push-in
+        if z > 1.0005:
+            cy = (170 + 1400) / 2
+            big = layer.resize((int(W * z), int(H * z)), Image.BICUBIC)
+            x0, y0 = int(W / 2 * z - W / 2), int(cy * z - cy)
+            layer = big.crop((x0, y0, x0 + W, y0 + H))
+        frame.alpha_composite(layer)
+
+    def _flash_ring(self, layer, te):
+        """The progress ring (k/n as the cards land) that becomes a ✓ with a burst of sparks."""
+        cx, cy = self.f_corner
+        k = _ease((te - 0.3) / 0.4)
+        if k <= 0:
+            return
+        done, lands = self.f_done, self.f_lands
+        landed = sum(1 for t in lands if te >= t)
+        r = 58
+        c = r + 20
+        ring = Image.new("RGBA", (2 * c, 2 * c), (0, 0, 0, 0))
+        d = ImageDraw.Draw(ring)
+        d.ellipse([c - r, c - r, c + r, c + r], fill=(255, 255, 255, 245))
+        box = [c - r + 6, c - r + 6, c + r - 6, c + r - 6]
+        d.arc(box, 0, 360, fill=(225, 228, 234), width=10)
+        prev = max([t for t in lands if t <= te], default=None)
+        frac = 1.0 if landed == len(lands) else (
+            (landed - 1 + _ease((te - prev) / 0.35)) / len(lands) if prev is not None else 0.0)
+        if frac > 0:
+            d.arc(box, -90, -90 + 360 * frac, fill=self.f_ring, width=10)
+        if te >= done:
+            u = min(1.0, (te - done) / 0.25)
+            pts = [(c - 22, c + 2), (c - 6, c + 18), (c + 24, c - 16)]
+            a = min(1.0, u * 2)
+            d.line([pts[0], (pts[0][0] + (pts[1][0] - pts[0][0]) * a, pts[0][1] + (pts[1][1] - pts[0][1]) * a)],
+                   fill=self.f_ring, width=10)
+            if u > 0.5:
+                b = (u - 0.5) * 2
+                d.line([pts[1], (pts[1][0] + (pts[2][0] - pts[1][0]) * b, pts[1][1] + (pts[2][1] - pts[1][1]) * b)],
+                       fill=self.f_ring, width=10)
+        else:
+            t = _text(f"{landed}/{len(lands)}", 34, INK, "Black")
+            ring.alpha_composite(t, (c - t.width // 2, c - t.height // 2 - 2))
+        pop = 1 + 0.18 * math.exp(-9 * (te - done)) * math.sin(18 * (te - done)) if te >= done else 1.0
+        sc = (0.3 + 0.7 * min(1.0, _spring_in(te - 0.3))) * pop
+        sh = _shadow_box((ring.width + 20, ring.height + 20), (10 + c - r, 16 + c - r, 10 + c + r, 16 + c + r), r, 10,
+                         120, 0)
+        _comp(layer, _fade(_scaled(sh, sc), k), int(cx - sh.width * sc / 2), int(cy - sh.height * sc / 2))
+        _comp(layer, _fade(_scaled(ring, sc), k), int(cx - ring.width * sc / 2), int(cy - ring.height * sc / 2))
+        st = te - done                                                   # the burst of sparks
+        if 0 < st < 1.1:
+            d = ImageDraw.Draw(layer)
+            for ang, v, size, col in self.f_sparks:
+                x = cx + math.cos(ang) * v * st * (1 - 0.35 * st)
+                y = cy + math.sin(ang) * v * st * (1 - 0.35 * st) + 520 * st * st
+                s = size * (1 - 0.5 * st)
+                d.rounded_rectangle([x - s, y - s * 0.45, x + s, y + s * 0.45], 3,
+                                    fill=tuple(col) + (int(255 * max(0.0, 1 - st / 1.1)),))
+
+    def _flash_sounds(self, mx):
+        for i in range(len(self.f_faces)):
+            t = self.E + 0.5 + self.f_step * i
+            sig, pan = mx.whoosh(0.3)
+            mx.add(t, sig, 0.06, pan)
+            mx.add(t + 0.22, mx.thump(), 0.10)
+            mx.add(t + 0.22, mx.click(), 0.04)
+        mx.add(self.E + self.f_done, mx.sparkle(), 0.12)
+        mx.add(self.E + self.f_done, mx.chime(), 0.10)
+
+    def _ar_ref(self, size, font=None):
         """(above, below): how far the recap's Arabic letters reach above / below their baseline at a size (tall
         letters with hamza / shadda to the lowest descenders) — every meaning is placed by its baseline with it."""
-        font = self.L["ar_font"]
+        font = font or self.L["ar_font"]
         im = _ar_line("أإلكجـيظ", size, INK, font)
         box = im.getchannel("A").getbbox() or (0, 0, im.width, im.height)
         base = int(size * 0.25) + get_font(int(size), "Bold", _ar_font_for(font, "أ")).getmetrics()[0]
         return base - box[1], box[3] - base
 
-    def _ar_row(self, txt, size, col, max_w):
+    def _ar_row(self, txt, size, col, max_w, font=None):
         """A meaning on a FIXED baseline (+ where that baseline is in the image), smaller only if it is too wide."""
-        font = self.L["ar_font"]
+        font = font or self.L["ar_font"]
         while size > 16 and _ar_line(txt, size, col, font).width - 2 * _AR_PAD > max_w:
             size = max(16, int(size * 0.94))
         im = _ar_line(txt, size, col, font)
         return im, int(size * 0.25) + get_font(int(size), "Bold", _ar_font_for(font, txt)).getmetrics()[0]
 
     def _draw_ending(self, frame, te):
+        if self.recap == "flashcards":
+            return self._draw_flash(frame, te)
         k = _back((te - 0.25) / 0.55)
         if k <= 0:
             return
@@ -1372,7 +1671,9 @@ class NewsVideo:
         mx.add(0.02, sig, 0.08, pan)
         for c in self.cards:
             mx.add(c["t0"], mx.pop(), 0.10)
-        if self.ending_on:
+        if self.ending_on and self.recap == "flashcards":
+            self._flash_sounds(mx)
+        elif self.ending_on:
             sig, pan = mx.whoosh(0.7)
             mx.add(self.E, sig, 0.10, pan)
             mx.add(self.E + 0.3, mx.chime(), 0.16)

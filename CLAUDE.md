@@ -106,6 +106,11 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   Recap (`_layout_ending`): ONE English and ONE Arabic size for all rows (measured on the widest, columns split by
   need, floor `REC_MIN`; only an outlier shrinks alone); English cut to its font band (`_tight_text`), Arabic on a
   fixed baseline (`_ar_row` = text.`_ar_line`, placed with `_ar_ref`) so rows line up; 2 columns from 9 words.
+  `news.recap_style` (`RECAP_CHOICES`): `flashcards` (default; `_layout_flash` / `_draw_flash` / `_flash_ring` /
+  `_flash_sounds`: cards dealt from a deck, `_spring_in` + `_warp` 3D flip-in, landing squash, shine, k/n ring -> ✓
+  + sparks, camera push-in; colours = one of `PALETTES` picked from a hash of file name + headline + key words, text /
+  Arabic made readable with `_readable` (WCAG contrast >= 4.5); length `recap_len`) or `table` (`_layout_ending`).
+  NB `_spring` (imported from text) = landing wobble 1->0 used by the subtitles; `_spring_in` = 0->1 with overshoot.
   Key-words Excel: `news_words.export_xlsx(clips)` / `import_xlsx(path, clips)` (Clip · # · Key word · Arabic · Repeat
   · Sentence; matched by clip file name + key word, then #).
   App: several clips per project — `news.clips` (JSON list of video / headline / trim / words / speed) + `news.clip_index`
