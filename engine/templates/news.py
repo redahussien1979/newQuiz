@@ -14,6 +14,9 @@ subtitle, card and ending variants:
     studio     clean and light, dark word cards
     tv         broadcast: subtitles on a solid band, lower-third word bar, a ticker of the words
     paper      newspaper: newsprint, serif type, paper clippings with tape
+    notify     frosted glass over colour blobs; a key word drops in from the top as a phone notification
+    podcast    dark studio, a waveform moving with the speech under the clip, lime karaoke, a key-word pill
+    post       the clip inside a social post (logo, name, headline, actions); key words as pinned replies
 
 Layout: a landscape / square video sits in a framed panel near the top; a vertical video fills the screen.
 Subtitles and the word card stay inside the Shorts safe area (above y 1536). The source video is decoded by FFmpeg
@@ -54,6 +57,7 @@ LITERATA = _lib("Literata", "Literata[opsz,wght].ttf")
 PLEX_AR = _lib("IBMPlexSansArabic", "IBMPlexSansArabic-Bold.ttf")
 AMIRI = _lib("Amiri", "Amiri-Bold.ttf")
 TAJAWAL = _lib("Tajawal", "Tajawal-Black.ttf")
+INTER = _lib("Inter", "Inter[opsz,wght].ttf")
 
 LEAD = 0.7                  # the header comes in over the first frame before the clip plays
 SPEED_MIN, SPEED_MAX = 0.5, 1.5
@@ -97,12 +101,18 @@ CARD_OUT = 0.25                  # its exit
 SAFE_BOTTOM = 1536
 CAP_MAX_W = 860            # a subtitle line (centred: clear of the Shorts buttons on the right)
 POP_MAX_W = 820            # pop: the widest a line of huge words may be (1080 - 2 x 130)
+NOTIFY_ROOM = 180          # notify: the header starts this much lower (the banner drops in above it)
+WAVE_H = 76                # podcast: the waveform's height
+POST_PAD, POST_FOOT = 34, 112   # post: the card's top padding / below the clip (progress line + actions row)
 TICKER_Y = 1470            # the tv ticker (64 px high, ends at the safe-area line)
 ACCENTS = {"red": (228, 30, 48), "blue": (28, 110, 230), "teal": (0, 150, 150), "orange": (240, 120, 20),
            "purple": (126, 64, 210)}
 ACCENT_CHOICES = [("News red", "red"), ("Blue", "blue"), ("Teal", "teal"), ("Orange", "orange"),
                   ("Purple", "purple")]
 YELLOW = (255, 214, 10)
+LIME = (198, 255, 61)        # podcast
+FEED_BLUE = (29, 155, 240)   # social post
+VIOLET = (109, 40, 217)      # notification: the Arabic
 INK = (20, 22, 28)
 WHITE = (255, 255, 255)
 _SENT_END = re.compile(r"[.!?…][\"'”’)\]]*$")
@@ -124,6 +134,11 @@ _BASE = dict(
     ar_font=PLEX_AR, ticker=False,
     end_bg=WHITE, end_row=(244, 245, 248), end_en=INK, end_ar=None, end_sub=(120, 126, 136), end_font=MONT,
     end_text=WHITE,
+    dark=None,                       # the page under the recap is dark (None: dark unless a light background)
+    accent=None,                     # the look's own accent (None: the accent picked in the app)
+    pill_col=None, pill_text=None,   # speak="pill": the pill's colour (None: accent) / the spoken word's colour
+    head_bar=True, head_align="left",  # the accent bar left of the headline / headline left or centred
+    wave=False,                      # podcast: a waveform that moves with the speech under the clip
 )
 LOOKS = {
     "breaking": dict(),
@@ -144,8 +159,27 @@ LOOKS = {
                   card_bg=(253, 251, 245), card_font=PLAYFAIR, card_weight="Bold", ar_font=AMIRI,
                   end_bg=(253, 251, 245), end_row=(244, 239, 228), end_font=PLAYFAIR, end_text=INK),
 }
+LOOKS.update({
+    # frosted glass over soft colour blobs; a key word drops in from the top like a phone notification
+    "notify": dict(bg="glass", dark=True, head_font=INTER, head_weight="ExtraBold", head_bar=False, panel_r=44,
+                   panel_rim=(255, 255, 255, 110), cap_font=INTER, cap_weight="Black", cap_size=64, cap_stroke=0,
+                   dim=0.5, speak="pill", pill_col=WHITE, pill_text=INK, mark=(196, 181, 253), key_col=INK,
+                   card="notify", card_font=INTER, card_weight="Black", card_ar=VIOLET, ar_font=TAJAWAL),
+    # dark studio, the clip with a live waveform under it, lime karaoke subtitles, a key-word pill
+    "podcast": dict(bg="dark", dark=True, accent=LIME, head_weight="Bold", head_col=(235, 238, 232), head_bar=False,
+                    head_align="center", panel_r=40, panel_rim=(0, 0, 0, 0), track=(255, 255, 255, 40), wave=True,
+                    cap_size=64, cap_stroke=0, dim=0.42, speak="color", speak_col=LIME, mark=LIME, key_col=INK,
+                    card="podpill", card_ar=LIME, ar_font=TAJAWAL),
+    # the clip inside a social post (logo, name, headline, actions); a key word comes in as a pinned reply
+    "post": dict(bg="feed", dark=False, accent=FEED_BLUE, header="post", head_col=INK, head_font=INTER,
+                 head_weight="SemiBold", panel_r=24, panel_rim=(0, 0, 0, 0), panel_shadow=0, track=(225, 229, 235, 255),
+                 cap_font=INTER, cap_weight="Black", cap_size=64, cap_col=INK, cap_stroke=0, dim=0.35, speak="pill",
+                 pill_col=FEED_BLUE, pill_text=WHITE, mark=(186, 225, 252), key_col=INK, card="reply",
+                 card_font=INTER, card_weight="Black", card_ar=FEED_BLUE, ar_font=TAJAWAL, end_text=INK),
+})
 LOOK_CHOICES = [("💥 Pop (big words)", "pop"), ("🔴 Breaking (dark)", "breaking"), ("⚪ Studio (light)", "studio"),
-                ("📺 TV broadcast", "tv"), ("📰 Newspaper", "paper")]
+                ("📺 TV broadcast", "tv"), ("📰 Newspaper", "paper"), ("🔔 Notification (glass)", "notify"),
+                ("🎙️ Podcast clip (lime)", "podcast"), ("💬 Social post (blue)", "post")]
 DEFAULT_LOOK = "pop"
 
 EXAMPLE = {
@@ -530,6 +564,8 @@ class NewsVideo:
         self.look_name = n.get("look") if n.get("look") in LOOKS else DEFAULT_LOOK
         L = dict(_BASE)
         L.update(LOOKS[self.look_name])
+        if L["accent"]:
+            self.accent = L["accent"]
         for k in ("card_ar", "card_label", "end_ar", "speak_col"):
             if L[k] is None:
                 L[k] = self.accent
@@ -592,16 +628,22 @@ class NewsVideo:
         self.brand_im = _text(self.brand_name, 30, L["head_col"], "Black") if self.brand_name else None
         self.label_im = _text(self.label, 26, L["sub_col"], "Bold") if self.label else None
         self.tag_im = None
+        self.on_accent = INK if _lum(A) > 0.6 else WHITE   # text / icons on an accent pill
         if self.tag:
-            t = _text(self.tag, 28, WHITE, "Black")
+            t = _text(self.tag, 28, self.on_accent, "Black")
             pill = _rounded((t.width + 44, t.height + 6), (t.height + 6) // 2, A + (255,))
             pill.alpha_composite(t, (30, 3))
             self.tag_im = pill
+        # the header's top; the notification look keeps the top of the screen free for its banner
+        self.head_y = 110 + (NOTIFY_ROOM if L["card"] == "notify" else 0)
         self._layout_headline()
         if L["header"] == "masthead":  # the newspaper's name: the small line, else ENGLISH IN NEWS
             self.mast_im = _fit_text(self.label or "ENGLISH IN NEWS", 64, INK, 700, "Black", PLAYFAIR)
 
-        self.head_y = 110
+        if L["header"] == "post":
+            self._layout_post_head()
+        if L["wave"]:
+            self._layout_wave()
         self._layout_captions()
         self._layout_cards()
         self._place()
@@ -610,6 +652,8 @@ class NewsVideo:
         self._layout_background()
         if not self.vertical:
             self._layout_panel()
+        if L["header"] == "post":
+            self._layout_post_card()
         if L["ticker"]:
             self._layout_ticker()
         if self.ending_on:
@@ -626,6 +670,9 @@ class NewsVideo:
         limit = (TICKER_Y - 14) if L["card"] == "bar" else SAFE_BOTTOM - 6
         rt, rb = self.card_box                     # the cards' real top / bottom inside their images
         gap = 20 if self.cards else 0
+        top_card = L["card"] == "notify"           # drops in at the top: the subtitles keep all the room below
+        if top_card:
+            rt = rb = gap = 0
         # the subtitle block's drawn rows relative to cap_y: letters + the marker / box around them (+ tv band)
         m = 30 if L["band"] else 16
         top_off = self.cap_band[0] - m
@@ -633,9 +680,23 @@ class NewsVideo:
         cap_h = bot_off - top_off
         if self.vertical:   # subtitles in the middle-low part, the card under them
             self.cap_y = (960 if L["cap_mode"] == "pop" else 880) - top_off
+        elif L["header"] == "post":   # the clip inside the post card, as wide as the card allows
+            pw0, ph0 = self.vsize
+            aspect = pw0 / ph0
+            ph = min(560, int(round(928 / aspect)))
+            vy = self.head_y + POST_PAD + self.post_head_h + 20
+            post_end = lambda h: vy + h + POST_FOOT                      # noqa: E731
+            over = post_end(ph) + 36 + cap_h + gap + (rb - rt) - limit
+            if over > 0:   # a tall card: a smaller clip (same shape)
+                ph = max(300, ph - over)
+            pw = min(928, int(round(ph * aspect)))
+            self.vsize = (pw // 2 * 2, ph // 2 * 2)
+            self.vpos = (40 + (1000 - self.vsize[0]) // 2, vy)
+            self.post_box = (40, self.head_y, 1040, post_end(self.vsize[1]))
+            self.cap_y = self.post_box[3] + 36 - top_off
         else:
             top = max(300, self.head_bottom + 36)
-            cap_gap = 44             # under the panel's progress line
+            cap_gap = 44 + (WAVE_H + 30 if L["wave"] else 0)   # under the panel's progress line (+ the waveform)
             room = limit - top - cap_gap - cap_h - gap - (rb - rt)
             pw, ph = self.vsize
             if ph > room:   # shrink the panel (same shape) so the card fits under the subtitles
@@ -648,7 +709,10 @@ class NewsVideo:
             self.card_y = limit - rb
         if self.card_y + rb > limit:  # never under the safe line: lift the card, and the subtitles with it
             self.card_y = limit - rb
-        self.cap_y = min(self.cap_y, self.card_y + rt - gap - bot_off)
+        if top_card:
+            self.card_y = 34 - self.card_box[0]
+        else:
+            self.cap_y = min(self.cap_y, self.card_y + rt - gap - bot_off)
         self.cap_box = (top_off, bot_off)
 
     def _layout_headline(self):
@@ -666,7 +730,7 @@ class NewsVideo:
         col = WHITE if L["header"] == "box" else L["head_col"]
         self.head_lines = [_text(ln, size, col, L["head_weight"], L["head_font"]) for ln in lines if ln]
         self.head_lh = int(size * (1.12 if L["head_font"] in (ANTON, OSWALD) else 1.2))
-        top = 110 + (150 if L["header"] == "masthead" else 120)
+        top = self.head_y + (150 if L["header"] == "masthead" else 120)
         self.head_bottom = top + self.head_lh * len(self.head_lines) + (30 if L["header"] == "box" else 0)
 
     def _layout_background(self):
@@ -684,8 +748,28 @@ class NewsVideo:
             arr += _noise((W, H), 7.0)[..., None]
             arr -= (np.abs(y - 0.5) * 14)[..., None]
             self.static_bg = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB").convert("RGBA")
+        elif L["bg"] in ("glass", "dark", "feed"):
+            xx = np.linspace(0, 1, W)[None, :]
+            yy = y * (H / W)                                     # round blobs: both axes in widths
+
+            def blob(cx, cy, r):
+                return np.exp(-(((xx - cx) ** 2 + (yy - cy * H / W) ** 2) / r ** 2))[..., None]
+            if L["bg"] == "glass":     # soft colour blobs on a deep night blue (frosted glass sits on it)
+                arr = np.broadcast_to(np.array([20, 18, 31], np.float32), (H, W, 3)).copy()
+                for col, cx, cy, r, k in (((124, 92, 255), 0.12, 0.18, 0.55, 0.85), ((255, 106, 61), 0.95, 0.52, 0.5, 0.75),
+                                          ((0, 179, 164), 0.25, 0.95, 0.6, 0.7), ((228, 72, 140), 0.85, 0.05, 0.35, 0.4)):
+                    arr += (np.array(col, np.float32) - arr) * blob(cx, cy, r) * k
+            elif L["bg"] == "dark":    # studio black, a faint light from above
+                arr = np.broadcast_to(np.array([12, 14, 13], np.float32), (H, W, 3)).copy()
+                arr += (np.array([40, 46, 36], np.float32) - arr) * blob(0.5, -0.05, 0.75) * 0.8
+            else:                      # a social feed: light grey
+                c0, c1 = np.array([240, 242, 245]), np.array([228, 231, 236])
+                arr = np.broadcast_to(c0 * (1 - y[..., None]) + c1 * y[..., None], (H, W, 3)).astype(np.float32)
+            arr += _noise((W, H), 2.0, 11)[..., None]           # a little grain: no banding in the gradients
+            self.static_bg = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB").convert("RGBA")
         else:
             self.static_bg = None
+        self.dark = L["dark"] if L["dark"] is not None else self.static_bg is None
         self.shade = None
         a = None
         if self.vertical:
@@ -807,7 +891,7 @@ class NewsVideo:
 
         norm = mk(L["cap_col"])
         if L["speak"] == "pill":
-            speak = mk(WHITE) if L["cap_col"] == INK else norm
+            speak = mk(L["pill_text"]) if L["pill_text"] else (mk(WHITE) if L["cap_col"] == INK else norm)
         else:
             speak = mk(L["speak_col"])
         if L["key_stroke"]:
@@ -870,7 +954,7 @@ class NewsVideo:
                 im = it["speak"]
                 if L["speak"] == "pill":
                     d.rounded_rectangle([it["x"] - 10, y + b0 - 7, it["x"] + it["w"] + 10, y + b1 + 7], 12,
-                                        fill=self.accent + (int(235 * ka),))
+                                        fill=(L["pill_col"] or self.accent) + (int(235 * ka),))
                 else:
                     sc *= 1.0 + 0.07 * math.sin(math.pi * min(1.0, (c - w["s"]) / spd / 0.25))
                     if L["bg"] == "paper":  # newspaper: the spoken word is also underlined
@@ -908,12 +992,186 @@ class NewsVideo:
         frame.alpha_composite(band, (x0, y0))
         ImageDraw.Draw(frame).rectangle([x0, y0, x1, y0 + 5], fill=self.accent + (int(255 * a),))
 
+    # ---------------------------------------------------------- social post (look "post")
+    def _layout_post_head(self):
+        """The post's top: logo, brand name + a verified tick, @handle · now, then the headline (key words in blue)."""
+        L = self.L
+        av = 84
+        name = self.brand_name.title() if self.brand_name else (self.label.title() or "English in News")
+        name_im = _tight_text(name, 36, INK, 640, "Bold", INTER, pad=4)
+        who = self.handle or ("@" + self.brand_name.lower().replace(" ", "") if self.brand_name else "")
+        sub_im = _tight_text(" · ".join(b for b in (who, "now") if b), 28, (101, 119, 134), 700, "Medium", INTER, pad=2)
+        S = 4                                                       # the verified tick, drawn large then reduced
+        tick = Image.new("RGBA", (30 * S, 30 * S), (0, 0, 0, 0))
+        d = ImageDraw.Draw(tick)
+        d.ellipse([0, 0, 30 * S - 1, 30 * S - 1], fill=FEED_BLUE + (255,))
+        d.line([(8 * S, 15.5 * S), (13 * S, 20.5 * S), (22.5 * S, 10 * S)], fill=WHITE + (255,), width=int(3.4 * S),
+               joint="curve")
+        tick = tick.resize((30, 30), Image.LANCZOS)
+        # the headline, word by word: the words of a key phrase in the post blue
+        words = self.headline.split()
+        norm = [re.sub(r"[^\w'-]", "", w).lower() for w in words]
+        blue = set()
+        for g in self.groups:
+            ph = [re.sub(r"[^\w'-]", "", w).lower() for w in g["text"].split()]
+            for i in range(len(norm) - len(ph) + 1):
+                if ph and norm[i:i + len(ph)] == ph:
+                    blue.update(range(i, i + len(ph)))
+        size, rows = 42, []
+        while size >= 32:
+            f = get_font(size, L["head_weight"], INTER)
+            sp, rows, x = f.getlength(" "), [[]], 0.0
+            for i, w in enumerate(words):
+                wl = f.getlength(w)
+                if rows[-1] and x + sp + wl > 928:
+                    rows.append([])
+                    x = 0.0
+                x += (sp if rows[-1] else 0) + wl
+                rows[-1].append(i)
+            if len(rows) <= 3:
+                break
+            size -= 2
+        lh = int(size * 1.3)
+        head_h = lh * len(rows) if words else 0
+        im = Image.new("RGBA", (928, av + 22 + head_h), (0, 0, 0, 0))
+        im.alpha_composite(self._icon(av), (0, 0))
+        im.alpha_composite(name_im, (av + 20, 4))
+        im.alpha_composite(tick, (av + 20 + name_im.width + 6, 4 + (name_im.height - 30) // 2))
+        im.alpha_composite(sub_im, (av + 20, 4 + name_im.height + 6))
+        d = ImageDraw.Draw(im)
+        f = get_font(size, L["head_weight"], INTER)
+        sp = f.getlength(" ")
+        for r, row in enumerate(rows):
+            x = 0.0
+            for i in row:
+                d.text((x, av + 22 + r * lh), words[i], font=f, fill=(FEED_BLUE if i in blue else INK) + (255,))
+                x += f.getlength(words[i]) + sp
+        self.post_head = im
+        self.post_head_h = im.height
+
+    def _post_icons(self):
+        """The actions row: reply · repost · like · share as outline icons with their names (no made-up counts);
+        returns (row image, the heart's centre in it, a filled heart)."""
+        grey, S, sz = (101, 119, 134), 4, 40
+        def canvas():
+            return Image.new("RGBA", (sz * S, sz * S), (0, 0, 0, 0))
+        w = int(3.2 * S)
+        reply = canvas()
+        d = ImageDraw.Draw(reply)
+        d.rounded_rectangle([3 * S, 5 * S, 37 * S, 29 * S], 9 * S, outline=grey + (255,), width=w)
+        d.polygon([(10 * S, 27 * S), (10 * S, 37 * S), (19 * S, 28 * S)], fill=grey + (255,))
+        repost = canvas()
+        d = ImageDraw.Draw(repost)
+        d.line([(9 * S, 30 * S), (9 * S, 11 * S), (30 * S, 11 * S)], fill=grey + (255,), width=w, joint="curve")
+        d.polygon([(4 * S, 15 * S), (9 * S, 8 * S), (14 * S, 15 * S)], fill=grey + (255,))
+        d.line([(31 * S, 10 * S), (31 * S, 29 * S), (10 * S, 29 * S)], fill=grey + (255,), width=w, joint="curve")
+        d.polygon([(26 * S, 25 * S), (31 * S, 32 * S), (36 * S, 25 * S)], fill=grey + (255,))
+        heart_pts = []
+        for k in range(120):
+            a = 2 * math.pi * k / 120
+            x = 16 * math.sin(a) ** 3
+            y = -(13 * math.cos(a) - 5 * math.cos(2 * a) - 2 * math.cos(3 * a) - math.cos(4 * a))
+            heart_pts.append(((20 + x * 1.05) * S, (21 + y * 1.05) * S))
+        like = canvas()
+        ImageDraw.Draw(like).line(heart_pts + heart_pts[:1], fill=grey + (255,), width=w, joint="curve")
+        full = canvas()
+        ImageDraw.Draw(full).polygon(heart_pts, fill=(249, 24, 128, 255))
+        share = canvas()
+        d = ImageDraw.Draw(share)
+        d.line([(20 * S, 26 * S), (20 * S, 5 * S)], fill=grey + (255,), width=w)
+        d.line([(11 * S, 13 * S), (20 * S, 4 * S), (29 * S, 13 * S)], fill=grey + (255,), width=w, joint="curve")
+        d.line([(5 * S, 22 * S), (5 * S, 35 * S), (35 * S, 35 * S), (35 * S, 22 * S)], fill=grey + (255,), width=w,
+               joint="curve")
+        row = Image.new("RGBA", (928, 56), (0, 0, 0, 0))
+        heart = None
+        for k, (ic, name) in enumerate(((reply, "Reply"), (repost, "Repost"), (like, "Like"), (share, "Share"))):
+            ic = ic.resize((sz, sz), Image.LANCZOS)
+            lab = _tight_text(name, 26, grey, 200, "SemiBold", INTER, pad=2)
+            x = int(k * 928 / 4)
+            row.alpha_composite(ic, (x, (56 - sz) // 2))
+            row.alpha_composite(lab, (x + sz + 12, (56 - lab.height) // 2))
+            if name == "Like":
+                heart = (x + sz // 2, 28)
+        return row, heart, full.resize((sz, sz), Image.LANCZOS)
+
+    def _layout_post_card(self):
+        """The white post card, pre-drawn: landscape = top + the clip's place + the actions row; vertical = only the
+        top (over the clip)."""
+        if self.vertical:
+            x0, y0, x1, y1 = 40, self.head_y, 1040, self.head_y + POST_PAD + self.post_head_h + 26
+        else:
+            x0, y0, x1, y1 = self.post_box
+        cw, ch = x1 - x0, y1 - y0
+        im = Image.new("RGBA", (cw + 80, ch + 80), (0, 0, 0, 0))
+        im.alpha_composite(_shadow_box(im.size, (40, 50, 40 + cw, 50 + ch), 40, 22, 70, 0))
+        im.alpha_composite(_rounded((cw, ch), 40, WHITE + (255,)), (40, 40))
+        im.alpha_composite(self.post_head, (40 + 36, 40 + POST_PAD))
+        self.post_heart = None
+        if not self.vertical:
+            row, heart, self.heart_full = self._post_icons()
+            ry = self.vpos[1] + self.vsize[1] + 36 - y0
+            im.alpha_composite(row, (40 + 36, 40 + ry))
+            self.post_heart = (x0 + 36 + heart[0], y0 + ry + heart[1])
+        self.post_im, self.post_xy = im, (x0 - 40, y0 - 40)
+
+    def _draw_post(self, frame, t, a):
+        """The post card (it slides in with the header); the heart fills and pops as each key word's card comes."""
+        k = _ease(t / 0.5) * a
+        if k <= 0:
+            return
+        x, y = self.post_xy
+        _comp(frame, _fade(self.post_im, k), x, y + int((1 - _ease(t / 0.5)) * 30))
+        if self.post_heart is None:
+            return
+        hits = [c["t0"] for c in self.cards if c["t0"] <= t]
+        if hits:
+            u = t - hits[-1]
+            sc = 1 + 0.45 * math.exp(-7 * u) * math.sin(min(math.pi, u * 14)) if u < 0.6 else 1.0
+            im = _scaled(self.heart_full, sc)
+            hx, hy = self.post_heart
+            _comp(frame, _fade(im, k), int(hx - im.width / 2), int(hy - im.height / 2))
+
+    # ---------------------------------------------------------- podcast waveform (look "podcast")
+    def _layout_wave(self):
+        """How much speech there is at each moment of the clip (from the word timings), 100 steps a second."""
+        n = int(self.clip * 100) + 2
+        env = np.zeros(n, np.float32)
+        for w in self.words:
+            env[max(0, int(w["s"] * 100)):max(0, int(w["e"] * 100)) + 1] = 1.0
+        k = np.hanning(15)
+        self.wave_env = np.convolve(env, k / k.sum(), mode="same")
+
+    def _draw_wave(self, frame, t, a):
+        """Bars that move with the speech: tall while words are spoken, low in the pauses (still while held)."""
+        if a <= 0:
+            return
+        c = self._c(t)
+        lvl = float(self.wave_env[max(0, min(len(self.wave_env) - 1, int(c * 100)))])
+        n, h = 34, WAVE_H
+        if self.vertical:
+            x0, x1 = 150, W - 150
+            yc = int(self.cap_y + self.cap_box[0]) - h // 2 - 26
+        else:
+            x0, x1 = self.vpos[0] + 30, self.vpos[0] + self.vsize[0] - 30
+            yc = self.vpos[1] + self.vsize[1] + 18 + 6 + 22 + h // 2
+        step = (x1 - x0) / n
+        bw = max(4, int(step * 0.56))
+        d = ImageDraw.Draw(frame)
+        for i in range(n):
+            shape = 0.45 + 0.55 * math.sin(math.pi * (i + 0.5) / n)
+            wob = abs(math.sin(c * 7.3 + i * 1.7) * math.cos(c * 3.1 + i * 0.63))
+            bh = max(bw, h * shape * (0.12 + 0.88 * lvl * (0.3 + 0.7 * wob)))
+            x = x0 + i * step + (step - bw) / 2
+            d.rounded_rectangle([x, yc - bh / 2, x + bw, yc + bh / 2], bw // 2,
+                                fill=LIME + (int(255 * a * (0.55 + 0.45 * lvl)),))
+
     # ---------------------------------------------------------- word cards
     def _layout_cards(self):
         self.cards = []
         n = len(self.groups)
         make = {"pop": self._card_pop, "bar": self._card_bar, "sticker": self._card_sticker,
-                "clip": self._card_clip}[self.L["card"]]
+                "clip": self._card_clip, "notify": self._card_notify, "podpill": self._card_podpill,
+                "reply": self._card_reply}[self.L["card"]]
         free = 0.0                 # when the card before has fully gone (cards never overlap: they queue)
         for gi, g in enumerate(self.groups):
             t0 = max(g["t0"], free)
@@ -924,6 +1182,9 @@ class NewsVideo:
             t1 = min(max(nxt - CARD_OUT - 0.02, t0 + CARD_MIN), hold, self.E + 0.2)
             free = t1 + CARD_OUT + 0.02
             self.cards.append(dict(im=make(gi, g, n), t0=t0, t1=t1, gi=gi))
+        if self.L["card"] == "notify":   # the frosted part: where the banner itself is (not its shadow)
+            for c in self.cards:
+                c["glass"] = c["im"].getchannel("A").point(lambda v: 255 if v > 200 else 0)
         # the solid card only (its soft shadow is at most 140 opaque)
         boxes = [c["im"].getchannel("A").point(lambda v: 255 if v > 200 else 0).getbbox() for c in self.cards]
         boxes = [bx for bx in boxes if bx]
@@ -1032,6 +1293,111 @@ class NewsVideo:
         im.alpha_composite(tape, ((im.width - tape.width) // 2, 34))
         return im.rotate(-1.2 if gi % 2 == 0 else 1.2, expand=True, resample=Image.BICUBIC)
 
+    def _icon(self, size):
+        """The brand's app icon: the logo, else a rounded accent square with the brand's first letter."""
+        if self.logo is not None:
+            return _scaled(self.logo, size / self.logo.width)
+        im = _rounded((size, size), size // 4, self.accent + (255,))
+        ch = _tight_text((self.brand_name or "N")[:1], int(size * 0.5), self.on_accent, size, "Black", MONT, pad=2)
+        im.alpha_composite(ch, ((size - ch.width) // 2, (size - ch.height) // 2))
+        return im
+
+    def _card_notify(self, gi, g, n):
+        """notify: a phone notification — app icon, NEW WORD k/N · now, the English, the Arabic — on frosted glass
+        (the glass itself is drawn per frame: the picture behind it, blurred)."""
+        L = self.L
+        cw, pad, ic = 1000, 30, 104
+        icon = self._icon(ic)
+        room = cw - 2 * pad - ic - 26
+        grey = (88, 94, 108)
+        lab = _tight_text(f"NEW WORD  ·  {gi + 1}/{n}", 26, grey, room - 80, "Bold", INTER, pad=2)
+        now = _tight_text("now", 26, grey, 100, "SemiBold", INTER, pad=2)
+        en = _tight_text(g["text"], 60, INK, room, "Black", INTER, pad=4)
+        ar = _ink_crop(_ar_fit(g["ar"], 52, L["card_ar"], L["ar_font"], room), 6) if g["ar"] else None
+        blk = lab.height + 10 + en.height + (8 + ar.height if ar is not None else 0)
+        ch = 2 * pad + max(ic, blk)
+        im = Image.new("RGBA", (cw + 60, ch + 70), (0, 0, 0, 0))
+        im.alpha_composite(_shadow_box(im.size, (30, 40, 30 + cw, 40 + ch), 44, 22, 130, 0))
+        body = _rounded((cw, ch), 44, (255, 255, 255, 208))
+        ImageDraw.Draw(body).rounded_rectangle([1, 1, cw - 2, ch - 2], 43, outline=(255, 255, 255, 235), width=2)
+        im.alpha_composite(body, (30, 30))
+        im.alpha_composite(icon, (30 + pad, 30 + (ch - ic) // 2))
+        x, y = 30 + pad + ic + 26, 30 + (ch - blk) // 2
+        im.alpha_composite(lab, (x, y))
+        im.alpha_composite(now, (30 + cw - pad - now.width, y))
+        y += lab.height + 10
+        im.alpha_composite(en, (x, y))
+        if ar is not None:
+            im.alpha_composite(ar, (x, y + en.height + 8))
+        return im
+
+    def _card_podpill(self, gi, g, n):
+        """podcast: a dark pill with a lime rim — a KEY WORD chip, the English, the Arabic (on a second row when
+        one row would be too wide)."""
+        L = self.L
+        chip_t = _tight_text("KEY WORD", 24, INK, 300, "Black", MONT, pad=2)
+        chip = _rounded((chip_t.width + 36, chip_t.height + 22), (chip_t.height + 22) // 2, LIME + (255,))
+        chip.alpha_composite(chip_t, (18, 11))
+        en = _tight_text(g["text"], 56, WHITE, 760, "ExtraBold", MONT, pad=4)
+        ar = _ink_crop(_ar_fit(g["ar"], 52, L["card_ar"], L["ar_font"], 760), 6) if g["ar"] else None
+        one = 26 + chip.width + 22 + en.width + (26 + ar.width if ar is not None else 0) + 34
+        if one <= 980:   # one row
+            h = max(chip.height, en.height, ar.height if ar is not None else 0) + 34
+            bw, rows = one, [(chip, 26), (en, 26 + chip.width + 22)]
+            if ar is not None:
+                rows.append((ar, one - 34 - ar.width))
+            r = h // 2
+        else:            # chip + English, the Arabic under them
+            w1 = chip.width + 22 + en.width
+            bw = max(w1, ar.width if ar is not None else 0) + 80
+            h = max(chip.height, en.height) + (ar.height + 10 if ar is not None else 0) + 44
+            rows, r = None, 46
+        im = Image.new("RGBA", (bw + 60, h + 60), (0, 0, 0, 0))
+        im.alpha_composite(_shadow_box(im.size, (30, 38, 30 + bw, 38 + h), r, 18, 140, 0))
+        body = _rounded((bw, h), r, (27, 31, 28, 255))
+        ImageDraw.Draw(body).rounded_rectangle([2, 2, bw - 3, h - 3], r - 2, outline=LIME + (255,), width=5)
+        im.alpha_composite(body, (30, 30))
+        if rows:
+            for part, x in rows:
+                im.alpha_composite(part, (30 + x, 30 + (h - part.height) // 2))
+        else:
+            top = max(chip.height, en.height)
+            x = 30 + (bw - (chip.width + 22 + en.width)) // 2
+            im.alpha_composite(chip, (x, 30 + 22 + (top - chip.height) // 2))
+            im.alpha_composite(en, (x + chip.width + 22, 30 + 22 + (top - en.height) // 2))
+            if ar is not None:
+                im.alpha_composite(ar, (30 + (bw - ar.width) // 2, 30 + 22 + top + 10))
+        return im
+
+    def _card_reply(self, gi, g, n):
+        """post: a pinned reply under the post — logo, @handle · pinned, the English, the Arabic in the post blue."""
+        L = self.L
+        cw, pad, av = 920, 30, 76
+        room = cw - 2 * pad - av - 24 - 12
+        who = self.handle or ("@" + self.brand_name.lower().replace(" ", "") if self.brand_name else "@news")
+        top = _tight_text(f"{who}  ·  pinned  ·  {gi + 1}/{n}", 26, (101, 119, 134), room, "SemiBold", INTER, pad=2)
+        en = _tight_text(g["text"], 58, INK, room, "Black", INTER, pad=4)
+        ar = _ink_crop(_ar_fit(g["ar"], 50, L["card_ar"], L["ar_font"], room), 6) if g["ar"] else None
+        blk = top.height + 10 + en.height + (8 + ar.height if ar is not None else 0)
+        ch = 2 * pad + max(av, blk)
+        im = Image.new("RGBA", (cw + 60, ch + 70), (0, 0, 0, 0))
+        im.alpha_composite(_shadow_box(im.size, (30, 40, 30 + cw, 40 + ch), 32, 18, 90, 0))
+        body = _rounded((cw, ch), 32, WHITE + (255,))
+        edge = Image.new("RGBA", (12, ch), FEED_BLUE + (255,))
+        body.paste(edge, (0, 0), _round_mask((cw, ch), 32).crop((0, 0, 12, ch)))
+        im.alpha_composite(body, (30, 30))
+        icon = self._icon(av)
+        x = 30 + 12 + pad
+        im.alpha_composite(icon, (x, 30 + pad))
+        x += av + 24
+        y = 30 + (ch - blk) // 2
+        im.alpha_composite(top, (x, y))
+        y += top.height + 10
+        im.alpha_composite(en, (x, y))
+        if ar is not None:
+            im.alpha_composite(ar, (x, y + en.height + 8))
+        return im
+
     def _draw_card(self, frame, t, a):
         kind = self.L["card"]
         for c in self.cards:
@@ -1043,6 +1409,13 @@ class NewsVideo:
             if al <= 0:
                 continue
             im = c["im"]
+            if kind == "notify":   # drops in from the top over frosted glass, goes back up
+                k = _back(tin / 0.42)
+                y = int(self.card_y - (1 - min(1.0, k)) * (im.height + 60) - out * (im.height + 60)
+                        + max(0.0, k - 1) * 30)
+                self._glass(frame, c["glass"], (W - im.width) // 2, y, al)
+                _comp(frame, _fade(im, al), (W - im.width) // 2, y)
+                continue
             if kind == "bar":      # slides in from the left, out to the left
                 k = _ease(tin / 0.35)
                 x0 = (W - im.width) // 2
@@ -1061,6 +1434,20 @@ class NewsVideo:
             x = (W - im.width) // 2
             y = self.card_y + (c["im"].height - im.height) // 2 + dy + int(out * 40)
             _comp(frame, _fade(im, al), x, y)
+
+    def _glass(self, frame, mask, x, y, al):
+        """Frosted glass: the picture under mask (placed at x, y) blurred — done at a sixth of the size (fast)."""
+        x0, y0, x1, y1 = max(0, x), max(0, y), min(W, x + mask.width), min(H, y + mask.height)
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return
+        part = frame.crop((x0, y0, x1, y1))
+        small = part.resize((max(1, part.width // 6), max(1, part.height // 6)), Image.BILINEAR)
+        part = small.filter(ImageFilter.GaussianBlur(3)).resize(part.size, Image.BILINEAR)
+        m = mask.crop((x0 - x, y0 - y, x1 - x, y1 - y))
+        if al < 0.999:
+            m = m.point(lambda v: int(v * al))
+        part.putalpha(m)
+        frame.alpha_composite(part, (x0, y0))
 
     # ---------------------------------------------------------- tv ticker
     def _layout_ticker(self):
@@ -1201,7 +1588,7 @@ class NewsVideo:
         cards = [_hex(c) for c in pal["cards"]]
         hi, deep = _hex(pal["hi"]), _hex(pal["deep"])
         self.f_ring = deep if _lum(deep) < 0.7 else self.accent
-        dark = self.static_bg is None or self.vertical          # the recap sits on a dark or a light veil
+        dark = self.dark or self.vertical                      # the recap sits on a dark or a light veil
         tcol = WHITE if dark else INK
         self.f_cols = cols = 1 if k <= 5 else 2
         per = -(-k // cols)
@@ -1487,18 +1874,19 @@ class NewsVideo:
 
     def _repeat_badge(self, k, n):
         """An accent pill: a circular 'replay' arrow + REPEAT k/n."""
-        txt = _tight_text(f"REPEAT {k}/{n}" if n > 1 else "REPEAT", 34, WHITE, 600, "Black", MONT, pad=4)
+        fg = self.on_accent
+        txt = _tight_text(f"REPEAT {k}/{n}" if n > 1 else "REPEAT", 34, fg, 600, "Black", MONT, pad=4)
         h = txt.height + 26
         icon = h - 22
         S = 4
         ic = Image.new("RGBA", (icon * S, icon * S), (0, 0, 0, 0))
         d = ImageDraw.Draw(ic)
         m, wdt = int(icon * S * 0.14), int(icon * S * 0.12)
-        d.arc([m, m, icon * S - m, icon * S - m], 40, 330, fill=WHITE + (255,), width=wdt)
+        d.arc([m, m, icon * S - m, icon * S - m], 40, 330, fill=fg + (255,), width=wdt)
         cx, cy, r = icon * S / 2, icon * S / 2, icon * S / 2 - m
         ax, ay = cx + r * math.cos(math.radians(330)), cy + r * math.sin(math.radians(330))
         tri = [(ax + wdt * 1.3, ay - wdt * 0.4), (ax - wdt * 0.9, ay - wdt * 1.4), (ax - wdt * 0.2, ay + wdt * 1.2)]
-        d.polygon(tri, fill=WHITE + (255,))
+        d.polygon(tri, fill=fg + (255,))
         ic = ic.resize((icon, icon), Image.LANCZOS)
         pill = _rounded((icon + txt.width + 52, h), h // 2, self.accent + (255,))
         pill.alpha_composite(ic, (20, 11))
@@ -1551,10 +1939,14 @@ class NewsVideo:
         frame = self._background(vf, end_p)
         if self.shade is not None:
             frame.alpha_composite(self.shade)
+        if self.L["header"] == "post" and not self.vertical:
+            self._draw_post(frame, t, 1 - end_p)
         if not self.vertical:
             self._draw_panel(frame, vf, t, end_p)
+        if self.L["wave"] and end_p < 1:
+            self._draw_wave(frame, t, 1 - end_p)
         if end_p > 0:
-            dark = self.static_bg is None or self.vertical
+            dark = self.dark or self.vertical
             veil = (6, 8, 14, int(150 * end_p)) if dark else (250, 249, 246, int(170 * end_p))
             frame.alpha_composite(Image.new("RGBA", (W, H), veil))
         if end_p < 1:
@@ -1596,6 +1988,10 @@ class NewsVideo:
         if k <= 0:
             return
         y, dy, al = self.head_y, int((1 - k) * -30), a * k
+        if L["header"] == "post":
+            if self.vertical:
+                self._draw_post(frame, t, a)
+            return
         d = ImageDraw.Draw(frame)
         if L["header"] == "masthead":   # newspaper: name between rules, a dateline, then the headline centred
             big = self.mast_im
@@ -1633,7 +2029,7 @@ class NewsVideo:
             pulse = 0.65 + 0.35 * math.sin(t * 5.5)
             tag = self.tag_im.copy()
             cy = tag.height // 2
-            ImageDraw.Draw(tag).ellipse([12, cy - 6, 24, cy + 6], fill=(255, 255, 255, int(255 * pulse)))
+            ImageDraw.Draw(tag).ellipse([12, cy - 6, 24, cy + 6], fill=self.on_accent + (int(255 * pulse),))
             _comp(frame, _fade(tag, al), W - 70 - tag.width, y + dy + 26)
         hy = y + 120
         if L["header"] == "box" and self.head_lines:   # tv: the headline on a dark box with an accent edge
@@ -1651,12 +2047,14 @@ class NewsVideo:
                 hy += self.head_lh
             return
         top = hy
+        centre = L["head_align"] == "center"
         for li, im in enumerate(self.head_lines):
             kk = _ease((t - 0.12 - 0.08 * li) / 0.5)
             if kk > 0:
-                _comp(frame, _fade(im, a * kk), 64 + int((1 - kk) * 40), hy - 8)
+                x = (W - im.width) // 2 if centre else 64 + int((1 - kk) * 40)
+                _comp(frame, _fade(im, a * kk), x, hy - 8 + (int((1 - kk) * 14) if centre else 0))
             hy += self.head_lh
-        if self.head_lines:   # an accent bar left of the headline
+        if self.head_lines and L["head_bar"]:   # an accent bar left of the headline
             kk = _ease((t - 0.1) / 0.45)
             d.rounded_rectangle([44, top + 4, 52, top + 4 + int((hy - top - 14) * kk)], 4,
                                 fill=self.accent + (int(255 * a),))
@@ -1687,8 +2085,9 @@ class NewsVideo:
                 mx.add(sg["o0"], sig[::-1].copy(), 0.07, pan)
         sig, pan = mx.whoosh(0.5)
         mx.add(0.02, sig, 0.08, pan)
-        for c in self.cards:
-            mx.add(c["t0"], mx.pop(), 0.10)
+        for c in self.cards:   # the notification banner comes with a soft chime, the other cards with a pop
+            mx.add(c["t0"], mx.chime() if self.L["card"] == "notify" else mx.pop(), 0.07 if self.L["card"] == "notify"
+                   else 0.10)
         if self.ending_on and self.recap == "flashcards":
             self._flash_sounds(mx)
         elif self.ending_on:

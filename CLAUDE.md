@@ -119,9 +119,14 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   one FFmpeg pipe per process; `chunk` = longer frame runs per render worker) with word-timed subtitles, key-word cards
   (word + Arabic) and a recap card. `news.words` = the English Texts word lines (`word | start | end | key | arabic`,
   times in the source video; `trim_start` / `trim_end` cut it). Looks `news.look` = parameter sets in `LOOKS` over
-  `_BASE` (`pop` default, `breaking`, `studio`, `tv`, `paper`): background / header / caption mode (`page` = 1-2 lines,
+  `_BASE` (`pop` default, `breaking`, `studio`, `tv`, `paper`, `notify`, `podcast`, `post`): background / header / caption mode (`page` = 1-2 lines,
   `pop` = 1-3 huge words, too-wide lines shrink: `fit`) / card variant (`_card_pop` / `_card_bar` / `_card_sticker` /
-  `_card_clip`) / ticker. Landscape = framed panel under the headline; vertical = full screen.
+  `_card_clip` / `_card_notify` / `_card_podpill` / `_card_reply`) / ticker. Landscape = framed panel under the
+  headline; vertical = full screen. A look may set its own `accent` (podcast lime, post blue; `on_accent` = text on
+  it), `dark` (the recap veil), `pill_col`/`pill_text`, `head_bar`/`head_align`. notify: backgrounds `glass`, banner at
+  the top (`NOTIFY_ROOM` moves the header down; frosted glass per frame = `_glass`); podcast: `wave` (`_layout_wave`
+  = speech envelope from the word timings, `_draw_wave`); post: `header="post"` (`_layout_post_head` /
+  `_layout_post_card` / `_draw_post`: card around the clip, `post_box` in `_place`, heart pops at each card).
   Layout `_place()` measures the cards (`card_box`, solid part) and the subtitle letters (`cap_band`) and only shrinks a
   landscape panel when the card would cross the safe line. Cards queue (never overlap), give way after `CARD_MIN`,
   are left out if they would come `CARD_LAG` late (the word stays in the subtitles + recap).
