@@ -73,6 +73,14 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   page (`_stack_k`: the largest k at which every row fits; `_place(..., two_lines=True)`, `_draw_row`).
   Excel: Type = list, one word per row with its Audio;
   `vocab_batch.merge_lists` joins rows into pages (`list_size` words, a new Page title starts a page)
+- `engine/word_posts.py` — 📃 Word list → 🖼️ Image posts: the same Excel sheet (`word_import.read_words`, optional
+  English meaning column = word key `def`: Definition / English meaning / التعريف) cut into posts (`pages`, 1-6 words,
+  sheet Title / Subtitle as for the videos) and drawn as square 1080x1080 PNGs (`post`, `make_posts` -> PNGs + zip in
+  OUT_DIR/word_posts_*). Menu `STYLES` = the highlight designs on one shared page (`_marked_page` + a `mark` per look):
+  Highlighter (marker band, `_multiply`, red-pen loop on the title) / Brush strokes (`_brush_stroke`) / Swoosh /
+  Washi tape / Soft highlight / Pencil; `MORE_STYLES` = 15 older card/poster designs, not in the menu. A word with a
+  `def` is one block (`_entry`: word + IPA, then the meaning wrapped even, `DEF_SIZE` / `DEF_MIN`). Colours = `DUOS`.
+  The user's taste: clean background, clear bold type, one realistic mark per word, not busy — never propose neon looks.
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
   (ElevenLabs word timings); words ink in as spoken (`vs`/`ve` per word), highlighted words get a marker swipe, fly
   into the Word Bank, Arabic writes in right-to-left. `text.words` = lines `word | start | end | highlighted | arabic`

@@ -169,14 +169,18 @@ def voice_clips(pages, data_dir, out_dir, progress=None):
 
 
 TEMPLATE_ROWS = [("English", "Arabic", "IPA (optional)", "Sample sentence (optional)", "Title (optional)",
-                  "Subtitle (optional)"),
+                  "Subtitle (optional)", "English meaning (optional)"),
                  ("Tip of the iceberg", "قمة جبل الجليد", "", "This scandal is only the tip of the iceberg.",
-                  "Idioms You Should Know", "تعابير يجب أن تعرفها"),
-                 ("Uphill battle", "معركة شاقة", "", "Getting the new law passed was an uphill battle."),
-                 ("Cornerstone", "حجر الزاوية", "/ˈkɔːnəstəʊn/", "Trust is the cornerstone of every friendship."),
-                 ("Litmus test", "المحك الحاسم", "", "The election will be a litmus test for the new party."),
-                 ("Wake-up call", "جرس الإنذار", "", "The storm was a wake-up call for the whole city."),
-                 ("Deadline", "موعد نهائي", "/ˈdedlaɪn/", "")]
+                  "Idioms You Should Know", "تعابير يجب أن تعرفها", "a small sign of a much bigger problem"),
+                 ("Uphill battle", "معركة شاقة", "", "Getting the new law passed was an uphill battle.", "", "",
+                  "a struggle against many difficulties"),
+                 ("Cornerstone", "حجر الزاوية", "/ˈkɔːnəstəʊn/", "Trust is the cornerstone of every friendship.",
+                  "", "", "the most important part of something"),
+                 ("Litmus test", "المحك الحاسم", "", "The election will be a litmus test for the new party.", "",
+                  "", "a test that shows clearly what something is really like"),
+                 ("Wake-up call", "جرس الإنذار", "", "The storm was a wake-up call for the whole city.", "", "",
+                  "an event that makes people notice a problem"),
+                 ("Deadline", "موعد نهائي", "/ˈdedlaɪn/", "", "", "", "the time by which something must be done")]
 
 
 def write_template(path):
@@ -194,7 +198,7 @@ def write_template(path):
         for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
             for c in row:
                 c.alignment = Alignment(horizontal="right", readingOrder=2)
-    for col, w in zip("ABCDEF", (28, 34, 24, 60, 30, 30)):
+    for col, w in zip("ABCDEFG", (28, 34, 24, 60, 30, 30, 50)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
     wb.save(path)

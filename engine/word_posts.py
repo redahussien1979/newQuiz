@@ -21,14 +21,15 @@ S = 1080  # square post
 IPA_FONT = os.path.join(ROOT, "fonts", "NotoSans-Bold.ttf")
 AMIRI = _font("Amiri", "Amiri-Bold.ttf")
 
-STYLES = [("Cards", "cards"), ("Flashcard grid", "grid"), ("Table", "table"), ("Notebook", "notebook"),
-          ("Minimal", "minimal"), ("Chalkboard", "chalk"), ("Poster", "poster"), ("Glass", "glass"),
-          ("Bento", "bento"), ("Swiss", "swiss"), ("Dictionary", "dictionary"), ("Chat", "chat"),
-          ("Sticky notes", "sticky"), ("Neo-brutal", "brutal"), ("Aurora", "aurora"),
-          ("Highlighter", "highlighter"), ("Brush strokes", "brush"), ("Swoosh", "swoosh"),
-          ("Washi tape", "tape"), ("Soft highlight", "soft"), ("Pencil", "pencil"), ("Neon", "neon"),
-          ("Focus", "focus")]
-DEFAULT_STYLE = "cards"
+# the app's menu: the highlight designs (clean page, clear type, one real-looking mark per word)
+STYLES = [("Highlighter", "highlighter"), ("Brush strokes", "brush"), ("Swoosh", "swoosh"), ("Washi tape", "tape"),
+          ("Soft highlight", "soft"), ("Pencil", "pencil")]
+# more designs, kept for later (post() draws them too)
+MORE_STYLES = [("Cards", "cards"), ("Flashcard grid", "grid"), ("Table", "table"), ("Notebook", "notebook"),
+               ("Minimal", "minimal"), ("Chalkboard", "chalk"), ("Poster", "poster"), ("Glass", "glass"),
+               ("Bento", "bento"), ("Swiss", "swiss"), ("Dictionary", "dictionary"), ("Chat", "chat"),
+               ("Sticky notes", "sticky"), ("Neo-brutal", "brutal"), ("Aurora", "aurora")]
+DEFAULT_STYLE = "highlighter"
 DEFAULT_PALETTE = "navy_juice"
 
 
@@ -1340,52 +1341,6 @@ def _draw_pencil(page, pal, handle, n, of):
     return _marked_page(page, handle, n, of, dict(bg=_paper, ink=_INK, grey=_GREY, mark=mark, behind=True))
 
 
-def _draw_neon(page, pal, handle, n, of):
-    """Neon sign on a dark wall: every word glows in the set's accent, the Arabic in a soft light colour."""
-    dk, ac, ac2 = _tones(pal)
-    glow = ac if _lum(ac) > 0.2 else _mix(ac, (255, 255, 255), 0.4)
-    glow2 = ac2 if ac2 != ac else _mix(glow, (255, 255, 255), 0.3)
-
-    def bg():
-        base = _mix(dk, (0, 0, 0), 0.82)
-        fr = _blob_bg(base, [(540, 420, 520, _mix(dk, (255, 255, 255), 0.12), 0.8)], blur=200)
-        return _grain(fr, 3)
-
-    def mark(fr, word, x, y, j):
-        m = _padded_alpha_im(word, 40)
-        for r, k in ((22, 0.55), (9, 0.85), (3, 0.9)):
-            fr.alpha_composite(_colored(m.filter(ImageFilter.GaussianBlur(r)), glow, k), (int(x - 30 - 40),
-                                                                                          int(y - 30 - 40)))
-
-    return _marked_page(page, handle, n, of, dict(bg=bg, ink=(255, 255, 255), grey=(170, 170, 186),
-                                                  ar_ink=_mix(glow2, (255, 255, 255), 0.55), mark=mark, behind=True,
-                                                  rule=_mix(dk, (0, 0, 0), 0.6)))
-
-
-def _padded_alpha_im(im, pad):
-    m = Image.new("L", (im.width + 2 * pad, im.height + 2 * pad), 0)
-    m.paste(im.split()[3], (pad, pad))
-    return m
-
-
-def _draw_focus(page, pal, handle, n, of):
-    """Camera-focus corner brackets around every word, in the set's accent: clean, modern, no fill."""
-    dk, ac, ac2 = _tones(pal)
-    col = _strong(dk, ac, ac2, (255, 255, 255), 4.0)
-
-    def mark(fr, word, x, y, j):
-        d = ImageDraw.Draw(fr)
-        px = 14
-        x0, y0, x1, y1 = x - px, y - 9, x + _vis_w(word) + px, y + _h(word) + 9
-        arm, wd = min(24, (y1 - y0) * 0.38), 6
-        for (cx, cy, sx, sy) in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
-            d.line([(cx, cy + sy * arm), (cx, cy), (cx + sx * arm, cy)], fill=col, width=wd, joint="curve")
-
-    return _marked_page(page, handle, n, of, dict(bg=lambda: Image.new("RGBA", (S, S), (255, 255, 255, 255)),
-                                                  ink=_INK, grey=_GREY, mark=mark, behind=False, under=12,
-                                                  rule=(238, 238, 242)))
-
-
 def _font_px(im, txt, font=PLAYFAIR, weight="Bold"):
     """The font size a fitted text image was drawn at (its height against the same text drawn at 100 px)."""
     ref = _t(font, txt, 100, (0, 0, 0), weight)
@@ -1472,7 +1427,7 @@ _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebo
          "bento": _draw_bento, "swiss": _draw_swiss, "dictionary": _draw_dictionary, "chat": _draw_chat,
          "sticky": _draw_sticky, "brutal": _draw_brutal, "aurora": _draw_aurora,
          "highlighter": _draw_highlighter, "brush": _draw_brush, "swoosh": _draw_swoosh, "tape": _draw_tape,
-         "soft": _draw_soft, "pencil": _draw_pencil, "neon": _draw_neon, "focus": _draw_focus}
+         "soft": _draw_soft, "pencil": _draw_pencil}
 
 
 def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1):
@@ -1484,3 +1439,44 @@ def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=
     pg = dict(title=page.get("title", ""), sub=page.get("sub", ""), words=words)
     fn = _DRAW.get(style, _DRAW[DEFAULT_STYLE])
     return fn(pg, palette if palette in DUOS else DEFAULT_PALETTE, handle or "", n, of).convert("RGB")
+
+
+# ---------------------------------------------------------------- a whole sheet -> posts
+POST_MAX = 6  # words on one post
+
+
+def pages(words, per=4, title="", subtitle=""):
+    """The sheet's words (word_import.read_words) cut in order into posts of `per` words. A post takes the sheet's
+    Title / Subtitle in effect at its first word, else the ones typed in the app; {n} = the post number."""
+    per = max(1, min(POST_MAX, int(per or 4)))
+    out = []
+    for k in range(0, len(words), per):
+        chunk = words[k:k + per]
+        n = str(len(out) + 1)
+        t = chunk[0].get("title") or title or ""
+        st = (chunk[0].get("sub") if chunk[0].get("title") else "") or subtitle or ""
+        out.append(dict(title=t.replace("{n}", n), sub=st.replace("{n}", n),
+                        words=[dict(en=w["en"], ar=w["ar"], ipa=w.get("ipa", ""),
+                                    **({"def": w["def"]} if w.get("def") else {})) for w in chunk]))
+    return out
+
+
+def make_posts(pgs, out_dir, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", progress=None,
+               stop=None):
+    """Every page as post_NN.png in out_dir + all of them in one .zip -> (png paths, zip path)."""
+    import zipfile
+    os.makedirs(out_dir, exist_ok=True)
+    paths = []
+    for k, pg in enumerate(pgs, 1):
+        if stop:
+            stop()
+        path = os.path.join(out_dir, f"post_{k:02d}.png")
+        post(pg, style, palette, handle, k, len(pgs)).save(path, optimize=True)
+        paths.append(path)
+        if progress:
+            progress(k / len(pgs), f"Post {k} of {len(pgs)}")
+    zpath = os.path.join(out_dir, "posts.zip")
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+        for p_ in paths:
+            z.write(p_, os.path.basename(p_))
+    return paths, zpath
