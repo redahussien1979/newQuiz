@@ -86,6 +86,9 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `_FONT` (`use_fonts`) and `_t` swaps every design font for the pair's English / Arabic one (by `is_rtl`).
   `post(..., layout="side"|"stack")` (`LAYOUTS`, kept in `_OPT`): Stacked = `_stacked_rows` in `_marked_page`
   (word centred, meaning under it). Torn paper (`_draw_torn`, `_torn_band`, `_glow_pill`) is always stacked.
+  Sizes: English and Arabic each get ONE page-wide size of their own — stacked `_fit_stack` (biggest that fits the
+  width, then both scaled to the height; the Arabic is not cut twice), side by side `_two_sizes` (English <= ~60 %,
+  Arabic the rest, kept >= 0.9 of the English); groups evenly spaced (gap inside / between), block centred.
   Several Arabic meanings in one Excel cell split by `|` -> word `alts` (`word_import.read_words`; videos get them
   joined with "، "); `_ar_img` writes them on one line with a bar between them.
   The user's taste: clean background, clear bold type, one realistic mark per word, not busy — never propose neon looks.

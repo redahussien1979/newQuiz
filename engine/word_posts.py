@@ -1244,15 +1244,19 @@ def _marked_page(page, handle, n, of, look):
     if _OPT.get("layout") == "stack":  # centred: the word, its IPA / English meaning, then the Arabic under it
         return _stacked_rows(fr, d, page, words, look, handle, n, of, top0)
 
-    def texts(w, k):
-        return _row_texts(w, k, f_en, f_ar, ink, grey, ar_ink, en=66, ipa=32, ar=60, w_en="Bold", w_ar="Bold",
-                          head_gap=look.get("under", 0) * k)
+    under = look.get("under", 0)
 
-    k = _common(words, lambda w, k: _sbs_need(*texts(w, k), xr - xl - 20, rh * 0.78), k_max=1.15)
+    def en_of(w, k):
+        return _entry(w, k, f_en, ink, grey, 66, 32, "Bold", "l", (xr - xl) * 0.56, None, under * k)
+
+    def ar_of(w, k):
+        return _ar_img(w, 66 * k, ar_ink, f_ar, "Bold")  # Arabic letters look smaller: a bigger base size
+
+    ke, ka = _two_sizes(words, en_of, ar_of, xr - xl - 20, rh)
     for j, w in enumerate(words):
         cy = top + j * rh + rh / 2
-        e, i, a = texts(w, k)
-        word = _t(f_en, w["en"], 66 * k, ink, "Bold")
+        (e, i), a = en_of(w, ke), ar_of(w, ka)
+        word = _t(f_en, w["en"], 66 * ke, ink, "Bold")
         ytop = cy - (_h(e) + (8 + _h(i) if i is not None else 0)) / 2
         if look.get("under") and i is None and not w.get("def"):  # nothing under the word: it sits at the centre
             ytop = cy - _h(e) / 2
@@ -1268,47 +1272,105 @@ def _marked_page(page, handle, n, of, look):
     return fr
 
 
+def _shrink(ratio, k_max):
+    """The largest k <= k_max with ratio(k) <= 1 (ratio grows with k)."""
+    k = k_max
+    for _ in range(16):
+        r = ratio(k)
+        if r <= 1:
+            break
+        k *= max(0.7, 1 / r) * 0.995
+    return k
+
+
+def _two_sizes(words, en_of, ar_of, width, rh, k_max=1.3):
+    """Side by side: ONE size for every English entry and ONE (its own) for every Arabic meaning, so a long meaning
+    does not shrink the words. The English takes what it needs (at most ~60 % of the row), the Arabic the rest; if
+    the Arabic would end up much smaller than the English, the English gives way a little."""
+    def en_w(k):
+        return max(max(_vis_w(e), _vis_w(i) if i is not None else 0) for e, i in (en_of(w, k) for w in words))
+
+    def en_h(k):
+        return max(_h(e) + (8 + _h(i) if i is not None else 0) for e, i in (en_of(w, k) for w in words))
+
+    ke = _shrink(lambda k: max(en_w(k) / (width * 0.62), en_h(k) / (rh * 0.8)), k_max)
+    ka = ke
+    for _ in range(8):
+        room = width - en_w(ke) - 44
+        ka = _shrink(lambda k: max(max(_vis_w(ar_of(w, k)) for w in words) / max(60, room),
+                                   max(_h(ar_of(w, k)) for w in words) / (rh * 0.62)), ke * 1.05)
+        if ka >= ke * 0.9:
+            break
+        ke *= 0.95
+    return ke, ka
+
+
+def _fit_stack(words, make_en, make_ar, avail_w, avail_h, gap_in, gap_out, k_max=1.4):
+    """Stacked: the English parts of every word (make_en(w, k) -> images, top to bottom) at ONE size, every Arabic
+    meaning (make_ar(w, k)) at its own ONE size, each as big as the width allows; then both scaled down together
+    until all the groups (gap_in inside a group, gap_out between groups) fit avail_h.
+    -> (groups, group heights, total height, gaps scale)."""
+    ke = _shrink(lambda k: max(_vis_w(p) for w in words for p in make_en(w, k) if p is not None) / avail_w, k_max)
+    ka = _shrink(lambda k: max(_vis_w(make_ar(w, k)) for w in words) / avail_w, ke * 1.05)
+
+    def measure(f):  # the Arabic only shrinks with the height when it is bigger than the English (no double cut)
+        kaf = min(ka, ke * 1.05 * f)
+        groups = [[p for p in make_en(w, ke * f) if p is not None] + [make_ar(w, kaf)] for w in words]
+        g = ke * f
+        hs = [sum(_h(p) for p in grp) + gap_in * g * (len(grp) - 1) for grp in groups]
+        return groups, hs, sum(hs) + gap_out * g * (len(groups) - 1)
+
+    f = 1.0
+    for _ in range(14):
+        groups, hs, total = measure(f)
+        if total <= avail_h:
+            break
+        f *= max(0.7, avail_h / total) * 0.995
+    return groups, hs, total, ke * f
+
+
 def _stacked_rows(fr, d, page, words, look, handle, n, of, top0):
-    """The Stacked arrangement of _marked_page: every word centred with its meaning under it, the mark on the word,
-    a short rule between the words."""
+    """The Stacked arrangement of _marked_page: every word centred with its meaning tight under it, the groups
+    evenly spaced and the block centred in the room left under the title; the mark on the word, a short rule
+    half-way between two groups."""
     ink, grey, ar_ink = look["ink"], look["grey"], look.get("ar_ink", look["ink"])
     f_en, f_ar = look.get("f_en", INTER), look.get("f_ar", VAZIR)
     behind = look.get("behind", True)
-    wrap = S - 260
-    ys, rh = _rows(top0, S - 96, len(words), 0)
+    wrap = 620  # a centred English meaning reads best in two balanced lines, not one long one
+    under = look.get("under", 0)
 
-    def texts(w, k):
-        return _row_texts(w, k, f_en, f_ar, ink, grey, ar_ink, en=70, ipa=32, ar=62, w_en="Bold", w_ar="Bold",
-                          align="c", wrap=wrap, head_gap=look.get("under", 0) * k)
+    def make_en(w, k):
+        e, i = _entry(w, k, f_en, ink, grey, 72, 32, "Bold", "c", wrap, None, under * k)
+        if under and i is None and not w.get("def"):  # a mark under a lone word needs its room too
+            e = _pad_below(e, under * k)
+        return [e, i]
 
-    def height(e, i, a):
-        return _h(e) + (6 + _h(i) if i is not None else 0) + 12 + _h(a)
+    def make_ar(w, k):
+        return _ar_img(w, 70 * k, ar_ink, f_ar, "Bold")
 
-    k = _common(words, lambda w, k: (lambda e, i, a: (
-        max(_vis_w(e), _vis_w(i) if i is not None else 0, _vis_w(a)) / (S - 200), height(e, i, a) / (rh * 0.84)))(
-        *texts(w, k)), k_max=1.25)
-    for j, (yy, w) in enumerate(zip(ys, words)):
-        e, i, a = texts(w, k)
-        y = yy + rh / 2 - height(e, i, a) / 2
-        word = _t(f_en, w["en"], 70 * k, ink, "Bold")
+    room0, room1 = top0 + 6, S - 104
+    gap_in, gap_out = 12, 46
+    groups, hs, total, k = _fit_stack(words, make_en, make_ar, S - 220, room1 - room0, gap_in, gap_out, k_max=1.3)
+    y = room0 + (room1 - room0 - total) / 2
+    for j, (w, g, gh) in enumerate(zip(words, groups, hs)):
+        if j:  # a short rule half-way between the groups
+            ry = y - gap_out * k / 2
+            d.rounded_rectangle([S / 2 - 34, ry - 1.5, S / 2 + 34, ry + 1.5], 2, fill=look.get("rule", (222, 220, 212)))
+        word = _t(f_en, w["en"], 72 * k, ink, "Bold")
         line_w = _vis_w(word)
         if w.get("def") and w.get("ipa"):  # _entry put the IPA beside the word: the word starts further left
             ipa_im = _ipa(w["ipa"], 32 * k, grey)
             if _vis_w(word) + _vis_w(ipa_im) <= wrap * 1.1:
                 line_w += int(14 * k) + _vis_w(ipa_im)
-        wx = S / 2 - line_w / 2
         if behind:
-            look["mark"](fr, word, wx, y, j)
-        _put(fr, e, S / 2, y + _h(e) / 2, "c")
-        if not behind:
-            look["mark"](fr, word, wx, y, j)
-        y += _h(e) + 6
-        if i is not None:
-            _put(fr, i, S / 2, y + _h(i) / 2, "c")
-            y += _h(i) + 6
-        _put(fr, a, S / 2, y + 6 + _h(a) / 2, "c")
-        if j:
-            d.rounded_rectangle([S / 2 - 40, yy - 2, S / 2 + 40, yy + 2], 2, fill=look.get("rule", (225, 223, 216)))
+            look["mark"](fr, word, S / 2 - line_w / 2, y, j)
+        yy = y
+        for p in g:
+            _put(fr, p, S / 2, yy + _h(p) / 2, "c")
+            if p is g[0] and not behind:
+                look["mark"](fr, word, S / 2 - line_w / 2, y, j)
+            yy += _h(p) + gap_in * k
+        y += gh + gap_out * k
     _footer(fr, handle, n, of, grey, font=INTER)
     return fr
 
@@ -1719,67 +1781,62 @@ def _glow_pill(fr, cx, cy, w, h, col=GLOW, alpha=0.92):
 
 
 def _draw_torn(page, pal, handle, n, of):
-    """Torn blue paper at the top and bottom, light paper in between; every word centred with its meaning right
+    """Torn blue paper at the top and bottom, light paper in between; every word centred with its meaning tight
     under it: the English in a strong serif, the Arabic big and red, each line on a soft glow; several meanings
-    split by blue bars."""
+    split by blue bars. The groups are evenly spaced at the biggest size that fits, the block centred."""
     blue = _page_tones(pal)[1] if pal in MONO_SETS else TORN
     rng = np.random.default_rng(3)
     yy, xx = np.mgrid[0:S, 0:S].astype(np.float32)
     v = np.clip(((xx - S / 2) / (S * 0.7)) ** 2 + ((yy - S / 2) / (S * 0.6)) ** 2, 0, 1)
-    base = np.array((244, 246, 248), np.float32) * (1 - 0.07 * v[..., None]) + rng.normal(0, 1.4, (S, S, 1))
+    base = np.array((245, 247, 249), np.float32) * (1 - 0.06 * v[..., None]) + rng.normal(0, 1.2, (S, S, 1))
     fr = Image.fromarray(np.clip(base, 0, 255).astype(np.uint8)).convert("RGBA")
-    has_t = bool(page.get("title"))
-    top_h = 150 if has_t and page.get("sub") else 118 if has_t else 70
+    has_t, has_s = bool(page.get("title")), bool(page.get("sub"))
+    top_h = 150 if has_t and has_s else 112 if has_t or has_s else 64
+    bot_h = 78
     top = _torn_band(top_h, blue, seed=11)
-    bot = _torn_band(84, blue, seed=12).transpose(Image.FLIP_TOP_BOTTOM)
+    bot = _torn_band(bot_h, blue, seed=12).transpose(Image.FLIP_TOP_BOTTOM)
     for band, y0 in ((top, 0), (bot, S - bot.height)):
-        sh = _colored(band.split()[3].filter(ImageFilter.GaussianBlur(7)), (0, 0, 0), 0.32)
+        sh = _colored(band.split()[3].filter(ImageFilter.GaussianBlur(7)), (0, 0, 0), 0.3)
         fr.alpha_composite(sh, (0, y0 + (6 if y0 == 0 else -6)))
         fr.alpha_composite(band, (0, y0))
     white = (255, 255, 255)
-    y = 26
+    y = 24
     if has_t:
-        t = _fit_one(lambda s_: _t(LITERATA, page["title"], s_, white, "ExtraBold"), 64, S - 160)
+        t = _fit_one(lambda s_: _t(LITERATA, page["title"], s_, white, "ExtraBold"), 60, S - 160)
         _put(fr, t, S / 2, y + _h(t) / 2, "c")
-        y += _h(t) + 10
-    if page.get("sub"):
-        st = _fit_one(lambda s_: _t(TAJAWAL, page["sub"], s_, white, "Bold"), 36, S - 160)
+        y += _h(t) + 12
+    if has_s:
+        st = _fit_one(lambda s_: _t(TAJAWAL, page["sub"], s_, white, "Bold"), 34, S - 160)
         _put(fr, st, S / 2, y + _h(st) / 2, "c")
     words = page["words"]
-    area0, area1 = top_h + 44, S - 84 - 34
-    ys, rh = _rows(area0, area1, len(words), 0)
-    sep = _mix(blue, (255, 255, 255), 0.15)
+    sep = _mix(blue, (0, 0, 0), 0.08)
+    ink, red = (24, 22, 20), TORN_RED
 
-    def texts(w, k):
-        e, i = _entry(w, k, LITERATA, (22, 20, 18), (96, 100, 108), en=78, ipa=30, w_en="ExtraBold", align="c",
-                      wrap=S - 240)
-        a = _ar_img(w, 70 * k, TORN_RED, TAJAWAL, "Black", sep)
-        return e, i, a
+    def make_en(w, k):
+        return list(_entry(w, k, LITERATA, ink, (96, 100, 108), en=80, ipa=30, w_en="ExtraBold", align="c",
+                           wrap=640))
 
-    def need(w, k):
-        e, i, a = texts(w, k)
-        h = _h(e) + (6 + _h(i) if i is not None else 0) + 14 + _h(a)
-        return max(_vis_w(e), _vis_w(i) if i is not None else 0, _vis_w(a)) / (S - 200), h / (rh * 0.84)
+    def make_ar(w, k):
+        return _ar_img(w, 82 * k, red, TAJAWAL, "Black", sep)
 
-    k = _common(words, need, k_max=1.2)
-    for yy0, w in zip(ys, words):
-        e, i, a = texts(w, k)
-        h = _h(e) + (6 + _h(i) if i is not None else 0) + 14 + _h(a)
-        y = yy0 + rh / 2 - h / 2
-        _glow_pill(fr, S / 2, y + _h(e) / 2, _vis_w(e) + 40, _h(e) + 18)
-        _put(fr, e, S / 2, y + _h(e) / 2, "c")
-        y += _h(e) + 6
-        if i is not None:
-            _put(fr, i, S / 2, y + _h(i) / 2, "c")
-            y += _h(i) + 6
-        y += 8
-        _glow_pill(fr, S / 2, y + _h(a) / 2, _vis_w(a) + 40, _h(a) + 16)
-        _put(fr, a, S / 2, y + _h(a) / 2, "c")
-    by = S - 40
+    room0, room1 = top_h + 50, S - bot_h - 50
+    gap_in, gap_out, px, py = 14, 40, 22, 9  # px / py = the glow's padding around the letters
+    groups, hs, total, k = _fit_stack(words, make_en, make_ar, S - 200, room1 - room0 - 2 * py, gap_in, gap_out,
+                                      k_max=1.3)
+    y = room0 + (room1 - room0 - total) / 2
+    for g, gh in zip(groups, hs):
+        yy = y
+        for p in g:
+            if p is g[0] or p is g[-1]:  # a glow behind the word and behind the meaning (not the IPA / English meaning)
+                _glow_pill(fr, S / 2, yy + _h(p) / 2, _vis_w(p) + 2 * px, _h(p) + 2 * py)
+            _put(fr, p, S / 2, yy + _h(p) / 2, "c")
+            yy += _h(p) + gap_in * k
+        y += gh + gap_out * k
+    by = S - 36
     if handle:
-        _put(fr, _t(INTER, handle, 30, white, "Bold"), 60, by)
+        _put(fr, _t(INTER, handle, 28, white, "Bold"), 60, by)
     if of > 1:
-        _put(fr, _t(INTER, f"{n} / {of}", 30, white, "Bold"), S - 60, by, "r")
+        _put(fr, _t(INTER, f"{n} / {of}", 28, white, "Bold"), S - 60, by, "r")
     return fr
 
 
