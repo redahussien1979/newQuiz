@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 from .core import ROOT, text_img_in
-from .list_designs import (ALEXANDRIA, BALOO, DMSANS, DUOS, FREDOKA, INTER, LALEZAR, LITERATA, LOBSTER, MONTSERRAT,
+from .list_designs import (ALEXANDRIA, BALOO, DMSANS, DUOS, FREDOKA, INTER, LITERATA, MONTSERRAT,
                            PLEX_B, POPPINS_B, POPPINS_K, RUBIK, TAJAWAL, VAZIR, _circle_mask, _colored, _font,
                            _grad_text, _lum, _mix, _round_mask, _vis_w)
 from .word_list import MESSIRI, PATRICK, PLAYFAIR, RUQAA
@@ -1016,15 +1016,12 @@ def _draw_aurora(page, pal, handle, n, of):
 
 
 # ---------------------------------------------------------------- hand-made marks (highlighter, red pen, brush)
-RED_PEN = (214, 40, 40)
-MARKER = (255, 214, 10)
-_NEWS = ("market council weather report minister city budget school league museum harbour station festival "
-         "science record election island energy village history garden railway theatre summer winter "
-         "national local daily morning evening review").split()
+RED_PEN = (205, 32, 38)
+MARKER = (255, 222, 40)
 
 
 def _smooth_noise(n, rng, scale, octaves=((24, 1.0), (7, 0.35))):
-    """1-D value noise of length n (smooth bumps every `period` samples), amplitude `scale`."""
+    """1-D value noise of length n (a bump every `period` samples), amplitude about `scale`."""
     out = np.zeros(n, np.float32)
     for period, amp in octaves:
         k = max(2, n // period + 2)
@@ -1033,262 +1030,206 @@ def _smooth_noise(n, rng, scale, octaves=((24, 1.0), (7, 0.35))):
     return out * scale
 
 
-def _marker_band(w, h, col=MARKER, seed=1, alpha=0.88):
-    """A highlighter stroke: flat ink with slightly wavy edges, slanted chisel ends and faint streaks."""
+def _multiply(fr, mark, x, y):
+    """Lay a transparent mark on the frame like ink on paper (multiply): what is under it stays visible."""
+    x, y = int(round(x)), int(round(y))
+    box = (max(0, x), max(0, y), min(S, x + mark.width), min(S, y + mark.height))
+    if box[2] <= box[0] or box[3] <= box[1]:
+        return
+    m = mark.crop((box[0] - x, box[1] - y, box[2] - x, box[3] - y))
+    base = np.array(fr.crop(box).convert("RGB"), np.float32)
+    rgb = np.array(m.convert("RGB"), np.float32)
+    a = np.array(m.split()[3], np.float32)[..., None] / 255
+    out = base * (1 - a) + base * rgb / 255 * a
+    fr.paste(Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).convert("RGBA"), box[:2])
+
+
+def _marker_band(w, h, col=MARKER, seed=1):
+    """One pass of a chisel-tip highlighter: even ink, straight edges with a faint wobble, square-ish ends a little
+    darker where the pen paused, a very slight tilt."""
     rng = np.random.default_rng(seed)
-    w, h = int(w), int(h)
-    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    top = 2 + _smooth_noise(w, rng, 2.5)
-    bot = h - 3 + _smooth_noise(w, rng, 2.5)
-    slant = h * 0.35
-    left = 4 + (yy / h) * slant * 0.5 + rng.uniform(0, 4)
-    right = w - 6 - (1 - yy / h) * slant * 0.5 - rng.uniform(0, 4)
-    m = (yy >= top[None, :]) & (yy <= bot[None, :]) & (xx >= left) & (xx <= right)
-    streak = 0.86 + 0.14 * np.repeat(rng.uniform(0, 1, (h, 1)), w, axis=1)
-    a = Image.fromarray((m * streak * alpha * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(0.8))
-    return _colored(a, col)
+    pad = 6
+    W_, H_ = int(w) + 2 * pad, int(h) + 2 * pad
+    yy, xx = np.mgrid[0:H_, 0:W_].astype(np.float32)
+    top = pad + _smooth_noise(W_, rng, 1.2, ((90, 1.0),))
+    bot = pad + h + _smooth_noise(W_, rng, 1.2, ((90, 1.0),))
+    left, right = pad + rng.uniform(0, 3), pad + w - rng.uniform(0, 3)
+    tilt = (yy - H_ / 2) * 0.18  # chisel tip: the ends slant a little
+    inside = (yy >= top[None, :]) & (yy <= bot[None, :]) & (xx >= left + tilt) & (xx <= right + tilt)
+    ink = np.full((H_, W_), 0.8, np.float32)
+    ink += 0.18 * np.exp(-((xx - left) / 9) ** 2) + 0.14 * np.exp(-((xx - right) / 9) ** 2)  # pen paused
+    ink += 0.04 * np.repeat(rng.uniform(-1, 1, (H_, 1)), W_, axis=1)  # faint lengthwise streaks
+    a = Image.fromarray((inside * np.clip(ink, 0, 1) * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(0.6))
+    im = _colored(a, col)
+    return im.rotate(rng.uniform(-0.8, 0.8), Image.BICUBIC, expand=True), pad
 
 
-def _pen_path(pts, width, col, size, s=3):
-    """A pen stroke through `pts` with a width that swells in the middle and thins at both ends."""
-    big = Image.new("L", (int(size[0] * s), int(size[1] * s)), 0)
+def _pen_circle(w, h, col=RED_PEN, width=5.0, seed=2):
+    """A quick hand-drawn loop around a w x h box: a smooth ellipse a little more than one turn, starting and
+    ending thin, the second pass slightly wider."""
+    rng = np.random.default_rng(seed)
+    pad = int(width * 2 + 16)
+    W_, H_ = int(w + 2 * pad), int(h + 2 * pad)
+    s = 4
+    big = Image.new("L", (W_ * s, H_ * s), 0)
     d = ImageDraw.Draw(big)
-    n = len(pts)
-    for j in range(n - 1):
-        t = j / max(1, n - 2)
-        wd = width * (0.45 + 0.55 * math.sin(math.pi * min(1, max(0, t))) ** 0.5)
-        (x0, y0), (x1, y1) = pts[j], pts[j + 1]
-        d.line([(x0 * s, y0 * s), (x1 * s, y1 * s)], fill=255, width=max(1, int(wd * s)))
-        r = wd * s / 2
-        d.ellipse([x1 * s - r, y1 * s - r, x1 * s + r, y1 * s + r], fill=255)
-    return _colored(big.resize((int(size[0]), int(size[1])), Image.LANCZOS), col)
-
-
-def _pen_circle(w, h, col=RED_PEN, width=6, seed=2):
-    """A hand-drawn loop around a w x h box: a little more than one turn, wobbling, ends overlapping."""
-    rng = np.random.default_rng(seed)
-    pad = width * 2 + 10
-    W_, H_ = w + 2 * pad, h + 2 * pad
-    cx, cy = W_ / 2, H_ / 2
-    a0 = math.radians(rng.uniform(150, 210))
-    turns = 1.12
-    ph = rng.uniform(0, 6.3, 2)
-    pts = []
-    for j in range(140):
-        t = j / 139
-        a = a0 + t * turns * 2 * math.pi
-        grow = 1 + 0.06 * t  # the second pass runs a bit wider, as a real hand does
-        rx = w / 2 * grow * (1 + 0.03 * math.sin(3 * a + ph[0]))
-        ry = h / 2 * grow * (1 + 0.05 * math.sin(2 * a + ph[1]))
-        pts.append((cx + rx * math.cos(a) + t * 6, cy + ry * math.sin(a) - t * 3))
-    return _pen_path(pts, width, col, (W_, H_)), pad
-
-
-def _pen_underline(w, col=RED_PEN, width=5, seed=3):
-    """Two quick pen strokes under a word, the second slightly shorter and tilted."""
-    rng = np.random.default_rng(seed)
-    H_ = 34
-    im = Image.new("RGBA", (int(w) + 20, H_), (0, 0, 0, 0))
-    for k, (x0, x1, y0, y1) in enumerate(((4, w + 8, 10, 14), (w * 0.12, w + 2, 22, 19))):
-        bow = rng.uniform(-3, 3)
-        pts = [(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + bow * math.sin(math.pi * t)) for t in np.linspace(0, 1, 40)]
-        im.alpha_composite(_pen_path(pts, width * (1 - 0.15 * k), col, im.size))
-    return im
-
-
-def _newsprint(seed=5):
-    """Old newspaper paper: warm off-white, blurred columns of print and headlines, grain and a soft vignette."""
-    rng = np.random.default_rng(seed)
-    fr = Image.new("RGBA", (S, S), (236, 230, 216, 255))
-    ink = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    y = -20
-    while y < S:
-        if rng.uniform() < 0.25:  # a headline
-            txt = " ".join(rng.choice(_NEWS, 2)).title()
-            im = _t(LITERATA, txt, int(rng.integers(48, 70)), (40, 36, 30), "Bold")
-            ink.alpha_composite(im, (int(rng.integers(-60, S // 2)), int(y)))
-            y += im.height - 20
-            continue
-        for c in range(4):  # body text in columns
-            line = " ".join(rng.choice(_NEWS, 4))
-            im = _t(LITERATA, line, 26, (60, 55, 46), "Regular")
-            ink.alpha_composite(im.crop((0, 0, min(im.width, 280), im.height)), (c * 280 - 10, int(y)))
-        y += 34
-    yy, xx = np.mgrid[0:S, 0:S].astype(np.float32)
-    centre = np.clip(((xx - S / 2) / (S * 0.52)) ** 2 + ((yy - S / 2) / (S * 0.56)) ** 2, 0, 1)
-    a = np.array(ink.split()[3], np.float32) * (0.06 + 0.22 * centre)  # the print fades out behind the words
-    ink.putalpha(Image.fromarray(a.astype(np.uint8)))
-    fr.alpha_composite(ink.filter(ImageFilter.GaussianBlur(3.2)))
-    v = 1 - 0.28 * np.clip(((xx - S / 2) / (S * 0.75)) ** 2 + ((yy - S / 2) / (S * 0.75)) ** 2, 0, 1)
-    arr = np.array(fr.convert("RGB"), np.float32) * v[..., None]
-    arr += rng.normal(0, 5, (S, S, 1))
-    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
+    a0 = math.radians(rng.uniform(195, 225))
+    tilt = math.radians(rng.uniform(-4, 2))
+    n = 220
+    prev = None
+    for j in range(n):
+        t = j / (n - 1)
+        a = a0 + t * 2.15 * math.pi
+        grow = 1 + 0.07 * t
+        rx, ry = w / 2 * grow, h / 2 * grow
+        px, py = rx * math.cos(a), ry * math.sin(a)
+        x = W_ / 2 + px * math.cos(tilt) - py * math.sin(tilt) + 4 * t
+        y = H_ / 2 + px * math.sin(tilt) + py * math.cos(tilt) - 2 * t
+        wd = width * (0.35 + 0.65 * min(1, t / 0.12, (1 - t) / 0.18))  # thin start and lifted end
+        if prev:
+            d.line([(prev[0] * s, prev[1] * s), (x * s, y * s)], fill=255, width=max(1, int(wd * s)))
+            r = wd * s / 2
+            d.ellipse([x * s - r, y * s - r, x * s + r, y * s + r], fill=255)
+        prev = (x, y)
+    m = big.resize((W_, H_), Image.LANCZOS)
+    return _colored(m, col, 0.93), pad
 
 
 def _draw_highlighter(page, pal, handle, n, of):
-    """Newspaper paper; the title and every word under a yellow highlighter, the last title word and the numbers
-    circled in red pen, the meanings underlined in red pen."""
+    """Clean paper, crisp dark type, one highlighter stroke behind each word and a single red-pen loop on the title."""
     dk, ac, ac2 = _tones(pal)
-    fr = _newsprint()
-    ink, grey = (22, 20, 18), (88, 82, 72)
-    marker = MARKER if _lum(ac) < 0.45 or _contrast(ac, (236, 230, 216)) < 1.15 else ac
-    y = 56
+    paper = (251, 249, 244)
+    rng = np.random.default_rng(4)
+    arr = np.full((S, S, 3), paper, np.float32) + rng.normal(0, 1.6, (S, S, 1))
+    fr = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
+    ink, grey = (20, 20, 24), (105, 105, 112)
+    marker = ac if (_lum(ac) > 0.45 and _contrast(ac, ink) > 7) else MARKER  # a light accent works as a marker
+    y = 70
     if page.get("title"):
-        words_t = page["title"].split()
-        t = _fit_one(lambda s_: _t(PLAYFAIR, page["title"], s_, ink, "Bold"), 104, S - 220)
+        parts = page["title"].split()
+        t = _fit_one(lambda s_: _t(INTER, page["title"], s_, ink, "ExtraBold"), 92, S - 220)
         x0 = S / 2 - _vis_w(t) / 2
-        lit = t
-        if len(words_t) > 1:  # highlight the first words, circle the last one
-            px = _font_px(t, page["title"])
-            lit = _t(PLAYFAIR, " ".join(words_t[:-1]), px, ink, "Bold")
-            last = _t(PLAYFAIR, words_t[-1], px, ink, "Bold")
-            circ, pad = _pen_circle(_vis_w(last) + 34, _h(t) + 26, RED_PEN, 6, seed=4)
+        if len(parts) > 1:
+            px = _font_px(t, page["title"], INTER, "ExtraBold")
+            last = _t(INTER, parts[-1], px, ink, "ExtraBold")
+            circ, pad = _pen_circle(_vis_w(last) + 30, _h(t) + 30, RED_PEN, 5.5, seed=4)
             lx = x0 + _vis_w(t) - _vis_w(last)
-            fr.alpha_composite(circ, (int(lx - 17 - pad), int(y - 13 - pad)))
-        band = _marker_band(_vis_w(lit) + 40, _h(t) * 0.62, marker, seed=7)
-        fr.alpha_composite(band, (int(x0 - 20), int(y + _h(t) * 0.42)))
-        _put(fr, t, S / 2, y + _h(t) / 2, "c")
-        y += _h(t) + 34
-    d = ImageDraw.Draw(fr)
+            _put(fr, t, S / 2, y + _h(t) / 2, "c")
+            fr.alpha_composite(circ, (int(lx - 15 - pad), int(y - 15 - pad)))
+        else:
+            band, pad = _marker_band(_vis_w(t) + 30, _h(t) * 0.55, marker, seed=7)
+            _multiply(fr, band, x0 - 15 - pad, y + _h(t) * 0.5 - pad)
+            _put(fr, t, S / 2, y + _h(t) / 2, "c")
+        y += _h(t) + 30
     if page.get("sub"):
-        st = _fit_one(lambda s_: _t(VAZIR, page["sub"], s_, ink, "Medium"), 34, S - 260)
-        d.line([(120, y), (S - 120, y)], fill=ink, width=2)
-        _put(fr, st, S / 2, y + 14 + _h(st) / 2, "c")
-        y += _h(st) + 28
-        d.line([(120, y), (S - 120, y)], fill=ink, width=2)
-        y += 10
+        st = _fit_one(lambda s_: _t(VAZIR, page["sub"], s_, grey, "Medium"), 36, S - 240)
+        _put(fr, st, S / 2, y + _h(st) / 2, "c")
+        y += _h(st) + 16
     words = page["words"]
-    xl, xr = 150, S - 80
-    top0 = y + 18
+    xl, xr = 140, S - 80
+    top0 = y + 24
     ys, rh = _rows(top0, S - 96, len(words), 0)
-    rh = min(rh, 200)
+    rh = min(rh, 190)
     top = (top0 + S - 96) / 2 - rh * len(words) / 2
 
     def texts(w, k):
-        return _row_texts(w, k, PLAYFAIR, AMIRI, ink, grey, ink, en=66, ipa=32, ar=62)
+        return _row_texts(w, k, INTER, VAZIR, ink, grey, ink, en=66, ipa=32, ar=60, w_en="Bold", w_ar="Bold")
 
-    k = _common(words, lambda w, k: _sbs_need(*texts(w, k), xr - xl, rh * 0.8), k_max=1.15)
+    k = _common(words, lambda w, k: _sbs_need(*texts(w, k), xr - xl - 20, rh * 0.78), k_max=1.15)
+    d = ImageDraw.Draw(fr)
     for j, w in enumerate(words):
         cy = top + j * rh + rh / 2
         e, i, a = texts(w, k)
-        word = _t(PLAYFAIR, w["en"], 66 * k, ink, "Bold")
+        word = _t(INTER, w["en"], 66 * k, ink, "Bold")
         hh = _h(e) + (8 + _h(i) if i is not None else 0)
         ytop = cy - hh / 2
-        band = _marker_band(_vis_w(word) + 26, _h(word) * 0.66, marker, seed=20 + j)
-        fr.alpha_composite(band, (int(xl - 13), int(ytop + _h(word) * 0.4)))
+        band, pad = _marker_band(_vis_w(word) + 24, _h(word) * 0.62, marker, seed=20 + j)
+        _multiply(fr, band, xl - 12 - pad, ytop + _h(word) * 0.46 - pad)  # behind the lower part of the letters
         _side_by_side(fr, e, i, a, xl, xr, cy)
-        ul = _pen_underline(_vis_w(a), RED_PEN, 4, seed=40 + j)
-        fr.alpha_composite(ul, (int(xr - _vis_w(a) - 6), int(cy + _h(a) / 2 - 4)))
-        num = _t(PLAYFAIR, str(j + 1), 40, ink, "Bold")
-        circ, pad = _pen_circle(58, 58, RED_PEN, 4, seed=60 + j)
-        fr.alpha_composite(circ, (int(84 - 29 - pad), int(cy - 29 - pad)))
-        _put(fr, num, 84, cy, "c")
-    _footer(fr, handle, n, of, grey, font=PLAYFAIR)
+        _put(fr, _t(INTER, f"{j + 1:02d}", 26, grey, "SemiBold"), 70, cy)
+        if j:
+            d.line([(70, cy - rh / 2), (S - 70, cy - rh / 2)], fill=(232, 230, 224), width=2)
+    _footer(fr, handle, n, of, grey, font=INTER)
     return fr
 
 
-def _font_px(im, txt):
-    """The font size a fitted text image was drawn at (its height ratio to the text drawn at 100 px)."""
-    ref = _t(PLAYFAIR, txt, 100, (0, 0, 0), "Bold")
+def _font_px(im, txt, font=PLAYFAIR, weight="Bold"):
+    """The font size a fitted text image was drawn at (its height against the same text drawn at 100 px)."""
+    ref = _t(font, txt, 100, (0, 0, 0), weight)
     return max(12, int(round(100 * _h(im) / max(1, _h(ref)))))
 
 
-_WATER = [(250, 168, 20), (240, 82, 110), (86, 70, 64), (12, 140, 236), (34, 170, 120), (130, 90, 220)]
+# deep watercolours: white bold type stays readable on all of them
+_WATER = [(214, 100, 0), (206, 46, 92), (84, 66, 60), (0, 108, 196), (0, 128, 94), (104, 64, 196)]
 
 
 def _brush_stroke(w, h, col, seed=1):
-    """A dry-brush watercolour stroke: bristle tracks with ragged, frayed ends, wavy edges, pale streaks and
-    darker pooled edges."""
+    """One flat-brush watercolour stroke from left to right. Every bristle is a lengthwise track with its own ink
+    load: the stroke starts with a full, slightly rounded dab, the bristles run out one by one towards the end
+    (dry brush), the edges wobble gently and pool a little darker, the wash is a little uneven."""
     rng = np.random.default_rng(seed)
     w, h = int(w), int(h)
+    rows = np.arange(h, dtype=np.float32)
+    v = (rows - h / 2) / (h / 2)  # -1 top .. 1 bottom
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    top = h * 0.08 + _smooth_noise(w, rng, h * 0.05, ((60, 1.0), (9, 0.4)))
-    bot = h * 0.92 + _smooth_noise(w, rng, h * 0.05, ((60, 1.0), (9, 0.4)))
-    # bristles: every 2 px row starts / ends at its own place (frayed ends), a few strands reach much further
-    rows = np.arange(h)
-    s0 = w * 0.05 + np.abs(_smooth_noise(h, rng, w * 0.035, ((14, 1.0), (3, 0.6))))
-    e0 = w * 0.95 - np.abs(_smooth_noise(h, rng, w * 0.04, ((14, 1.0), (3, 0.6))))
-    long_ = rng.uniform(0, 1, h) < 0.08
-    s0[long_] -= rng.uniform(0, w * 0.04, long_.sum())
-    e0[long_] += rng.uniform(0, w * 0.04, long_.sum())
-    m = ((xx >= s0[rows][:, None]) & (xx <= e0[rows][:, None]) &
-         (yy >= top[None, :]) & (yy <= bot[None, :])).astype(np.float32)
-    # dry-brush gaps: thin pale streaks that start near the ends of the stroke
-    for _ in range(int(h / 22)):
-        r = int(rng.integers(int(h * 0.15), int(h * 0.85)))
-        th = int(rng.integers(1, 3))
-        fade = rng.uniform(0.35, 0.7)
-        if rng.uniform() < 0.5:
-            m[r:r + th, :int(rng.uniform(w * 0.08, w * 0.18))] *= fade
-        else:
-            m[r:r + th, int(rng.uniform(w * 0.84, w * 0.93)):] *= fade
-    a = Image.fromarray((np.clip(m, 0, 1) * 255).astype(np.uint8))
-    da = ImageDraw.Draw(a)
-    for _ in range(10):  # paint specks flicked off near both ends
-        x = rng.uniform(0, w * 0.06) if rng.uniform() < 0.5 else rng.uniform(w * 0.94, w)
-        y, r = rng.uniform(h * 0.15, h * 0.85), rng.uniform(1.2, 3.2)
-        da.ellipse([x - r, y - r, x + r, y + r], fill=230)
-    a = a.filter(ImageFilter.GaussianBlur(0.9))
-    am = np.array(a, np.float32) / 255
-    edge = np.clip(am - np.array(a.filter(ImageFilter.GaussianBlur(5)), np.float32) / 255, 0, 1)
-    tex = 0.95 + 0.05 * _smooth_noise(w, rng, 1.0, ((150, 1.0),))[None, :] * np.ones((h, 1))  # gentle wash
-    rgb = np.array(col, np.float32)[None, None, :] * (tex[..., None] * (1 - 0.35 * edge[..., None]))
-    out = np.dstack([np.clip(rgb, 0, 255), (am * 255)[..., None]]).astype(np.uint8)
-    return Image.fromarray(out, "RGBA")
-
-
-def _soft_shadow_text(fr, im, x, y, anchor="l"):
-    sh = _colored(im.split()[3].filter(ImageFilter.GaussianBlur(4)), (0, 0, 0), 0.35)
-    _put(fr, sh, x + 2, y + 3, anchor)
-    _put(fr, im, x, y, anchor)
+    # the stroke body: centre line bends slightly, thickness breathes
+    centre = h / 2 + _smooth_noise(w, rng, h * 0.03, ((w // 2 or 1, 1.0),))
+    half = h * 0.44 + _smooth_noise(w, rng, h * 0.025, ((w // 3 or 1, 1.0), (40, 0.4)))
+    body = np.abs(yy - centre[None, :]) <= half[None, :]
+    # bristles: a start a little rounded (the dab), an end where each bristle runs dry at its own place
+    load = np.clip(rng.normal(1.0, 0.12, h), 0.55, 1.15)
+    load = np.convolve(load, np.ones(3) / 3, "same")  # neighbouring bristles carry similar ink
+    start = w * 0.03 * (v ** 2) + np.abs(_smooth_noise(h, rng, w * 0.022, ((6, 1.0), (2, 0.5))))
+    dry = w * (0.80 + 0.12 * load + 0.05 * (1 - v ** 2)) + _smooth_noise(h, rng, w * 0.02, ((4, 1.0),))
+    fade_len = w * (0.05 + 0.08 * rng.uniform(0, 1, h))
+    ink = np.clip((dry[:, None] - xx) / fade_len[:, None], 0, 1) * (xx >= start[:, None])
+    ink *= load[:, None]
+    # dry-brush texture: towards the end the paper shows through between bristles
+    tail = np.clip((xx - w * 0.7) / (w * 0.3), 0, 1)
+    ink *= 1 - tail * (rng.uniform(0, 1, (h, 1)) < 0.25) * 0.8
+    a = np.clip(ink * body, 0, 1)
+    am = Image.fromarray((a * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(0.6))
+    a = np.array(am, np.float32) / 255
+    edge = np.clip(a - np.array(am.filter(ImageFilter.GaussianBlur(6)), np.float32) / 255, 0, 1)
+    wash = 1 + 0.06 * _smooth_noise(w, rng, 1.0, ((180, 1.0),))[None, :]
+    rgb = np.array(col, np.float32)[None, None, :] * (wash[..., None] * (1 - 0.3 * edge[..., None]))
+    alpha = np.clip(a * 0.97, 0, 1)
+    return Image.fromarray(np.dstack([np.clip(rgb, 0, 255), alpha[..., None] * 255]).astype(np.uint8), "RGBA")
 
 
 def _draw_brush(page, pal, handle, n, of):
-    """Watercolour brush strokes on paper, one colour per word; a script title, white type on the strokes."""
+    """Watercolour brush strokes on a clean light page, one deep colour per word, bold white type."""
     dk, ac, ac2 = _tones(pal)
-    rng = np.random.default_rng(9)
-    arr = np.full((S, S, 3), (250, 248, 243), np.float32) + rng.normal(0, 3, (S, S, 1))
-    fr = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
-    y = 46
+    fr = Image.new("RGBA", (S, S), (250, 250, 248, 255))
+    y = 54
     if page.get("title"):
-        t = _fit_one(lambda s_: _t(LOBSTER, page["title"], s_, dk, "Regular"), 100, S - 180)
+        t = _fit_one(lambda s_: _t(POPPINS_K, page["title"], s_, dk, "Black"), 80, S - 180)
         _put(fr, t, S / 2, y + _h(t) / 2, "c")
         y += _h(t) + 16
     if page.get("sub"):
-        st = _fit_one(lambda s_: _t(ALEXANDRIA, page["sub"], s_, _mix(dk, (255, 255, 255), 0.3), "SemiBold"), 36,
+        st = _fit_one(lambda s_: _t(ALEXANDRIA, page["sub"], s_, _mix(dk, (255, 255, 255), 0.35), "SemiBold"), 36,
                       S - 200)
         _put(fr, st, S / 2, y + _h(st) / 2, "c")
         y += _h(st) + 12
     words = page["words"]
-    top0 = y + 14
-    gap = 12
+    top0 = y + 18
+    gap = 16
     ys, rh = _rows(top0, S - 92, len(words), gap)
-    rh = min(rh, 175)
+    rh = min(rh, 170)
     top = (top0 + S - 92) / 2 - (rh * len(words) + gap * (len(words) - 1)) / 2
-    x0, x1 = 34, S - 34
-    xl, xr = x0 + (x1 - x0) * 0.1, x1 - (x1 - x0) * 0.1
+    x0, x1 = 40, S - 40
+    xl, xr = x0 + 56, x1 - 120  # the dry end on the right needs more room
     white = (255, 255, 255)
-    soft = (255, 255, 255)
 
     def texts(w, k):
-        return _row_texts(w, k, LOBSTER, LALEZAR, white, soft, white, en=70, ipa=30, ar=62, w_en="Regular",
-                          w_ar="Regular", f_def=MONTSERRAT)
+        return _row_texts(w, k, POPPINS_B, ALEXANDRIA, white, (255, 255, 255), white, en=62, ipa=30, ar=58,
+                          w_en="Bold", w_ar="Bold", f_def=MONTSERRAT)
 
-    k = _common(words, lambda w, k: _sbs_need(*texts(w, k), xr - xl, rh * 0.74), k_max=1.15)
+    k = _common(words, lambda w, k: _sbs_need(*texts(w, k), xr - xl, rh * 0.72), k_max=1.15)
     for j, w in enumerate(words):
         yy = top + j * (rh + gap)
-        col = _WATER[j % len(_WATER)]
-        stroke = _brush_stroke(x1 - x0, rh, col, seed=100 + j)
-        fr.alpha_composite(stroke, (int(x0), int(yy)))
-        e, i, a = texts(w, k)
-        cy = yy + rh / 2
-        if i is not None:
-            hh = _h(e) + 6 + _h(i)
-            _soft_shadow_text(fr, e, xl, cy - hh / 2 + _h(e) / 2)
-            _soft_shadow_text(fr, i, xl, cy + hh / 2 - _h(i) / 2)
-        else:
-            _soft_shadow_text(fr, e, xl, cy)
-        _soft_shadow_text(fr, a, xr, cy, "r")
+        fr.alpha_composite(_brush_stroke(x1 - x0, rh, _WATER[j % len(_WATER)], seed=100 + j), (int(x0), int(yy)))
+        _side_by_side(fr, *texts(w, k), xl, xr, yy + rh / 2)
     _footer(fr, handle, n, of, _mix(dk, (255, 255, 255), 0.35), font=ALEXANDRIA)
     return fr
 
