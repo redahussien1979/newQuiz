@@ -103,7 +103,8 @@ DUOS = {"navy_juice": ((37, 26, 102), (229, 245, 24)),
         "teal_gold_coral": ((10, 54, 64), (255, 196, 76), (255, 128, 108)),
         "plum_pink_yellow": ((46, 22, 64), (255, 120, 184), (255, 218, 70)),
         "charcoal_lime_sky": ((32, 36, 42), (182, 236, 92), (110, 200, 255)),
-        "forest_mustard_cream": ((20, 50, 40), (236, 178, 58), (247, 236, 214))}
+        "forest_mustard_cream": ((20, 50, 40), (236, 178, 58), (247, 236, 214)),
+        "sky_page": ((26, 26, 28), (125, 198, 243), (183, 196, 204))}
 DUO_CHOICES = [("Navy + juice", "navy_juice"), ("Navy + orange", "navy_orange"), ("Gray blue + yellow", "slate_yellow"),
                ("Dark green + butter yellow", "darkgreen_butter"), ("Deep blue + warm yellow", "deepblue_warmyellow"),
                ("Deep blue + vivid yellow", "deepblue_vividyellow"), ("Teal + beige", "teal_beige"),
@@ -114,7 +115,8 @@ DUO_CHOICES = [("Navy + juice", "navy_juice"), ("Navy + orange", "navy_orange"),
                ("Wine + blush", "wine_blush"), ("Indigo + lime", "indigo_lime"),
                ("Navy · red · gold", "navy_red_gold"), ("Midnight · coral · aqua", "midnight_coral_aqua"),
                ("Deep teal · gold · coral", "teal_gold_coral"), ("Plum · pink · yellow", "plum_pink_yellow"),
-               ("Charcoal · lime · sky", "charcoal_lime_sky"), ("Forest · mustard · cream", "forest_mustard_cream")]
+               ("Charcoal · lime · sky", "charcoal_lime_sky"), ("Forest · mustard · cream", "forest_mustard_cream"),
+               ("Sky page · ink · grey", "sky_page")]
 DEFAULT_PALETTE = "navy_juice"
 OWN = "own"  # "the design's own colours": Editorial / Chalkboard use their own pickers, the others their first look
 OWN_LOOK = {"Bright": "navy_juice", "Glass": "violet", "Pop": "violet", "Spotlight": "violet",

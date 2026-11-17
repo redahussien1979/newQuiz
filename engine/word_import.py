@@ -4,7 +4,8 @@ The sheet is one word per row: English | Arabic | IPA (optional) | Sample senten
 highlighted, read with its own clip) | Title | Subtitle (optional: written once, they go on to the next pages until
 a new title; a page takes the one in effect at its first word). Headers are recognised in English or Arabic
 (English / Word, Arabic / Meaning, IPA / Pronunciation); without a header row the columns are A = English,
-B = Arabic, C = IPA. Any number of rows: `plan()` cuts them in order into pages of `per_page` words (one
+B = Arabic, C = IPA. An optional English meaning column (English meaning / Definition /
+التعريف) gives a word or idiom its meaning in English too (used by the image posts, word_posts.py). Any number of rows: `plan()` cuts them in order into pages of `per_page` words (one
 `type: list` item each) and the pages into videos of `per_video` pages (vocab.MAX_ITEMS); only the last page / video
 takes what is left. `voice_clips()` makes one clip per
 word with the ElevenLabs settings saved in DATA_DIR/elevenlabs.json (cached in DATA_DIR/tts, so a word costs
@@ -17,8 +18,12 @@ from . import elevenlabs as el
 from .batch import read_table
 from .templates.vocab import LIST_MAX, MAX_ITEMS, clean_ipa, items_text, list_item
 
-_HEAD = {"en": ("english", "word", "words", "wordphrase", "phrase", "term", "الكلمة", "الانجليزية", "الإنجليزية",
-                "انجليزي", "إنجليزي", "كلمة"),
+_HEAD = {  # "def" first: "English meaning" must not be taken for the English word column
+         "def": ("englishmeaning", "meaninginenglish", "meaningenglish", "englishdefinition", "definition",
+                 "explanation", "enmeaning", "التعريف", "الشرح", "المعنىبالإنجليزية", "المعنىبالانجليزية",
+                 "المعنىبالانكليزية"),
+         "en": ("english", "word", "words", "wordphrase", "phrase", "term", "idiom", "idioms", "expression",
+                "التعبير", "المصطلح", "الكلمة", "الانجليزية", "الإنجليزية", "انجليزي", "إنجليزي", "كلمة"),
          "ar": ("arabic", "meaning", "translation", "arabicmeaning", "المعنى", "العربية", "الترجمة", "عربي", "معنى"),
          "ipa": ("ipa", "pronunciation", "phonetic", "phonetics", "النطق"),
          "ex": ("samplesentence", "sentence", "example", "examplesentence", "sample", "usage", "مثال", "جملة",
@@ -65,6 +70,7 @@ def read_words(path, sheet=None):
     for r, row in enumerate(rows[start:], start + 1):
         cell = lambda k: _clean(row[cols[k]]) if k in cols and cols[k] < len(row) else ""  # noqa: E731
         en, ar, ipa, ex = cell("en"), cell("ar"), cell("ipa"), cell("ex")
+        dfn = cell("def")
         if cell("title"):
             title, sub = cell("title"), cell("sub")  # a new title starts with its own subtitle (or none)
         elif cell("sub"):
@@ -74,7 +80,14 @@ def read_words(path, sheet=None):
         if not en or not ar:
             problems.append(f"row {r}: {'the English word' if not en else 'the Arabic meaning'} is empty — left out")
             continue
-        words.append(dict(en=en, ar=ar, ipa=clean_ipa(ipa) if ipa else "", ex=ex, row=r, title=title, sub=sub))
+        # several meanings in one cell, split by "|" (متين | مُعمّر | دائم): kept apart for the image posts (`alts`),
+        # joined with an Arabic comma for the videos (a "|" would split the editor's word line)
+        raw = row[cols["ar"]] if "ar" in cols and cols["ar"] < len(row) else ""
+        alts = [p for p in (_clean(x) for x in str(raw or "").split("|")) if p]
+        if len(alts) > 1:
+            ar = "، ".join(alts)
+        words.append(dict(en=en, ar=ar, ipa=clean_ipa(ipa) if ipa else "", ex=ex, row=r, title=title, sub=sub,
+                          **({"def": dfn} if dfn else {}), **({"alts": alts} if len(alts) > 1 else {})))
     return words, problems
 
 
@@ -162,14 +175,18 @@ def voice_clips(pages, data_dir, out_dir, progress=None):
 
 
 TEMPLATE_ROWS = [("English", "Arabic", "IPA (optional)", "Sample sentence (optional)", "Title (optional)",
-                  "Subtitle (optional)"),
+                  "Subtitle (optional)", "English meaning (optional)"),
                  ("Tip of the iceberg", "قمة جبل الجليد", "", "This scandal is only the tip of the iceberg.",
-                  "Idioms You Should Know", "تعابير يجب أن تعرفها"),
-                 ("Uphill battle", "معركة شاقة", "", "Getting the new law passed was an uphill battle."),
-                 ("Cornerstone", "حجر الزاوية", "/ˈkɔːnəstəʊn/", "Trust is the cornerstone of every friendship."),
-                 ("Litmus test", "المحك الحاسم", "", "The election will be a litmus test for the new party."),
-                 ("Wake-up call", "جرس الإنذار", "", "The storm was a wake-up call for the whole city."),
-                 ("Deadline", "موعد نهائي", "/ˈdedlaɪn/", "")]
+                  "Idioms You Should Know", "تعابير يجب أن تعرفها", "a small sign of a much bigger problem"),
+                 ("Uphill battle", "معركة شاقة", "", "Getting the new law passed was an uphill battle.", "", "",
+                  "a struggle against many difficulties"),
+                 ("Cornerstone", "حجر الزاوية", "/ˈkɔːnəstəʊn/", "Trust is the cornerstone of every friendship.",
+                  "", "", "the most important part of something"),
+                 ("Litmus test", "المحك الحاسم", "", "The election will be a litmus test for the new party.", "",
+                  "", "a test that shows clearly what something is really like"),
+                 ("Wake-up call", "جرس الإنذار", "", "The storm was a wake-up call for the whole city.", "", "",
+                  "an event that makes people notice a problem"),
+                 ("Deadline", "موعد نهائي", "/ˈdedlaɪn/", "", "", "", "the time by which something must be done")]
 
 
 def write_template(path):
@@ -187,7 +204,7 @@ def write_template(path):
         for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
             for c in row:
                 c.alignment = Alignment(horizontal="right", readingOrder=2)
-    for col, w in zip("ABCDEF", (28, 34, 24, 60, 30, 30)):
+    for col, w in zip("ABCDEFG", (28, 34, 24, 60, 30, 30, 50)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
     wb.save(path)

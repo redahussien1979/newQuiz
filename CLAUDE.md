@@ -73,6 +73,33 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   page (`_stack_k`: the largest k at which every row fits; `_place(..., two_lines=True)`, `_draw_row`).
   Excel: Type = list, one word per row with its Audio;
   `vocab_batch.merge_lists` joins rows into pages (`list_size` words, a new Page title starts a page)
+- `engine/word_posts.py` — 📃 Word list → 🖼️ Image posts: the same Excel sheet (`word_import.read_words`, optional
+  English meaning column = word key `def`: Definition / English meaning / التعريف) cut into posts (`pages`, 1-6 words,
+  sheet Title / Subtitle as for the videos) and drawn as square 1080x1080 PNGs (`post`, `make_posts` -> PNGs + zip in
+  OUT_DIR/word_posts_*). Menu `STYLES` = the highlight designs on one shared page (`_marked_page` + a `mark` per look):
+  Highlighter (marker band, `_multiply`, red-pen loop on the title) / Brush strokes (`_brush_stroke`) / Swoosh /
+  Washi tape / Soft highlight / Pencil + the page-icon designs Document / Sky cards + Swiss / Chat (`_doc_shape`,
+  `_page_tones`); colour set `sky_page` (black · sky #7DC6F3 · line grey) is in `MONO_SETS`: the rainbow designs use
+  its one colour for every word (`_mono`); `MORE_STYLES` = 13 older card/poster designs, not in the menu. A word with a
+  `def` is one block (`_entry`: word + IPA, then the meaning wrapped even, `DEF_SIZE` / `DEF_MIN`). Colours = `DUOS`.
+  Fonts: `FONT_SETS` = 10 English + Arabic pairs (`FONT_CHOICES`, 0 = the design's own); `post(..., fonts=k)` sets
+  `_FONT` (`use_fonts`) and `_t` swaps every design font for the pair's English / Arabic one (by `is_rtl`);
+  `en_font` / `ar_font` = any family of the font library (`font_menus` from `fonts.families`) for one language.
+  `post(..., layout="side"|"stack")` (`LAYOUTS`, kept in `_OPT`): Stacked = `_stacked_rows` in `_marked_page`
+  (word centred, meaning under it). Torn paper / Clouds = `_poster` (look dict: background with room, English /
+  Arabic font, colour, size, glow, bar, handle place) — `_draw_torn` (`_torn_band`), `_draw_clouds`
+  (`_cloud_band`: sky frame, red English on a pink glow, heavy black Arabic, red bars, handle under the words).
+  `_ar_img(..., max_w)`: a too-wide meaning wraps to 2 centred lines — between two meanings first (one per line),
+  else between words, never next to a bar (`_bar_line` = meanings on one line with bars).
+  `post(..., hl=key)` (`WORD_HIGHLIGHTS`, `_OPT["hl"]`): the poster designs' mark on the English word (`_word_mark`:
+  glow / marker / brush / pill / swoosh / underline / box / circle / none; room above/under via `_pad_above` /
+  `_pad_below`; colours from the look dict: accent, marker, pen, wash, pill).
+  Sizes: English and Arabic each get ONE page-wide size of their own — stacked `_fit_stack` (biggest that fits the
+  width, then both scaled to the height; the Arabic is not cut twice), side by side `_two_sizes` (English <= ~60 %,
+  Arabic the rest, kept >= 0.9 of the English); groups evenly spaced (gap inside / between), block centred.
+  Several Arabic meanings in one Excel cell split by `|` -> word `alts` (`word_import.read_words`; videos get them
+  joined with "، "); `_ar_img` writes them on one line with a bar between them.
+  The user's taste: clean background, clear bold type, one realistic mark per word, not busy — never propose neon looks.
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
   (ElevenLabs word timings); words ink in as spoken (`vs`/`ve` per word), highlighted words get a marker swipe, fly
   into the Word Bank, Arabic writes in right-to-left. `text.words` = lines `word | start | end | highlighted | arabic`
