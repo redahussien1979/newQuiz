@@ -1316,7 +1316,8 @@ WL_IMPORT_HELP = ("**📥 Words from Excel** — one word per row: **English | A
                   "a new one; a page takes the one in effect at its first word. Any number of words: they are cut "
                   "into pages, and the pages into videos — or into 🖼️ image posts (below). An **English "
                   "meaning** column (English meaning / Definition / التعريف) puts the meaning in English on the "
-                  "posts too, under the word or idiom.")
+                  "posts too, under the word or idiom. Several Arabic meanings in one cell: split them with "
+                  "**|** (متين | مُعمّر | دائم) — the posts show a bar between them.")
 
 POSTS_HELP = ("Every page of the sheet as a **square 1080×1080 picture** (Instagram / Facebook post, carousel slide): "
               "the words, their IPA, English meaning (if the sheet has one) and Arabic meaning. Uses the sheet, tab "
@@ -1370,12 +1371,17 @@ def wl_import_ui():
                                        "brush-pen underline · Washi tape · Soft highlight = app-style tint · "
                                        "Pencil = coloured-pencil shading · Document = the words on one page "
                                        "(page-icon look) · Sky cards = light-blue rows (best with Sky page colours) · "
-                                       "Swiss = strict grid, big numbers · Chat = a messaging-app screen")
+                                       "Swiss = strict grid, big numbers · Chat = a messaging-app screen · "
+                                       "Torn paper = blue torn edges, red Arabic, centred")
             p_pal = gr.Dropdown(DUO_CHOICES, value=word_posts.DEFAULT_PALETTE, label="Colours",
                                 info="The title, marker / swoosh colour (a light accent is used as the marker)")
-        p_font = gr.Dropdown(word_posts.FONT_CHOICES, value=0, label="Fonts",
-                             info="10 ready English + Arabic pairs (all included, free to use) — or each design's "
-                                  "own fonts. The pronunciation (IPA) keeps its own font.")
+        with gr.Row():
+            p_font = gr.Dropdown(word_posts.FONT_CHOICES, value=0, label="Fonts",
+                                 info="10 ready English + Arabic pairs (all included, free to use) — or each design's "
+                                      "own fonts. The pronunciation (IPA) keeps its own font.")
+            p_lay = gr.Dropdown(word_posts.LAYOUTS, value="side", label="Arrangement",
+                                info="Highlight designs: side by side, or each word centred with its meaning under "
+                                     "it (Torn paper is always stacked)")
         with gr.Row():
             p_per = gr.Slider(1, word_posts.POST_MAX, value=4, step=1, label="Words per post")
             p_handle = gr.Textbox(label="Your handle (optional)", placeholder="@yourpage",
@@ -1389,7 +1395,7 @@ def wl_import_ui():
         p_zip = gr.DownloadButton("📦 Download all posts (.zip)", visible=False, variant="primary")
     return dict(sheet=sheet, tab=tab, per=per, pages=pages, title=title, sub=sub, voice=voice, info=info, part=part,
                 load=load, go=go, zip=zipb, files=files, p_style=p_style, p_pal=p_pal, p_per=p_per,
-                p_font=p_font, p_handle=p_handle, p_prev=p_prev, p_go=p_go, p_info=p_info, p_img=p_img, p_gal=p_gal, p_zip=p_zip)
+                p_font=p_font, p_lay=p_lay, p_handle=p_handle, p_prev=p_prev, p_go=p_go, p_info=p_info, p_img=p_img, p_gal=p_gal, p_zip=p_zip)
 
 
 def wire_wl_import(ui, pv, fields, items_box, audio_box):
@@ -1498,24 +1504,24 @@ def wire_wl_import(ui, pv, fields, items_box, audio_box):
             raise gr.Error("The sheet has no usable rows." + (f" First problem: {problems[0]}" if problems else ""))
         return word_posts.pages(words, per, title, sub), problems
 
-    def post_preview(sheet, tab, per, title, sub, style, pal, handle, font):
+    def post_preview(sheet, tab, per, title, sub, style, pal, handle, font, lay):
         pgs, problems = post_pages(sheet, tab, per, title, sub)
-        img = word_posts.post(pgs[0], style, pal, handle, 1, len(pgs), font)
+        img = word_posts.post(pgs[0], style, pal, handle, 1, len(pgs), font, lay)
         note = f"Post 1 of **{len(pgs)}**" + (f" · ⚠️ {len(problems)} row(s) left out: {problems[0]}" if problems else "")
         return gr.update(value=img, visible=True), note
 
-    def post_all(sheet, tab, per, title, sub, style, pal, handle, font, progress=gr.Progress()):
+    def post_all(sheet, tab, per, title, sub, style, pal, handle, font, lay, progress=gr.Progress()):
         pgs, problems = post_pages(sheet, tab, per, title, sub)
         out_dir = os.path.join(OUT_DIR, f"word_posts_{_stamp()}")
         paths, zpath = word_posts.make_posts(pgs, out_dir, style, pal, handle,
-                                             lambda x, d: progress(x, desc=d), fonts=font)
+                                             lambda x, d: progress(x, desc=d), fonts=font, layout=lay)
         n = len(paths)
         note = (f"✅ **{n} post{'s' if n != 1 else ''}** saved in `{out_dir}`"
                 + (f" · ⚠️ {len(problems)} row(s) left out: {problems[0]}" if problems else ""))
         return (gr.update(value=paths, visible=True), gr.update(value=zpath, visible=True), note,
                 gr.update(visible=False))
 
-    p_look = [ui["p_style"], ui["p_pal"], ui["p_handle"], ui["p_font"]]
+    p_look = [ui["p_style"], ui["p_pal"], ui["p_handle"], ui["p_font"], ui["p_lay"]]
     ui["p_prev"].click(post_preview, p_inputs + p_look, [ui["p_img"], ui["p_info"]])
     ui["p_go"].click(post_all, p_inputs + p_look, [ui["p_gal"], ui["p_zip"], ui["p_info"], ui["p_img"]])
 

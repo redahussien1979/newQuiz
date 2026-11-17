@@ -80,8 +80,14 @@ def read_words(path, sheet=None):
         if not en or not ar:
             problems.append(f"row {r}: {'the English word' if not en else 'the Arabic meaning'} is empty — left out")
             continue
+        # several meanings in one cell, split by "|" (متين | مُعمّر | دائم): kept apart for the image posts (`alts`),
+        # joined with an Arabic comma for the videos (a "|" would split the editor's word line)
+        raw = row[cols["ar"]] if "ar" in cols and cols["ar"] < len(row) else ""
+        alts = [p for p in (_clean(x) for x in str(raw or "").split("|")) if p]
+        if len(alts) > 1:
+            ar = "، ".join(alts)
         words.append(dict(en=en, ar=ar, ipa=clean_ipa(ipa) if ipa else "", ex=ex, row=r, title=title, sub=sub,
-                          **({"def": dfn} if dfn else {})))
+                          **({"def": dfn} if dfn else {}), **({"alts": alts} if len(alts) > 1 else {})))
     return words, problems
 
 

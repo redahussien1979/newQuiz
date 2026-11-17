@@ -24,7 +24,8 @@ AMIRI = _font("Amiri", "Amiri-Bold.ttf")
 # the app's menu: the highlight designs (clean page, clear type, one real-looking mark per word)
 STYLES = [("Highlighter", "highlighter"), ("Brush strokes", "brush"), ("Swoosh", "swoosh"), ("Washi tape", "tape"),
           ("Soft highlight", "soft"), ("Pencil", "pencil"), ("Document", "document"),
-          ("Sky cards", "skycards"), ("Swiss", "swiss"), ("Chat", "chat")]
+          ("Sky cards", "skycards"), ("Swiss", "swiss"), ("Chat", "chat"),
+          ("Torn paper", "torn")]
 # more designs, kept for later (post() draws them too)
 MORE_STYLES = [("Cards", "cards"), ("Flashcard grid", "grid"), ("Table", "table"), ("Notebook", "notebook"),
                ("Minimal", "minimal"), ("Chalkboard", "chalk"), ("Poster", "poster"), ("Glass", "glass"),
@@ -63,6 +64,9 @@ FONT_SETS = [
 ]
 FONT_CHOICES = [("Design's own fonts", 0)] + [(f"{k}. {name}", k) for k, (name, _, _) in enumerate(FONT_SETS, 1)]
 _FONT = {}  # the pair in use while a post is drawn: {"en": path, "ar": path}
+_OPT = {}   # other choices while a post is drawn: {"layout": "side" | "stack"}
+LAYOUTS = [("Side by side (English left · Arabic right)", "side"), ("Stacked (word, then its meaning under it)",
+                                                                     "stack")]
 
 
 def use_fonts(k):
@@ -263,10 +267,36 @@ def _entry(w, k, f_en, c_en, c_ipa, en=64, ipa=34, w_en="Bold", align="l", wrap=
     return _join([_pad_below(head, head_gap)] + [img(s) for s in lines], int(max(6, 12 * k)), align), None
 
 
+_GAP = "    "  # the room left between two meanings for the bar
+
+
+def _ar_img(w, size, col, font, weight="Bold", bar=None):
+    """The Arabic meaning. Several meanings (the sheet's "متين | مُعمّر | دائم" -> w["alts"]) are written on one
+    line, so they share one baseline, with a short bar in `bar` (default: the text colour, lighter) between them;
+    the first meaning reads first, on the right."""
+    alts = w.get("alts") or []
+    if len(alts) < 2:
+        return _t(font, w["ar"], size, col, weight)
+    line = _t(font, _GAP.join(alts), size, col, weight)
+    widths = [_vis_w(_t(font, a, size, col, weight)) for a in alts]
+    gap = max(8.0, (_vis_w(line) - sum(widths)) / (len(alts) - 1))
+    out = line.copy()
+    d = ImageDraw.Draw(out)
+    bw, bh = max(3.0, size * 0.09), _h(line) * 0.78
+    cy = out.height / 2
+    x = 30 + _vis_w(line)  # right edge of the letters
+    for wd in widths[:-1]:
+        x -= wd + gap / 2  # the middle of the gap after this meaning (right to left)
+        d.rounded_rectangle([x - bw / 2, cy - bh / 2, x + bw / 2, cy + bh / 2], bw / 2,
+                            fill=tuple(bar or _mix(col, (255, 255, 255), 0.45)) + (255,))
+        x -= gap / 2
+    return out
+
+
 def _row_texts(w, k, f_en, f_ar, c_en, c_ipa, c_ar, en=64, ipa=34, ar=58, w_en="Bold", w_ar="Bold", align="l",
                wrap=None, f_def=None, head_gap=0):
     e, i = _entry(w, k, f_en, c_en, c_ipa, en, ipa, w_en, align, wrap, f_def, head_gap)
-    a = _t(f_ar, w["ar"], ar * k, c_ar, w_ar)
+    a = _ar_img(w, ar * k, c_ar, f_ar, w_ar)
     return e, i, a
 
 
@@ -1210,12 +1240,15 @@ def _marked_page(page, handle, n, of, look):
     rh = min(rh, 190)
     top = (top0 + S - 96) / 2 - rh * len(words) / 2
 
+    d = ImageDraw.Draw(fr)
+    if _OPT.get("layout") == "stack":  # centred: the word, its IPA / English meaning, then the Arabic under it
+        return _stacked_rows(fr, d, page, words, look, handle, n, of, top0)
+
     def texts(w, k):
         return _row_texts(w, k, f_en, f_ar, ink, grey, ar_ink, en=66, ipa=32, ar=60, w_en="Bold", w_ar="Bold",
                           head_gap=look.get("under", 0) * k)
 
     k = _common(words, lambda w, k: _sbs_need(*texts(w, k), xr - xl - 20, rh * 0.78), k_max=1.15)
-    d = ImageDraw.Draw(fr)
     for j, w in enumerate(words):
         cy = top + j * rh + rh / 2
         e, i, a = texts(w, k)
@@ -1231,6 +1264,51 @@ def _marked_page(page, handle, n, of, look):
         _put(fr, _t(INTER, f"{j + 1:02d}", 26, grey, "SemiBold"), 70, cy)
         if j:
             d.line([(70, cy - rh / 2), (S - 70, cy - rh / 2)], fill=look.get("rule", (232, 230, 224)), width=2)
+    _footer(fr, handle, n, of, grey, font=INTER)
+    return fr
+
+
+def _stacked_rows(fr, d, page, words, look, handle, n, of, top0):
+    """The Stacked arrangement of _marked_page: every word centred with its meaning under it, the mark on the word,
+    a short rule between the words."""
+    ink, grey, ar_ink = look["ink"], look["grey"], look.get("ar_ink", look["ink"])
+    f_en, f_ar = look.get("f_en", INTER), look.get("f_ar", VAZIR)
+    behind = look.get("behind", True)
+    wrap = S - 260
+    ys, rh = _rows(top0, S - 96, len(words), 0)
+
+    def texts(w, k):
+        return _row_texts(w, k, f_en, f_ar, ink, grey, ar_ink, en=70, ipa=32, ar=62, w_en="Bold", w_ar="Bold",
+                          align="c", wrap=wrap, head_gap=look.get("under", 0) * k)
+
+    def height(e, i, a):
+        return _h(e) + (6 + _h(i) if i is not None else 0) + 12 + _h(a)
+
+    k = _common(words, lambda w, k: (lambda e, i, a: (
+        max(_vis_w(e), _vis_w(i) if i is not None else 0, _vis_w(a)) / (S - 200), height(e, i, a) / (rh * 0.84)))(
+        *texts(w, k)), k_max=1.25)
+    for j, (yy, w) in enumerate(zip(ys, words)):
+        e, i, a = texts(w, k)
+        y = yy + rh / 2 - height(e, i, a) / 2
+        word = _t(f_en, w["en"], 70 * k, ink, "Bold")
+        line_w = _vis_w(word)
+        if w.get("def") and w.get("ipa"):  # _entry put the IPA beside the word: the word starts further left
+            ipa_im = _ipa(w["ipa"], 32 * k, grey)
+            if _vis_w(word) + _vis_w(ipa_im) <= wrap * 1.1:
+                line_w += int(14 * k) + _vis_w(ipa_im)
+        wx = S / 2 - line_w / 2
+        if behind:
+            look["mark"](fr, word, wx, y, j)
+        _put(fr, e, S / 2, y + _h(e) / 2, "c")
+        if not behind:
+            look["mark"](fr, word, wx, y, j)
+        y += _h(e) + 6
+        if i is not None:
+            _put(fr, i, S / 2, y + _h(i) / 2, "c")
+            y += _h(i) + 6
+        _put(fr, a, S / 2, y + 6 + _h(a) / 2, "c")
+        if j:
+            d.rounded_rectangle([S / 2 - 40, yy - 2, S / 2 + 40, yy + 2], 2, fill=look.get("rule", (225, 223, 216)))
     _footer(fr, handle, n, of, grey, font=INTER)
     return fr
 
@@ -1605,28 +1683,132 @@ def _draw_skycards(page, pal, handle, n, of):
     return fr
 
 
+# ---------------------------------------------------------------- torn paper (stacked: word over meaning, centred)
+TORN = (22, 182, 214)        # the blue of the torn paper
+TORN_RED = (206, 24, 32)     # the Arabic meanings
+GLOW = (222, 246, 250)       # the soft pill behind each line
+
+
+def _torn_band(h, col, seed=1):
+    """A strip of torn coloured paper (S wide, its torn edge at about h): rough multi-scale edge, the white paper
+    fibres showing along the tear, a faint texture. Returned with room under it for the tear."""
+    rng = np.random.default_rng(seed)
+    H_ = int(h + 40)
+    xs = np.arange(S)
+    edge = h + _smooth_noise(S, rng, 1.0, ((160, 16.0), (40, 6.0), (9, 2.2), (3, 0.8)))
+    fib = edge + 3 + np.abs(_smooth_noise(S, rng, 1.0, ((22, 6.0), (5, 2.0))))
+    yy = np.arange(H_)[:, None].astype(np.float32)
+    paper = (yy <= edge[None, :]).astype(np.float32)
+    fibre = ((yy > edge[None, :]) & (yy <= fib[None, :])).astype(np.float32)
+    tex = 1 + 0.035 * rng.normal(0, 1, (H_, S)) + 0.04 * _smooth_noise(S, rng, 1.0, ((300, 1.0),))[None, :]
+    rgb = np.array(col, np.float32)[None, None, :] * tex[..., None]
+    rgb = rgb * paper[..., None] + np.array((248, 250, 251), np.float32) * fibre[..., None]
+    alpha = np.clip(paper + fibre, 0, 1)
+    del xs
+    im = Image.fromarray(np.dstack([np.clip(rgb, 0, 255), alpha[..., None] * 255]).astype(np.uint8), "RGBA")
+    return im
+
+
+def _glow_pill(fr, cx, cy, w, h, col=GLOW, alpha=0.92):
+    m = _round_mask(w, h, min(18, h / 3))
+    pad = 14
+    big = Image.new("L", (int(w) + 2 * pad, int(h) + 2 * pad), 0)
+    big.paste(m, (pad, pad))
+    fr.alpha_composite(_colored(big.filter(ImageFilter.GaussianBlur(5)), col, alpha),
+                       (int(cx - w / 2 - pad), int(cy - h / 2 - pad)))
+
+
+def _draw_torn(page, pal, handle, n, of):
+    """Torn blue paper at the top and bottom, light paper in between; every word centred with its meaning right
+    under it: the English in a strong serif, the Arabic big and red, each line on a soft glow; several meanings
+    split by blue bars."""
+    blue = _page_tones(pal)[1] if pal in MONO_SETS else TORN
+    rng = np.random.default_rng(3)
+    yy, xx = np.mgrid[0:S, 0:S].astype(np.float32)
+    v = np.clip(((xx - S / 2) / (S * 0.7)) ** 2 + ((yy - S / 2) / (S * 0.6)) ** 2, 0, 1)
+    base = np.array((244, 246, 248), np.float32) * (1 - 0.07 * v[..., None]) + rng.normal(0, 1.4, (S, S, 1))
+    fr = Image.fromarray(np.clip(base, 0, 255).astype(np.uint8)).convert("RGBA")
+    has_t = bool(page.get("title"))
+    top_h = 150 if has_t and page.get("sub") else 118 if has_t else 70
+    top = _torn_band(top_h, blue, seed=11)
+    bot = _torn_band(84, blue, seed=12).transpose(Image.FLIP_TOP_BOTTOM)
+    for band, y0 in ((top, 0), (bot, S - bot.height)):
+        sh = _colored(band.split()[3].filter(ImageFilter.GaussianBlur(7)), (0, 0, 0), 0.32)
+        fr.alpha_composite(sh, (0, y0 + (6 if y0 == 0 else -6)))
+        fr.alpha_composite(band, (0, y0))
+    white = (255, 255, 255)
+    y = 26
+    if has_t:
+        t = _fit_one(lambda s_: _t(LITERATA, page["title"], s_, white, "ExtraBold"), 64, S - 160)
+        _put(fr, t, S / 2, y + _h(t) / 2, "c")
+        y += _h(t) + 10
+    if page.get("sub"):
+        st = _fit_one(lambda s_: _t(TAJAWAL, page["sub"], s_, white, "Bold"), 36, S - 160)
+        _put(fr, st, S / 2, y + _h(st) / 2, "c")
+    words = page["words"]
+    area0, area1 = top_h + 44, S - 84 - 34
+    ys, rh = _rows(area0, area1, len(words), 0)
+    sep = _mix(blue, (255, 255, 255), 0.15)
+
+    def texts(w, k):
+        e, i = _entry(w, k, LITERATA, (22, 20, 18), (96, 100, 108), en=78, ipa=30, w_en="ExtraBold", align="c",
+                      wrap=S - 240)
+        a = _ar_img(w, 70 * k, TORN_RED, TAJAWAL, "Black", sep)
+        return e, i, a
+
+    def need(w, k):
+        e, i, a = texts(w, k)
+        h = _h(e) + (6 + _h(i) if i is not None else 0) + 14 + _h(a)
+        return max(_vis_w(e), _vis_w(i) if i is not None else 0, _vis_w(a)) / (S - 200), h / (rh * 0.84)
+
+    k = _common(words, need, k_max=1.2)
+    for yy0, w in zip(ys, words):
+        e, i, a = texts(w, k)
+        h = _h(e) + (6 + _h(i) if i is not None else 0) + 14 + _h(a)
+        y = yy0 + rh / 2 - h / 2
+        _glow_pill(fr, S / 2, y + _h(e) / 2, _vis_w(e) + 40, _h(e) + 18)
+        _put(fr, e, S / 2, y + _h(e) / 2, "c")
+        y += _h(e) + 6
+        if i is not None:
+            _put(fr, i, S / 2, y + _h(i) / 2, "c")
+            y += _h(i) + 6
+        y += 8
+        _glow_pill(fr, S / 2, y + _h(a) / 2, _vis_w(a) + 40, _h(a) + 16)
+        _put(fr, a, S / 2, y + _h(a) / 2, "c")
+    by = S - 40
+    if handle:
+        _put(fr, _t(INTER, handle, 30, white, "Bold"), 60, by)
+    if of > 1:
+        _put(fr, _t(INTER, f"{n} / {of}", 30, white, "Bold"), S - 60, by, "r")
+    return fr
+
+
 _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebook": _draw_notebook,
          "minimal": _draw_minimal, "chalk": _draw_chalk, "poster": _draw_poster, "glass": _draw_glass,
          "bento": _draw_bento, "swiss": _draw_swiss, "dictionary": _draw_dictionary, "chat": _draw_chat,
          "sticky": _draw_sticky, "brutal": _draw_brutal, "aurora": _draw_aurora,
          "highlighter": _draw_highlighter, "brush": _draw_brush, "swoosh": _draw_swoosh, "tape": _draw_tape,
          "soft": _draw_soft, "pencil": _draw_pencil, "document": _draw_document,
-         "skycards": _draw_skycards}
+         "skycards": _draw_skycards, "torn": _draw_torn}
 
 
-def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1, fonts=0):
-    """One page of words as a square RGB image (fonts = a FONT_SETS number, 0 = the design's own)."""
-    words = [dict(en=w["en"], ar=w["ar"], ipa=w.get("ipa", ""), **({"def": w["def"]} if w.get("def") else {}))
+def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1, fonts=0, layout="side"):
+    """One page of words as a square RGB image (fonts = a FONT_SETS number, 0 = the design's own; layout = "side" /
+    "stack" for the highlight designs)."""
+    words = [dict(en=w["en"], ar=w["ar"], ipa=w.get("ipa", ""), **({"def": w["def"]} if w.get("def") else {}),
+                  **({"alts": list(w["alts"])} if len(w.get("alts") or []) > 1 else {}))
              for w in page.get("words", [])][:6]
     if not words:
         raise ValueError("a post needs at least one word")
     pg = dict(title=page.get("title", ""), sub=page.get("sub", ""), words=words)
     fn = _DRAW.get(style, _DRAW[DEFAULT_STYLE])
     use_fonts(fonts)
+    _OPT.update(layout=layout if layout in dict((v, v) for _, v in LAYOUTS) else "side")
     try:
         return fn(pg, palette if palette in DUOS else DEFAULT_PALETTE, handle or "", n, of).convert("RGB")
     finally:
         use_fonts(0)
+        _OPT.clear()
 
 
 # ---------------------------------------------------------------- a whole sheet -> posts
@@ -1645,12 +1827,13 @@ def pages(words, per=4, title="", subtitle=""):
         st = (chunk[0].get("sub") if chunk[0].get("title") else "") or subtitle or ""
         out.append(dict(title=t.replace("{n}", n), sub=st.replace("{n}", n),
                         words=[dict(en=w["en"], ar=w["ar"], ipa=w.get("ipa", ""),
-                                    **({"def": w["def"]} if w.get("def") else {})) for w in chunk]))
+                                    **({"def": w["def"]} if w.get("def") else {}),
+                                    **({"alts": w["alts"]} if w.get("alts") else {})) for w in chunk]))
     return out
 
 
 def make_posts(pgs, out_dir, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", progress=None,
-               stop=None, fonts=0):
+               stop=None, fonts=0, layout="side"):
     """Every page as post_NN.png in out_dir + all of them in one .zip -> (png paths, zip path)."""
     import zipfile
     os.makedirs(out_dir, exist_ok=True)
@@ -1659,7 +1842,7 @@ def make_posts(pgs, out_dir, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handl
         if stop:
             stop()
         path = os.path.join(out_dir, f"post_{k:02d}.png")
-        post(pg, style, palette, handle, k, len(pgs), fonts).save(path, optimize=True)
+        post(pg, style, palette, handle, k, len(pgs), fonts, layout).save(path, optimize=True)
         paths.append(path)
         if progress:
             progress(k / len(pgs), f"Post {k} of {len(pgs)}")
