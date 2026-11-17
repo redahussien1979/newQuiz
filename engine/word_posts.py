@@ -32,7 +32,13 @@ MORE_STYLES = [("Cards", "cards"), ("Flashcard grid", "grid"), ("Table", "table"
                ("Bento", "bento"), ("Dictionary", "dictionary"),
                ("Sticky notes", "sticky"), ("Neo-brutal", "brutal"), ("Aurora", "aurora")]
 DEFAULT_STYLE = "highlighter"
-DEFAULT_PALETTE = "navy_juice"
+DEFAULT_PALETTE = "navy_juice"  # the colours the designs were made with ("own")
+
+
+def palette_choices():
+    """The Colours menu: the designs' own colours first, then every set (they recolour the whole design)."""
+    from .list_designs import DUO_CHOICES
+    return [("🎨 Design's own colours", "own")] + list(DUO_CHOICES)
 
 
 # ---------------------------------------------------------------- fonts
@@ -1460,12 +1466,44 @@ def _stacked_rows(fr, d, page, words, look, handle, n, of, top0):
 
 
 _INK, _GREY = (20, 20, 24), (105, 105, 112)
+OWN = "own"  # the palette "🎨 Design's own colours": every design exactly as designed
+
+
+def _set_colors(pal):
+    """The colours a chosen set gives a design that has its own colours, or None for "own" colours.
+    -> dict(dk, ac, ac2, deep = a set colour that reads on white (words, bars), tint = a light accent (glow,
+    tape, soft highlight), marker = a highlighter-light accent, inks = 3 deep colours for white type,
+    pens = 3 strong colours for pencil / tape)."""
+    if not _OPT.get("recolour"):
+        return None
+    dk, ac, ac2 = _tones(pal)
+    white = (255, 255, 255)
+
+    def deep_on_white(c, need=4.0):
+        for t in np.linspace(0, 1, 11):
+            x = _mix(c, dk if _lum(dk) < _lum(c) else (0, 0, 0), t)
+            if _contrast(x, white) >= need:
+                return x
+        return dk
+
+    # the set's accent, darkened just enough to read on white (a vivid colour, not the dull base)
+    deep = next((c for c in (ac2, ac) if _contrast(c, white) >= 3.5), None) or deep_on_white(ac2 if ac2 != ac else ac,
+                                                                                              3.5)
+    marker = ac if _lum(ac) > 0.45 else _mix(ac, white, 0.55)
+    tints = [_mix(c, white, 0.72) for c in (ac, ac2, dk)]
+    return dict(dk=dk, ac=ac, ac2=ac2, deep=deep, tint=_mix(ac, white, 0.8), marker=marker, tints=tints,
+                inks=[deep_on_white(c, 3.0) for c in (dk, ac, ac2)],
+                pens=[deep_on_white(c, 1.6) for c in (ac, ac2, dk)])
 
 
 def _draw_highlighter(page, pal, handle, n, of):
     """Clean paper, crisp dark type, one highlighter stroke behind each word and a single red-pen loop on the title."""
     dk, ac, ac2 = _tones(pal)
     marker = ac if (_lum(ac) > 0.45 and _contrast(ac, _INK) > 7) else MARKER  # a light accent works as a marker
+    sc = _set_colors(pal)
+    pen = RED_PEN
+    if sc:
+        marker, pen = sc["marker"], sc["deep"]
 
     def mark(fr, word, x, y, j):
         band, pad = _marker_band(_vis_w(word) + 24, _h(word) * 0.62, marker, seed=20 + j)
@@ -1475,7 +1513,7 @@ def _draw_highlighter(page, pal, handle, n, of):
         pass
 
     def title_circle(fr, word, x, y, j):
-        circ, pad = _pen_circle(_vis_w(word) + 30, _h(word) + 30, RED_PEN, 5.5, seed=4)
+        circ, pad = _pen_circle(_vis_w(word) + 30, _h(word) + 30, pen, 5.5, seed=4)
         fr.alpha_composite(circ, (int(x - 15 - pad), int(y - 15 - pad)))
 
     single = len((page.get("title") or "").split()) < 2
@@ -1565,8 +1603,10 @@ def _mono(pal):
 def _draw_tape(page, pal, handle, n, of):
     """Each word on its own strip of pastel washi tape: the bullet-journal look."""
     def mark(fr, word, x, y, j):
-        mono = _mono(pal)
-        col = _mix(mono[0], (255, 255, 255), 0.3) if mono else _TAPES[j % len(_TAPES)] if j != 99 else _TAPES[0]
+        mono, sc = _mono(pal), _set_colors(pal)
+        col = (_mix(mono[0], (255, 255, 255), 0.3) if mono else
+               _mix(sc["pens"][j % 3 if j != 99 else 0], (255, 255, 255), 0.45) if sc else
+               _TAPES[j % len(_TAPES)] if j != 99 else _TAPES[0])
         tp = _tape(_vis_w(word) + 40, _h(word) + 14, col, seed=50 + j)
         sh = _colored(tp.split()[3].filter(ImageFilter.GaussianBlur(3)), (0, 0, 0), 0.12)
         cx, cy = x + _vis_w(word) / 2, y + _h(word) / 2 - 2
@@ -1583,8 +1623,9 @@ def _draw_soft(page, pal, handle, n, of):
     """App-style text highlight (notes / docs apps): a soft rounded pastel tint behind every word, a different tint
     each."""
     def mark(fr, word, x, y, j):
-        mono = _mono(pal)
-        col = _mix(mono[0], (255, 255, 255), 0.6) if mono else _SOFT[j % len(_SOFT)] if j != 99 else _SOFT[1]
+        mono, sc = _mono(pal), _set_colors(pal)
+        col = (_mix(mono[0], (255, 255, 255), 0.6) if mono else sc["tints"][j % 3 if j != 99 else 0] if sc else
+               _SOFT[j % len(_SOFT)] if j != 99 else _SOFT[1])
         w_, h_ = _vis_w(word) + 28, _h(word) + 18
         fr.alpha_composite(_colored(_round_mask(w_, h_, min(16, h_ / 3)), col), (int(x - 14), int(y - 9)))
 
@@ -1621,8 +1662,8 @@ def _draw_pencil(page, pal, handle, n, of):
             (255, 160, 40), (170, 110, 255)]
 
     def mark(fr, word, x, y, j):
-        mono = _mono(pal)
-        col = mono[0] if mono else cols[j % len(cols)] if j != 99 else cols[0]
+        mono, sc = _mono(pal), _set_colors(pal)
+        col = mono[0] if mono else sc["pens"][j % 3 if j != 99 else 0] if sc else cols[j % len(cols)] if j != 99 else cols[0]
         hc = _hatch(_vis_w(word) + 24, _h(word) * 0.72, col, seed=70 + j)
         _multiply(fr, hc, x - 12, y + _h(word) * 0.4)
 
@@ -1704,8 +1745,8 @@ def _draw_brush(page, pal, handle, n, of):
     k = _common(words, lambda w, k: _sbs_need(*texts(w, k), xr - xl, rh * 0.72), k_max=1.15)
     for j, w in enumerate(words):
         yy = top + j * (rh + gap)
-        mono = _mono(pal)  # a one-colour set: its deep shade, so the white type stays readable
-        col = mono[1] if mono else _WATER[j % len(_WATER)]
+        mono, sc = _mono(pal), _set_colors(pal)  # a set: its deep shades, so the white type stays readable
+        col = mono[1] if mono else sc["inks"][j % 3] if sc else _WATER[j % len(_WATER)]
         fr.alpha_composite(_brush_stroke(x1 - x0, rh, col, seed=100 + j), (int(x0), int(yy)))
         _side_by_side(fr, *texts(w, k), xl, xr, yy + rh / 2)
     _footer(fr, handle, n, of, _mix(dk, (255, 255, 255), 0.35), font=ALEXANDRIA)
@@ -1987,6 +2028,10 @@ def _draw_torn(page, pal, handle, n, of):
     under it: the English in a strong serif, the Arabic big and red, each line on a soft glow; several meanings
     split by blue bars."""
     blue = _page_tones(pal)[1] if pal in MONO_SETS else TORN
+    sc = _set_colors(pal) if pal not in MONO_SETS else None
+    red, glow = TORN_RED, GLOW
+    if sc:  # paper in the set's base colour, meanings in its accent, glow a light accent
+        blue, red, glow = sc["dk"], sc["deep"], sc["tint"]
 
     def bg(has_t, has_s):
         rng = np.random.default_rng(3)
@@ -2007,9 +2052,9 @@ def _draw_torn(page, pal, handle, n, of):
     white = (255, 255, 255)
     return _poster(page, handle, n, of, dict(
         bg=bg, t_font=LITERATA, t_weight="ExtraBold", t_col=white, s_col=white,
-        en=(LITERATA, "ExtraBold", (24, 22, 20), 80, GLOW), ar=(TAJAWAL, "Black", TORN_RED, 82, GLOW,
+        en=(LITERATA, "ExtraBold", (24, 22, 20), 80, glow), ar=(TAJAWAL, "Black", red, 82, glow,
                                                                _mix(blue, (0, 0, 0), 0.08)),
-        h_col=white, accent=_mix(blue, (0, 0, 0), 0.25), pen=TORN_RED))
+        h_col=white, accent=_mix(blue, (0, 0, 0), 0.25), pen=red))
 
 
 CLOUD_SKY = (222, 237, 250)   # the sky around the page
@@ -2040,6 +2085,10 @@ def _draw_clouds(page, pal, handle, n, of):
     """A white page framed by soft sky clouds; every English word big and red on a soft pink glow, its meaning in
     heavy black Arabic under it, several meanings split by red bars; the handle centred under the words."""
     sky = _mix(_page_tones(pal)[1], (255, 255, 255), 0.72) if pal in MONO_SETS else CLOUD_SKY
+    sc = _set_colors(pal) if pal not in MONO_SETS else None
+    word, glow, pen = CLOUD_RED, CLOUD_GLOW, (30, 110, 200)
+    if sc:  # sky = a light shade of the base, words + bars = the set's accent (or base) that reads on white
+        sky, word, glow, pen = _mix(sc["ac"], (255, 255, 255), 0.7), sc["deep"], sc["tint"], sc["dk"]
 
     def bg(has_t, has_s):
         fr = Image.new("RGBA", (S, S), (255, 255, 255, 255))
@@ -2058,10 +2107,10 @@ def _draw_clouds(page, pal, handle, n, of):
 
     ink = (18, 18, 20)
     return _poster(page, handle, n, of, dict(
-        bg=bg, t_font=POPPINS_B, t_weight="Bold", t_col=CLOUD_RED, s_col=ink,
-        en=(POPPINS_B, "Bold", CLOUD_RED, 84, CLOUD_GLOW), ar=(TAJAWAL, "Black", ink, 80, None, CLOUD_RED),
-        h_col=(70, 70, 78), h_font=POPPINS_B, handle_at="under", sub_ink=(110, 110, 118), accent=CLOUD_RED,
-        pen=(30, 110, 200), wash=_mix(sky, (120, 180, 235), 0.45)))
+        bg=bg, t_font=POPPINS_B, t_weight="Bold", t_col=word, s_col=ink,
+        en=(POPPINS_B, "Bold", word, 84, glow), ar=(TAJAWAL, "Black", ink, 80, None, word),
+        h_col=(70, 70, 78), h_font=POPPINS_B, handle_at="under", sub_ink=(110, 110, 118), accent=word,
+        pen=pen, wash=_mix(sky, (120, 180, 235), 0.45)))
 
 
 _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebook": _draw_notebook,
@@ -2074,7 +2123,7 @@ _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebo
          "clouds": _draw_clouds}
 
 
-def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1, fonts=0, layout="side",
+def post(page, style=DEFAULT_STYLE, palette="own", handle="", n=1, of=1, fonts=0, layout="side",
          en_font="", ar_font="", hl="glow"):
     """One page of words as a square RGB image (fonts = a FONT_SETS number, 0 = the design's own; layout = "side" /
     "stack" for the highlight designs; en_font / ar_font = any library font for that language, over `fonts`;
@@ -2087,10 +2136,12 @@ def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=
     pg = dict(title=page.get("title", ""), sub=page.get("sub", ""), words=words)
     fn = _DRAW.get(style, _DRAW[DEFAULT_STYLE])
     use_fonts(fonts, en_font, ar_font)
-    _OPT.update(layout=layout if layout in dict((v, v) for _, v in LAYOUTS) else "side",
+    own = palette in (OWN, "", None) or palette not in DUOS
+    _OPT.update(recolour=not own and palette not in MONO_SETS,
+                layout=layout if layout in dict((v, v) for _, v in LAYOUTS) else "side",
                 hl=hl if hl in dict((v, v) for _, v in WORD_HIGHLIGHTS) else "glow")
     try:
-        return fn(pg, palette if palette in DUOS else DEFAULT_PALETTE, handle or "", n, of).convert("RGB")
+        return fn(pg, DEFAULT_PALETTE if own else palette, handle or "", n, of).convert("RGB")
     finally:
         use_fonts(0)
         _OPT.clear()
@@ -2117,7 +2168,7 @@ def pages(words, per=4, title="", subtitle=""):
     return out
 
 
-def make_posts(pgs, out_dir, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", progress=None,
+def make_posts(pgs, out_dir, style=DEFAULT_STYLE, palette="own", handle="", progress=None,
                stop=None, fonts=0, layout="side", en_font="", ar_font="", hl="glow"):
     """Every page as post_NN.png in out_dir + all of them in one .zip -> (png paths, zip path)."""
     import zipfile

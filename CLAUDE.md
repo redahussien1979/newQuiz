@@ -105,6 +105,9 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   the English Words sub-tabs' select (`vc_tabs.select` -> `right_side`) shows one or the other.
   Template `projects/word_list_template.xlsx` (`word_import.write_template`): tab Words (videos) + tab Image posts
   (`POSTS_ROWS`: idioms with English meanings and `|` meanings).
+  Colours: `post(palette="own")` (default, `palette_choices`) = every design exactly as designed; any `DUOS` set sets
+  `_OPT["recolour"]` and `_set_colors(pal)` recolours the designs with fixed colours (highlighter marker + pen,
+  brush inks, tape / pencil pens, soft tints, Torn paper band / Arabic / glow, Clouds sky / words / bars / glow).
   The user's taste: clean background, clear bold type, one realistic mark per word, not busy — never propose neon looks.
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
   (ElevenLabs word timings); words ink in as spoken (`vs`/`ve` per word), highlighted words get a marker swipe, fly
@@ -196,7 +199,7 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   folder; `relink()` finds a project's media by name; `launch(allowed_paths=[DATA_DIR])` lets the browser show it
 
 ## Rules
-- Arabic text must stay right-to-left and correctly joined (RAQM when available, else arabic-reshaper + python-bidi fallback in `core._prep`).
+- Arabic text must stay right-to-left and correctly joined (the no-RAQM reshaper keeps the vowel marks: `delete_harakat: False`) (RAQM when available, else arabic-reshaper + python-bidi fallback in `core._prep`).
   Without RAQM a font with no joined presentation forms (Aref Ruqaa, Baloo, Marhey, Readex Pro, Reem Kufi) would show
   separate letters: `core._basic_font` draws its Arabic with the nearest font that has them (`_BASIC_SUBS`). Test the
   fallback with env `VS_FORCE_BASIC=1`.
