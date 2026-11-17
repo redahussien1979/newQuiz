@@ -86,7 +86,11 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `_FONT` (`use_fonts`) and `_t` swaps every design font for the pair's English / Arabic one (by `is_rtl`);
   `en_font` / `ar_font` = any family of the font library (`font_menus` from `fonts.families`) for one language.
   `post(..., layout="side"|"stack")` (`LAYOUTS`, kept in `_OPT`): Stacked = `_stacked_rows` in `_marked_page`
-  (word centred, meaning under it). Torn paper (`_draw_torn`, `_torn_band`, `_glow_pill`) is always stacked.
+  (word centred, meaning under it). Torn paper / Clouds = `_poster` (look dict: background with room, English /
+  Arabic font, colour, size, glow, bar, handle place) — `_draw_torn` (`_torn_band`), `_draw_clouds`
+  (`_cloud_band`: sky frame, red English on a pink glow, heavy black Arabic, red bars, handle under the words).
+  `_ar_img(..., max_w)`: a too-wide meaning wraps to 2 centred lines — between two meanings first (one per line),
+  else between words, never next to a bar (`_bar_line` = meanings on one line with bars).
   Sizes: English and Arabic each get ONE page-wide size of their own — stacked `_fit_stack` (biggest that fits the
   width, then both scaled to the height; the Arabic is not cut twice), side by side `_two_sizes` (English <= ~60 %,
   Arabic the rest, kept >= 0.9 of the English); groups evenly spaced (gap inside / between), block centred.

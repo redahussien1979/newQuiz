@@ -25,7 +25,7 @@ AMIRI = _font("Amiri", "Amiri-Bold.ttf")
 STYLES = [("Highlighter", "highlighter"), ("Brush strokes", "brush"), ("Swoosh", "swoosh"), ("Washi tape", "tape"),
           ("Soft highlight", "soft"), ("Pencil", "pencil"), ("Document", "document"),
           ("Sky cards", "skycards"), ("Swiss", "swiss"), ("Chat", "chat"),
-          ("Torn paper", "torn")]
+          ("Torn paper", "torn"), ("Clouds", "clouds")]
 # more designs, kept for later (post() draws them too)
 MORE_STYLES = [("Cards", "cards"), ("Flashcard grid", "grid"), ("Table", "table"), ("Notebook", "notebook"),
                ("Minimal", "minimal"), ("Chalkboard", "chalk"), ("Poster", "poster"), ("Glass", "glass"),
@@ -289,16 +289,13 @@ def _entry(w, k, f_en, c_en, c_ipa, en=64, ipa=34, w_en="Bold", align="l", wrap=
 _GAP = "    "  # the room left between two meanings for the bar
 
 
-def _ar_img(w, size, col, font, weight="Bold", bar=None):
-    """The Arabic meaning. Several meanings (the sheet's "متين | مُعمّر | دائم" -> w["alts"]) are written on one
-    line, so they share one baseline, with a short bar in `bar` (default: the text colour, lighter) between them;
-    the first meaning reads first, on the right."""
-    alts = w.get("alts") or []
-    if len(alts) < 2:
-        return _t(font, w["ar"], size, col, weight)
-    line = _t(font, _GAP.join(alts), size, col, weight)
-    widths = [_vis_w(_t(font, a, size, col, weight)) for a in alts]
-    gap = max(8.0, (_vis_w(line) - sum(widths)) / (len(alts) - 1))
+def _bar_line(parts, size, col, font, weight, bar):
+    """Meanings on one line, sharing one baseline, a short bar between them (the first meaning on the right)."""
+    if len(parts) < 2:
+        return _t(font, parts[0] if parts else "", size, col, weight)
+    line = _t(font, _GAP.join(parts), size, col, weight)
+    widths = [_vis_w(_t(font, a, size, col, weight)) for a in parts]
+    gap = max(8.0, (_vis_w(line) - sum(widths)) / (len(parts) - 1))
     out = line.copy()
     d = ImageDraw.Draw(out)
     bw, bh = max(3.0, size * 0.09), _h(line) * 0.78
@@ -310,6 +307,52 @@ def _ar_img(w, size, col, font, weight="Bold", bar=None):
                             fill=tuple(bar or _mix(col, (255, 255, 255), 0.45)) + (255,))
         x -= gap / 2
     return out
+
+
+_BAR = object()  # a bar between two meanings, while a meaning is wrapped
+
+
+def _ar_img(w, size, col, font, weight="Bold", bar=None, max_w=None):
+    """The Arabic meaning. Several meanings (the sheet's "متين | مُعمّر | دائم" -> w["alts"]) are written on one
+    line with a short bar in `bar` (default: the text colour, lighter) between them, the first one on the right.
+    With max_w, a line too wide breaks into two centred lines: between two meanings when that fits (one meaning per
+    line), else between two words as evenly as possible (never next to a bar): big type on two lines instead of
+    small type on one."""
+    alts = w.get("alts") or [w["ar"]]
+    one = _bar_line(alts, size, col, font, weight, bar)
+    if not max_w or _vis_w(one) <= max_w:
+        return one
+    toks = []
+    for j, a in enumerate(alts):
+        if j:
+            toks.append(_BAR)
+        toks += a.split()
+
+    def segs(ts):  # tokens -> the meanings of one line
+        out, cur = [], []
+        for t in ts:
+            if t is _BAR:
+                out.append(" ".join(cur))
+                cur = []
+            else:
+                cur.append(t)
+        return out + [" ".join(cur)]
+
+    def split(i, at_bar):
+        a_, b_ = (toks[:i], toks[i + 1:]) if at_bar else (toks[:i], toks[i:])
+        l1, l2 = (_bar_line(segs(a_), size, col, font, weight, bar), _bar_line(segs(b_), size, col, font, weight, bar))
+        return max(_vis_w(l1), _vis_w(l2)), l1, l2
+
+    # 1st choice: break between two meanings (they then sit on their own lines, the bar is not needed)
+    bars = [split(i, True) for i, t in enumerate(toks) if t is _BAR]
+    best = min(bars, key=lambda b: b[0]) if bars else None
+    if best is None or best[0] > max_w:  # else between two words, never next to a bar, as even as possible
+        words = [split(i, False) for i in range(1, len(toks)) if toks[i] is not _BAR and toks[i - 1] is not _BAR]
+        if words:
+            best = min(words + ([best] if best else []), key=lambda b: b[0])
+    if best is None or best[0] >= _vis_w(one):
+        return one
+    return _join([best[1], best[2]], int(size * 0.06), "c")  # the two lines of one meaning sit close
 
 
 def _row_texts(w, k, f_en, f_ar, c_en, c_ipa, c_ar, en=64, ipa=34, ar=58, w_en="Bold", w_ar="Bold", align="l",
@@ -1365,10 +1408,10 @@ def _stacked_rows(fr, d, page, words, look, handle, n, of, top0):
         return [e, i]
 
     def make_ar(w, k):
-        return _ar_img(w, 70 * k, ar_ink, f_ar, "Bold")
+        return _ar_img(w, 70 * k, ar_ink, f_ar, "Bold", max_w=(S - 220) * 0.94)
 
     room0, room1 = top0 + 6, S - 104
-    gap_in, gap_out = 12, 46
+    gap_in, gap_out = 10, 54
     groups, hs, total, k = _fit_stack(words, make_en, make_ar, S - 220, room1 - room0, gap_in, gap_out, k_max=1.3)
     y = room0 + (room1 - room0 - total) / 2
     for j, (w, g, gh) in enumerate(zip(words, groups, hs)):
@@ -1791,6 +1834,7 @@ def _torn_band(h, col, seed=1):
 
 
 def _glow_pill(fr, cx, cy, w, h, col=GLOW, alpha=0.92):
+    """A soft rounded tint behind a line of text (its edges blurred)."""
     m = _round_mask(w, h, min(18, h / 3))
     pad = 14
     big = Image.new("L", (int(w) + 2 * pad, int(h) + 2 * pad), 0)
@@ -1799,64 +1843,138 @@ def _glow_pill(fr, cx, cy, w, h, col=GLOW, alpha=0.92):
                        (int(cx - w / 2 - pad), int(cy - h / 2 - pad)))
 
 
-def _draw_torn(page, pal, handle, n, of):
-    """Torn blue paper at the top and bottom, light paper in between; every word centred with its meaning tight
-    under it: the English in a strong serif, the Arabic big and red, each line on a soft glow; several meanings
-    split by blue bars. The groups are evenly spaced at the biggest size that fits, the block centred."""
-    blue = _page_tones(pal)[1] if pal in MONO_SETS else TORN
-    rng = np.random.default_rng(3)
-    yy, xx = np.mgrid[0:S, 0:S].astype(np.float32)
-    v = np.clip(((xx - S / 2) / (S * 0.7)) ** 2 + ((yy - S / 2) / (S * 0.6)) ** 2, 0, 1)
-    base = np.array((245, 247, 249), np.float32) * (1 - 0.06 * v[..., None]) + rng.normal(0, 1.2, (S, S, 1))
-    fr = Image.fromarray(np.clip(base, 0, 255).astype(np.uint8)).convert("RGBA")
+def _poster(page, handle, n, of, L):
+    """The centred poster layout of Torn paper / Clouds: L["bg"](has_title, has_sub) -> (frame, room top, room
+    bottom, title y); every word centred with its meaning tight under it (the English parts at one size, the Arabic
+    at its own, long meanings on two lines), the groups evenly spaced, the block centred in the room.
+    L: title / sub colours + font, en (font, weight, colour, base size, glow or None), ar (font, weight, colour, base
+    size, glow or None, bar colour), handle colour and place ("band" = bottom corners, "under" = centred under the
+    words, the page number bottom right)."""
     has_t, has_s = bool(page.get("title")), bool(page.get("sub"))
-    top_h = 150 if has_t and has_s else 112 if has_t or has_s else 64
-    bot_h = 78
-    top = _torn_band(top_h, blue, seed=11)
-    bot = _torn_band(bot_h, blue, seed=12).transpose(Image.FLIP_TOP_BOTTOM)
-    for band, y0 in ((top, 0), (bot, S - bot.height)):
-        sh = _colored(band.split()[3].filter(ImageFilter.GaussianBlur(7)), (0, 0, 0), 0.3)
-        fr.alpha_composite(sh, (0, y0 + (6 if y0 == 0 else -6)))
-        fr.alpha_composite(band, (0, y0))
-    white = (255, 255, 255)
-    y = 24
+    fr, room0, room1, ty = L["bg"](has_t, has_s)
     if has_t:
-        t = _fit_one(lambda s_: _t(LITERATA, page["title"], s_, white, "ExtraBold"), 60, S - 160)
-        _put(fr, t, S / 2, y + _h(t) / 2, "c")
-        y += _h(t) + 12
+        t = _fit_one(lambda s_: _t(L["t_font"], page["title"], s_, L["t_col"], L["t_weight"]), 60, S - 160)
+        _put(fr, t, S / 2, ty + _h(t) / 2, "c")
+        ty += _h(t) + 12
     if has_s:
-        st = _fit_one(lambda s_: _t(TAJAWAL, page["sub"], s_, white, "Bold"), 34, S - 160)
-        _put(fr, st, S / 2, y + _h(st) / 2, "c")
+        st = _fit_one(lambda s_: _t(TAJAWAL, page["sub"], s_, L["s_col"], "Bold"), 34, S - 160)
+        _put(fr, st, S / 2, ty + _h(st) / 2, "c")
     words = page["words"]
-    sep = _mix(blue, (0, 0, 0), 0.08)
-    ink, red = (24, 22, 20), TORN_RED
+    en_font, en_weight, en_col, en_size, en_glow = L["en"]
+    ar_font, ar_weight, ar_col, ar_size, ar_glow, bar = L["ar"]
+    avail_w = S - 200
 
     def make_en(w, k):
-        return list(_entry(w, k, LITERATA, ink, (96, 100, 108), en=80, ipa=30, w_en="ExtraBold", align="c",
-                           wrap=640))
+        return list(_entry(w, k, en_font, en_col, L.get("sub_ink", (96, 100, 108)), en=en_size, ipa=30,
+                           w_en=en_weight, align="c", wrap=640))
 
     def make_ar(w, k):
-        return _ar_img(w, 82 * k, red, TAJAWAL, "Black", sep)
+        return _ar_img(w, ar_size * k, ar_col, ar_font, ar_weight, bar, max_w=avail_w * 0.94)
 
-    room0, room1 = top_h + 50, S - bot_h - 50
-    gap_in, gap_out, px, py = 14, 40, 22, 9  # px / py = the glow's padding around the letters
-    groups, hs, total, k = _fit_stack(words, make_en, make_ar, S - 200, room1 - room0 - 2 * py, gap_in, gap_out,
+    under = L.get("handle_at") == "under" and handle
+    room1 -= 50 if under else 0
+    gap_in, gap_out, px, py = 12, 58, 22, 9  # px / py = the glow's padding around the letters
+    groups, hs, total, k = _fit_stack(words, make_en, make_ar, avail_w, room1 - room0 - 2 * py, gap_in, gap_out,
                                       k_max=1.3)
     y = room0 + (room1 - room0 - total) / 2
     for g, gh in zip(groups, hs):
         yy = y
         for p in g:
-            if p is g[0] or p is g[-1]:  # a glow behind the word and behind the meaning (not the IPA / English meaning)
-                _glow_pill(fr, S / 2, yy + _h(p) / 2, _vis_w(p) + 2 * px, _h(p) + 2 * py)
+            glow = en_glow if p is g[0] else ar_glow if p is g[-1] else None  # not behind the IPA / English meaning
+            if glow:
+                _glow_pill(fr, S / 2, yy + _h(p) / 2, _vis_w(p) + 2 * px, _h(p) + 2 * py, glow)
             _put(fr, p, S / 2, yy + _h(p) / 2, "c")
             yy += _h(p) + gap_in * k
         y += gh + gap_out * k
-    by = S - 36
-    if handle:
-        _put(fr, _t(INTER, handle, 28, white, "Bold"), 60, by)
+    hc = L["h_col"]
+    if under:  # the handle centred under the words, like a signature
+        _put(fr, _t(L.get("h_font", INTER), handle, 30, hc, "Bold"), S / 2, y - gap_out * k + 46, "c")
+    elif handle:
+        _put(fr, _t(INTER, handle, 28, hc, "Bold"), 60, S - 36)
     if of > 1:
-        _put(fr, _t(INTER, f"{n} / {of}", 28, white, "Bold"), S - 60, by, "r")
+        _put(fr, _t(INTER, f"{n} / {of}", 28, L.get("n_col", hc), "Bold"), S - 60, S - 36, "r")
     return fr
+
+
+def _draw_torn(page, pal, handle, n, of):
+    """Torn blue paper at the top and bottom, light paper in between; every word centred with its meaning tight
+    under it: the English in a strong serif, the Arabic big and red, each line on a soft glow; several meanings
+    split by blue bars."""
+    blue = _page_tones(pal)[1] if pal in MONO_SETS else TORN
+
+    def bg(has_t, has_s):
+        rng = np.random.default_rng(3)
+        yy, xx = np.mgrid[0:S, 0:S].astype(np.float32)
+        v = np.clip(((xx - S / 2) / (S * 0.7)) ** 2 + ((yy - S / 2) / (S * 0.6)) ** 2, 0, 1)
+        base = np.array((245, 247, 249), np.float32) * (1 - 0.06 * v[..., None]) + rng.normal(0, 1.2, (S, S, 1))
+        fr = Image.fromarray(np.clip(base, 0, 255).astype(np.uint8)).convert("RGBA")
+        top_h = 150 if has_t and has_s else 112 if has_t or has_s else 64
+        bot_h = 78
+        top = _torn_band(top_h, blue, seed=11)
+        bot = _torn_band(bot_h, blue, seed=12).transpose(Image.FLIP_TOP_BOTTOM)
+        for band, y0 in ((top, 0), (bot, S - bot.height)):
+            sh = _colored(band.split()[3].filter(ImageFilter.GaussianBlur(7)), (0, 0, 0), 0.3)
+            fr.alpha_composite(sh, (0, y0 + (6 if y0 == 0 else -6)))
+            fr.alpha_composite(band, (0, y0))
+        return fr, top_h + 50, S - bot_h - 50, 24
+
+    white = (255, 255, 255)
+    return _poster(page, handle, n, of, dict(
+        bg=bg, t_font=LITERATA, t_weight="ExtraBold", t_col=white, s_col=white,
+        en=(LITERATA, "ExtraBold", (24, 22, 20), 80, GLOW), ar=(TAJAWAL, "Black", TORN_RED, 82, GLOW,
+                                                               _mix(blue, (0, 0, 0), 0.08)),
+        h_col=white))
+
+
+CLOUD_SKY = (222, 237, 250)   # the sky around the page
+CLOUD_RED = (220, 30, 38)     # the English words and the bars
+CLOUD_GLOW = (255, 229, 224)  # the soft pink behind the English
+
+
+def _cloud_band(h, col, seed=1, down=True):
+    """A strip of sky with a puffy cloud edge (overlapping round bumps of different sizes) at about h."""
+    rng = np.random.default_rng(seed)
+    H_ = int(h + 90)
+    s = 2
+    m = Image.new("L", (S * s, H_ * s), 0)
+    d = ImageDraw.Draw(m)
+    d.rectangle([0, 0, S * s, h * s], fill=255)
+    x = -40.0
+    while x < S + 60:
+        r = rng.uniform(34, 70)
+        cy = h + rng.uniform(-6, 14) - r * 0.35
+        d.ellipse([(x - r) * s, (cy - r) * s, (x + r) * s, (cy + r) * s], fill=255)
+        x += r * rng.uniform(0.95, 1.35)
+    m = m.resize((S, H_), Image.LANCZOS).filter(ImageFilter.GaussianBlur(1.2))
+    im = _colored(m, col)
+    return im if down else im.transpose(Image.FLIP_TOP_BOTTOM)
+
+
+def _draw_clouds(page, pal, handle, n, of):
+    """A white page framed by soft sky clouds; every English word big and red on a soft pink glow, its meaning in
+    heavy black Arabic under it, several meanings split by red bars; the handle centred under the words."""
+    sky = _mix(_page_tones(pal)[1], (255, 255, 255), 0.72) if pal in MONO_SETS else CLOUD_SKY
+
+    def bg(has_t, has_s):
+        fr = Image.new("RGBA", (S, S), (255, 255, 255, 255))
+        top_h = 150 if has_t and has_s else 118 if has_t or has_s else 70
+        bot_h = 74
+        side = Image.new("L", (S, S), 0)  # a thin soft sky frame on the sides
+        ImageDraw.Draw(side).rectangle([0, 0, S, S], fill=255)
+        ImageDraw.Draw(side).rounded_rectangle([30, 0, S - 30, S], 40, fill=0)
+        fr.alpha_composite(_colored(side.filter(ImageFilter.GaussianBlur(14)), sky))
+        for band, y0 in ((_cloud_band(top_h, sky, 21), 0), (_cloud_band(bot_h, sky, 22, down=False), None)):
+            y0 = 0 if y0 == 0 else S - band.height
+            glow = _colored(band.split()[3].filter(ImageFilter.GaussianBlur(10)), _mix(sky, (0, 0, 0), 0.06), 0.5)
+            fr.alpha_composite(glow, (0, y0))
+            fr.alpha_composite(band, (0, y0))
+        return fr, top_h + 64, S - bot_h - 60, 28
+
+    ink = (18, 18, 20)
+    return _poster(page, handle, n, of, dict(
+        bg=bg, t_font=POPPINS_B, t_weight="Bold", t_col=CLOUD_RED, s_col=ink,
+        en=(POPPINS_B, "Bold", CLOUD_RED, 84, CLOUD_GLOW), ar=(TAJAWAL, "Black", ink, 80, None, CLOUD_RED),
+        h_col=(70, 70, 78), h_font=POPPINS_B, handle_at="under", sub_ink=(110, 110, 118)))
 
 
 _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebook": _draw_notebook,
@@ -1865,7 +1983,8 @@ _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebo
          "sticky": _draw_sticky, "brutal": _draw_brutal, "aurora": _draw_aurora,
          "highlighter": _draw_highlighter, "brush": _draw_brush, "swoosh": _draw_swoosh, "tape": _draw_tape,
          "soft": _draw_soft, "pencil": _draw_pencil, "document": _draw_document,
-         "skycards": _draw_skycards, "torn": _draw_torn}
+         "skycards": _draw_skycards, "torn": _draw_torn,
+         "clouds": _draw_clouds}
 
 
 def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1, fonts=0, layout="side",
