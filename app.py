@@ -644,6 +644,7 @@ button {user-select: none; -webkit-user-select: none;}
   font-size: 1rem !important;}  /* Arabic reads badly in the table's monospace font */
 """
 PREVIEW_H = "calc(100vh - 404px)"
+POST_H = "calc(100vh - 150px)"  # the square post preview takes the whole right column
 
 
 def project_bar():
@@ -782,29 +783,39 @@ def shared_fields(st, ending):
             st["intro_sound"], st["tick_sound"], st["tick_gain"]]
 
 
-def preview_panel(tpl):
-    """Right column: live picture / video, time slider and all render buttons — always visible."""
+def preview_panel(tpl, posts=False):
+    """Right column: live picture / video, time slider and all render buttons — always visible. posts=True adds
+    the 🖼️ Image posts preview, shown there instead while that sub-tab is open (post_col / video_col)."""
     preview, render, save, load, example, clip = make_actions(tpl)
+    extra = {}
     with gr.Column(scale=2, min_width=340, elem_classes="preview-col"):
-        with gr.Tabs(selected="pic") as out_tabs:
-            with gr.Tab("🖼️ Live preview", id="pic"):
-                img = gr.Image(label="Preview", type="pil", format="png", height=PREVIEW_H, show_label=False,
-                               interactive=False)
-            with gr.Tab("🎞️ Video", id="vid"):
-                vid = gr.Video(label="Video", height=PREVIEW_H, show_label=False, autoplay=True)
-        with gr.Row(equal_height=True, elem_classes="opt-row"):
-            safe = gr.Checkbox(value=False, label="Safe zone", container=False, min_width=110)
-            auto = gr.Checkbox(value=True, label="Live update", container=False, min_width=110)
-            pv_btn = gr.Button("🔄 Refresh", size="sm", min_width=90)
-        t = gr.Slider(0, 60, value=3.0, step=0.1, label="Preview time (s)")
-        with gr.Row(equal_height=True):
-            clip_btn = gr.Button("▶️ Quick motion (6 s)", min_width=130)
-            rd_btn = gr.Button("🎬 Render video", variant="primary", min_width=130)
-            stop_btn = gr.Button("⏹ Stop", variant="stop", min_width=80, scale=0)
-        info = gr.Markdown(elem_classes="info-line")
+        if posts:
+            with gr.Column(visible=False) as post_col:
+                gr.Markdown("**🖼️ Post preview** — the first post, redrawn on every change")
+                post_img = gr.Image(type="pil", format="png", height=POST_H, show_label=False, interactive=False)
+                post_info = gr.Markdown(elem_classes="info-line")
+            extra = dict(post_col=post_col, post_img=post_img, post_info=post_info)
+        with gr.Column(visible=True) as video_col:
+            with gr.Tabs(selected="pic") as out_tabs:
+                with gr.Tab("🖼️ Live preview", id="pic"):
+                    img = gr.Image(label="Preview", type="pil", format="png", height=PREVIEW_H, show_label=False,
+                                   interactive=False)
+                with gr.Tab("🎞️ Video", id="vid"):
+                    vid = gr.Video(label="Video", height=PREVIEW_H, show_label=False, autoplay=True)
+            with gr.Row(equal_height=True, elem_classes="opt-row"):
+                safe = gr.Checkbox(value=False, label="Safe zone", container=False, min_width=110)
+                auto = gr.Checkbox(value=True, label="Live update", container=False, min_width=110)
+                pv_btn = gr.Button("🔄 Refresh", size="sm", min_width=90)
+            t = gr.Slider(0, 60, value=3.0, step=0.1, label="Preview time (s)")
+            with gr.Row(equal_height=True):
+                clip_btn = gr.Button("▶️ Quick motion (6 s)", min_width=130)
+                rd_btn = gr.Button("🎬 Render video", variant="primary", min_width=130)
+                stop_btn = gr.Button("⏹ Stop", variant="stop", min_width=80, scale=0)
+            info = gr.Markdown(elem_classes="info-line")
         busy = gr.State(False)  # True while a clip / video is being made
     return dict(busy=busy, img=img, vid=vid, tabs=out_tabs, t=t, safe=safe, auto=auto, pv=pv_btn, clip=clip_btn, rd=rd_btn,
-                stop=stop_btn, info=info, fns=(preview, render, save, load, example, clip))
+                stop=stop_btn, info=info, fns=(preview, render, save, load, example, clip), video_col=video_col,
+                **extra)
 
 
 def wire(proj, pv, fields):
@@ -1417,12 +1428,11 @@ def posts_ui():
         p_prev = gr.Button("👁️ Preview the first post", min_width=150)
         p_go = gr.Button("🖼️ Make all posts", variant="primary", min_width=150)
     p_info = gr.Markdown()
-    p_img = gr.Image(label="Preview", type="pil", height=420, visible=False)
     p_gal = gr.Gallery(label="Posts", columns=4, height=420, visible=False, object_fit="contain")
     p_zip = gr.DownloadButton("📦 Download all posts (.zip)", visible=False, variant="primary")
     return dict(sheet=sheet, tab=tab, title=title, sub=sub, p_style=p_style, p_pal=p_pal, p_per=p_per,
                 p_font=p_font, p_lay=p_lay, p_fen=p_fen, p_far=p_far, p_hl=p_hl, p_handle=p_handle, p_prev=p_prev,
-                p_go=p_go, p_info=p_info, p_img=p_img, p_gal=p_gal, p_zip=p_zip)
+                p_go=p_go, p_info=p_info, p_gal=p_gal, p_zip=p_zip)
 
 
 def wire_wl_import(ui, pv, fields, items_box, audio_box):
@@ -1528,7 +1538,7 @@ def wire_wl_import(ui, pv, fields, items_box, audio_box):
                 **_progress_on(dep, pv["vid"]))
 
 
-def wire_posts(ui):
+def wire_posts(ui, pv):
     """🖼️ Image posts: the sheet cut into posts of p_per words, previewed and saved as PNGs + a zip."""
     p_inputs = [ui["sheet"], ui["tab"], ui["p_per"], ui["title"], ui["sub"]]
 
@@ -1547,7 +1557,7 @@ def wire_posts(ui):
         pgs, problems = post_pages(sheet, tab, per, title, sub)
         img = word_posts.post(pgs[0], style, pal, handle, 1, len(pgs), font, lay, fen, far, hl)
         note = f"Post 1 of **{len(pgs)}**" + (f" · ⚠️ {len(problems)} row(s) left out: {problems[0]}" if problems else "")
-        return gr.update(value=img, visible=True), note
+        return img, note
 
     def post_all(sheet, tab, per, title, sub, style, pal, handle, font, lay, fen, far, hl,
                  progress=gr.Progress()):
@@ -1559,13 +1569,12 @@ def wire_posts(ui):
         n = len(paths)
         note = (f"✅ **{n} post{'s' if n != 1 else ''}** saved in `{out_dir}`"
                 + (f" · ⚠️ {len(problems)} row(s) left out: {problems[0]}" if problems else ""))
-        return (gr.update(value=paths, visible=True), gr.update(value=zpath, visible=True), note,
-                gr.update(visible=False))
+        return gr.update(value=paths, visible=True), gr.update(value=zpath, visible=True), note
 
     p_look = [ui["p_style"], ui["p_pal"], ui["p_handle"], ui["p_font"], ui["p_lay"], ui["p_fen"], ui["p_far"],
               ui["p_hl"]]
-    ui["p_prev"].click(post_preview, p_inputs + p_look, [ui["p_img"], ui["p_info"]])
-    ui["p_go"].click(post_all, p_inputs + p_look, [ui["p_gal"], ui["p_zip"], ui["p_info"], ui["p_img"]])
+    ui["p_prev"].click(post_preview, p_inputs + p_look, [pv["post_img"], pv["post_info"]])
+    ui["p_go"].click(post_all, p_inputs + p_look, [ui["p_gal"], ui["p_zip"], ui["p_info"]])
 
     def live(*vals):  # the preview follows every change once a sheet is in (silent without one)
         if not vals[0]:
@@ -1577,7 +1586,7 @@ def wire_posts(ui):
 
     ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
     gr.on(triggers=[c.change for c in p_inputs + p_look], fn=live, inputs=p_inputs + p_look,
-          outputs=[ui["p_img"], ui["p_info"]], trigger_mode="always_last")
+          outputs=[pv["post_img"], pv["post_info"]], trigger_mode="always_last")
 
 
 # ------------------------------------------------------------------ English Texts
@@ -2891,7 +2900,7 @@ def build_ui():
             with gr.Row(equal_height=False):
                 with gr.Column(scale=3, min_width=420):
                     vc_proj = project_bar()
-                    with gr.Tabs():
+                    with gr.Tabs() as vc_tabs:
                         with gr.Tab("📝 Items"):
                             with gr.Column(elem_classes="pane"):
                                 with gr.Row():
@@ -3003,11 +3012,18 @@ def build_ui():
                                                                  v_timer, v_tfx, v_recap, v_audio, v_again,
                                                                  v_lstyle, v_lhl, v_cboard, v_cmark, v_ccol, v_lpal,
                                                                  v_lfont, v_lex, v_lkar, v_lhide, v_lwait]
-                vc_pv = preview_panel("vocab")
+                vc_pv = preview_panel("vocab", posts=True)
             wire(vc_proj, vc_pv, vc_fields)
             wire_vc_batch(vxl, vc_pv, vc_fields)
             wire_wl_import(wl, vc_pv, vc_fields, v_items, v_audio)
-            wire_posts(posts)
+            wire_posts(posts, vc_pv)
+
+            def right_side(evt: gr.SelectData):
+                """🖼️ Image posts open: the post preview fills the right column, else the video preview."""
+                on = "Image posts" in str(evt.value)
+                return gr.update(visible=on), gr.update(visible=not on)
+            vc_tabs.select(right_side, None, [vc_pv["post_col"], vc_pv["video_col"]], show_progress="hidden",
+                           queue=False)
             gr.on(triggers=[v_audio.change, v_items.change], fn=clips_report, inputs=[v_audio, v_items],
                   outputs=v_ainfo, trigger_mode="always_last", show_progress="hidden")
             v_add.click(add_item, [v_items, v_type], v_items)
