@@ -82,6 +82,8 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `_page_tones`); colour set `sky_page` (black · sky #7DC6F3 · line grey) is in `MONO_SETS`: the rainbow designs use
   its one colour for every word (`_mono`); `MORE_STYLES` = 13 older card/poster designs, not in the menu. A word with a
   `def` is one block (`_entry`: word + IPA, then the meaning wrapped even, `DEF_SIZE` / `DEF_MIN`). Colours = `DUOS`.
+  Fonts: `FONT_SETS` = 10 English + Arabic pairs (`FONT_CHOICES`, 0 = the design's own); `post(..., fonts=k)` sets
+  `_FONT` (`use_fonts`) and `_t` swaps every design font for the pair's English / Arabic one (by `is_rtl`).
   The user's taste: clean background, clear bold type, one realistic mark per word, not busy — never propose neon looks.
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
   (ElevenLabs word timings); words ink in as spoken (`vs`/`ve` per word), highlighted words get a marker swipe, fly

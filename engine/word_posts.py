@@ -11,7 +11,7 @@ import os
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from .core import ROOT, text_img_in
+from .core import ROOT, is_rtl, text_img_in
 from .list_designs import (ALEXANDRIA, BALOO, DMSANS, DUOS, FREDOKA, INTER, LITERATA, MONTSERRAT,
                            PLEX_B, POPPINS_B, POPPINS_K, RUBIK, TAJAWAL, VAZIR, _circle_mask, _colored, _font,
                            _grad_text, _lum, _mix, _round_mask, _vis_w)
@@ -34,8 +34,53 @@ DEFAULT_STYLE = "highlighter"
 DEFAULT_PALETTE = "navy_juice"
 
 
+# ---------------------------------------------------------------- fonts
+def _lib(family, name):
+    return _font(family, name)
+
+
+# ready English + Arabic pairs (all bundled, OFL): every design's English fonts -> the first, Arabic -> the second;
+# each design keeps its own weights (Bold / ExtraBold …). The IPA always stays Noto Sans.
+FONT_SETS = [
+    ("Inter + Vazirmatn (clean, modern)", _lib("Inter", "Inter[opsz,wght].ttf"),
+     _lib("Vazirmatn", "Vazirmatn[wght].ttf")),
+    ("Poppins + Tajawal (friendly, round)", _lib("Poppins", "Poppins-Bold.ttf"), _lib("Tajawal", "Tajawal-Bold.ttf")),
+    ("Montserrat + Almarai (bold, strong)", _lib("Montserrat", "Montserrat[wght].ttf"),
+     _lib("Almarai", "Almarai-Bold.ttf")),
+    ("DM Sans + IBM Plex Arabic (neat, professional)", _lib("DMSans", "DMSans[opsz,wght].ttf"),
+     _lib("IBMPlexSansArabic", "IBMPlexSansArabic-Bold.ttf")),
+    ("Plus Jakarta + Alexandria (fresh, stylish)", _lib("PlusJakartaSans", "PlusJakartaSans[wght].ttf"),
+     _lib("Alexandria", "Alexandria[wght].ttf")),
+    ("Lexend + Changa (easy to read)", _lib("Lexend", "Lexend[wght].ttf"), _lib("Changa", "Changa[wght].ttf")),
+    ("Nunito + Baloo (soft, for kids)", _lib("Nunito", "Nunito[wght].ttf"),
+     _lib("BalooBhaijaan2", "BalooBhaijaan2[wght].ttf")),
+    ("Rubik + Noto Kufi (geometric)", _lib("Rubik", "Rubik[wght].ttf"),
+     _lib("NotoKufiArabic", "NotoKufiArabic[wght].ttf")),
+    ("Literata + Noto Naskh (book, serif)", _lib("Literata", "Literata[opsz,wght].ttf"),
+     _lib("NotoNaskhArabic", "NotoNaskhArabic[wght].ttf")),
+    ("Playfair + Amiri (elegant, classic)", _lib("PlayfairDisplay", "PlayfairDisplay[wght].ttf"),
+     _lib("Amiri", "Amiri-Bold.ttf")),
+]
+FONT_CHOICES = [("Design's own fonts", 0)] + [(f"{k}. {name}", k) for k, (name, _, _) in enumerate(FONT_SETS, 1)]
+_FONT = {}  # the pair in use while a post is drawn: {"en": path, "ar": path}
+
+
+def use_fonts(k):
+    """Pick font set k (1-10) for the next posts; 0 / anything else = each design's own fonts."""
+    _FONT.clear()
+    try:
+        k = int(k or 0)
+    except (TypeError, ValueError):
+        k = 0
+    if 1 <= k <= len(FONT_SETS):
+        _, en, ar = FONT_SETS[k - 1]
+        _FONT.update(en=en, ar=ar)
+
+
 # ---------------------------------------------------------------- text
 def _t(font, txt, size, col, weight="Bold"):
+    if _FONT:  # a ready pair replaces the design's fonts: Arabic text gets the Arabic one
+        font = _FONT["ar" if is_rtl(str(txt)) else "en"]
     return text_img_in(font, str(txt), max(12, int(size)), tuple(col), weight, shadow=False)
 
 
@@ -1569,15 +1614,19 @@ _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebo
          "skycards": _draw_skycards}
 
 
-def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1):
-    """One page of words as a square RGB image."""
+def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1, fonts=0):
+    """One page of words as a square RGB image (fonts = a FONT_SETS number, 0 = the design's own)."""
     words = [dict(en=w["en"], ar=w["ar"], ipa=w.get("ipa", ""), **({"def": w["def"]} if w.get("def") else {}))
              for w in page.get("words", [])][:6]
     if not words:
         raise ValueError("a post needs at least one word")
     pg = dict(title=page.get("title", ""), sub=page.get("sub", ""), words=words)
     fn = _DRAW.get(style, _DRAW[DEFAULT_STYLE])
-    return fn(pg, palette if palette in DUOS else DEFAULT_PALETTE, handle or "", n, of).convert("RGB")
+    use_fonts(fonts)
+    try:
+        return fn(pg, palette if palette in DUOS else DEFAULT_PALETTE, handle or "", n, of).convert("RGB")
+    finally:
+        use_fonts(0)
 
 
 # ---------------------------------------------------------------- a whole sheet -> posts
@@ -1601,7 +1650,7 @@ def pages(words, per=4, title="", subtitle=""):
 
 
 def make_posts(pgs, out_dir, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", progress=None,
-               stop=None):
+               stop=None, fonts=0):
     """Every page as post_NN.png in out_dir + all of them in one .zip -> (png paths, zip path)."""
     import zipfile
     os.makedirs(out_dir, exist_ok=True)
@@ -1610,7 +1659,7 @@ def make_posts(pgs, out_dir, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handl
         if stop:
             stop()
         path = os.path.join(out_dir, f"post_{k:02d}.png")
-        post(pg, style, palette, handle, k, len(pgs)).save(path, optimize=True)
+        post(pg, style, palette, handle, k, len(pgs), fonts).save(path, optimize=True)
         paths.append(path)
         if progress:
             progress(k / len(pgs), f"Post {k} of {len(pgs)}")
