@@ -12,9 +12,9 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 from .core import ROOT, text_img_in
-from .list_designs import (ALEXANDRIA, BALOO, DMSANS, DUOS, FREDOKA, INTER, LITERATA, MONTSERRAT, NASKH, PLEX_B,
-                           POPPINS_B, POPPINS_K, RUBIK, TAJAWAL, VAZIR, _circle_mask, _colored, _font, _grad_text,
-                           _lum, _mix, _round_mask, _vis_w)
+from .list_designs import (ALEXANDRIA, BALOO, DMSANS, DUOS, FREDOKA, INTER, LALEZAR, LITERATA, LOBSTER, MONTSERRAT,
+                           PLEX_B, POPPINS_B, POPPINS_K, RUBIK, TAJAWAL, VAZIR, _circle_mask, _colored, _font,
+                           _grad_text, _lum, _mix, _round_mask, _vis_w)
 from .word_list import MESSIRI, PATRICK, PLAYFAIR, RUQAA
 
 S = 1080  # square post
@@ -24,7 +24,8 @@ AMIRI = _font("Amiri", "Amiri-Bold.ttf")
 STYLES = [("Cards", "cards"), ("Flashcard grid", "grid"), ("Table", "table"), ("Notebook", "notebook"),
           ("Minimal", "minimal"), ("Chalkboard", "chalk"), ("Poster", "poster"), ("Glass", "glass"),
           ("Bento", "bento"), ("Swiss", "swiss"), ("Dictionary", "dictionary"), ("Chat", "chat"),
-          ("Sticky notes", "sticky"), ("Neo-brutal", "brutal"), ("Aurora", "aurora")]
+          ("Sticky notes", "sticky"), ("Neo-brutal", "brutal"), ("Aurora", "aurora"),
+          ("Highlighter", "highlighter"), ("Brush strokes", "brush")]
 DEFAULT_STYLE = "cards"
 DEFAULT_PALETTE = "navy_juice"
 
@@ -174,7 +175,7 @@ def _beside(a, b, gap):
     return out
 
 
-def _entry(w, k, f_en, c_en, c_ipa, en=64, ipa=34, w_en="Bold", align="l", wrap=None):
+def _entry(w, k, f_en, c_en, c_ipa, en=64, ipa=34, w_en="Bold", align="l", wrap=None, f_def=None):
     """(word image, IPA image or None). A word / idiom with an English meaning (`def`) becomes ONE block: the word
     with its IPA beside it, then the meaning wrapped in a few even lines (the IPA is then None). `wrap` = the width
     the design has for it (px); without it the meaning wraps at DEF_WRAP x k."""
@@ -184,11 +185,12 @@ def _entry(w, k, f_en, c_en, c_ipa, en=64, ipa=34, w_en="Bold", align="l", wrap=
         return e, i
     # readable on a phone (DEF_MIN), unless the page is crowded; always clearly smaller than the word itself
     size = min(max(en * k * DEF_SIZE, DEF_MIN * min(1.0, k / 0.55)), en * k * 0.75)
-    weight = "Regular" if f_en in _ONE_WEIGHT else "Medium"
+    f_def = f_def or f_en  # a script word font gets a plain font for its meaning
+    weight = "Regular" if f_def in _ONE_WEIGHT else "Medium"
     limit = wrap or DEF_WRAP * k
 
     def img(s):
-        return _t(f_en, s, size, c_ipa, weight)
+        return _t(f_def, s, size, c_ipa, weight)
 
     greedy, lines = _wrap(w["def"].split(), lambda s, f: _vis_w(img(s)) <= limit * f)
     for f in (0.95, 0.9, 0.85, 0.8, 0.75, 0.7):  # even lines: as narrow as possible with no extra line
@@ -203,8 +205,8 @@ def _entry(w, k, f_en, c_en, c_ipa, en=64, ipa=34, w_en="Bold", align="l", wrap=
 
 
 def _row_texts(w, k, f_en, f_ar, c_en, c_ipa, c_ar, en=64, ipa=34, ar=58, w_en="Bold", w_ar="Bold", align="l",
-               wrap=None):
-    e, i = _entry(w, k, f_en, c_en, c_ipa, en, ipa, w_en, align, wrap)
+               wrap=None, f_def=None):
+    e, i = _entry(w, k, f_en, c_en, c_ipa, en, ipa, w_en, align, wrap, f_def)
     a = _t(f_ar, w["ar"], ar * k, c_ar, w_ar)
     return e, i, a
 
@@ -1013,10 +1015,289 @@ def _draw_aurora(page, pal, handle, n, of):
     return fr
 
 
+# ---------------------------------------------------------------- hand-made marks (highlighter, red pen, brush)
+RED_PEN = (214, 40, 40)
+MARKER = (255, 214, 10)
+_NEWS = ("market council weather report minister city budget school league museum harbour station festival "
+         "science record election island energy village history garden railway theatre summer winter "
+         "national local daily morning evening review").split()
+
+
+def _smooth_noise(n, rng, scale, octaves=((24, 1.0), (7, 0.35))):
+    """1-D value noise of length n (smooth bumps every `period` samples), amplitude `scale`."""
+    out = np.zeros(n, np.float32)
+    for period, amp in octaves:
+        k = max(2, n // period + 2)
+        pts = rng.uniform(-1, 1, k)
+        out += np.interp(np.arange(n) / max(1, period), np.arange(k), pts) * amp
+    return out * scale
+
+
+def _marker_band(w, h, col=MARKER, seed=1, alpha=0.88):
+    """A highlighter stroke: flat ink with slightly wavy edges, slanted chisel ends and faint streaks."""
+    rng = np.random.default_rng(seed)
+    w, h = int(w), int(h)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    top = 2 + _smooth_noise(w, rng, 2.5)
+    bot = h - 3 + _smooth_noise(w, rng, 2.5)
+    slant = h * 0.35
+    left = 4 + (yy / h) * slant * 0.5 + rng.uniform(0, 4)
+    right = w - 6 - (1 - yy / h) * slant * 0.5 - rng.uniform(0, 4)
+    m = (yy >= top[None, :]) & (yy <= bot[None, :]) & (xx >= left) & (xx <= right)
+    streak = 0.86 + 0.14 * np.repeat(rng.uniform(0, 1, (h, 1)), w, axis=1)
+    a = Image.fromarray((m * streak * alpha * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(0.8))
+    return _colored(a, col)
+
+
+def _pen_path(pts, width, col, size, s=3):
+    """A pen stroke through `pts` with a width that swells in the middle and thins at both ends."""
+    big = Image.new("L", (int(size[0] * s), int(size[1] * s)), 0)
+    d = ImageDraw.Draw(big)
+    n = len(pts)
+    for j in range(n - 1):
+        t = j / max(1, n - 2)
+        wd = width * (0.45 + 0.55 * math.sin(math.pi * min(1, max(0, t))) ** 0.5)
+        (x0, y0), (x1, y1) = pts[j], pts[j + 1]
+        d.line([(x0 * s, y0 * s), (x1 * s, y1 * s)], fill=255, width=max(1, int(wd * s)))
+        r = wd * s / 2
+        d.ellipse([x1 * s - r, y1 * s - r, x1 * s + r, y1 * s + r], fill=255)
+    return _colored(big.resize((int(size[0]), int(size[1])), Image.LANCZOS), col)
+
+
+def _pen_circle(w, h, col=RED_PEN, width=6, seed=2):
+    """A hand-drawn loop around a w x h box: a little more than one turn, wobbling, ends overlapping."""
+    rng = np.random.default_rng(seed)
+    pad = width * 2 + 10
+    W_, H_ = w + 2 * pad, h + 2 * pad
+    cx, cy = W_ / 2, H_ / 2
+    a0 = math.radians(rng.uniform(150, 210))
+    turns = 1.12
+    ph = rng.uniform(0, 6.3, 2)
+    pts = []
+    for j in range(140):
+        t = j / 139
+        a = a0 + t * turns * 2 * math.pi
+        grow = 1 + 0.06 * t  # the second pass runs a bit wider, as a real hand does
+        rx = w / 2 * grow * (1 + 0.03 * math.sin(3 * a + ph[0]))
+        ry = h / 2 * grow * (1 + 0.05 * math.sin(2 * a + ph[1]))
+        pts.append((cx + rx * math.cos(a) + t * 6, cy + ry * math.sin(a) - t * 3))
+    return _pen_path(pts, width, col, (W_, H_)), pad
+
+
+def _pen_underline(w, col=RED_PEN, width=5, seed=3):
+    """Two quick pen strokes under a word, the second slightly shorter and tilted."""
+    rng = np.random.default_rng(seed)
+    H_ = 34
+    im = Image.new("RGBA", (int(w) + 20, H_), (0, 0, 0, 0))
+    for k, (x0, x1, y0, y1) in enumerate(((4, w + 8, 10, 14), (w * 0.12, w + 2, 22, 19))):
+        bow = rng.uniform(-3, 3)
+        pts = [(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + bow * math.sin(math.pi * t)) for t in np.linspace(0, 1, 40)]
+        im.alpha_composite(_pen_path(pts, width * (1 - 0.15 * k), col, im.size))
+    return im
+
+
+def _newsprint(seed=5):
+    """Old newspaper paper: warm off-white, blurred columns of print and headlines, grain and a soft vignette."""
+    rng = np.random.default_rng(seed)
+    fr = Image.new("RGBA", (S, S), (236, 230, 216, 255))
+    ink = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    y = -20
+    while y < S:
+        if rng.uniform() < 0.25:  # a headline
+            txt = " ".join(rng.choice(_NEWS, 2)).title()
+            im = _t(LITERATA, txt, int(rng.integers(48, 70)), (40, 36, 30), "Bold")
+            ink.alpha_composite(im, (int(rng.integers(-60, S // 2)), int(y)))
+            y += im.height - 20
+            continue
+        for c in range(4):  # body text in columns
+            line = " ".join(rng.choice(_NEWS, 4))
+            im = _t(LITERATA, line, 26, (60, 55, 46), "Regular")
+            ink.alpha_composite(im.crop((0, 0, min(im.width, 280), im.height)), (c * 280 - 10, int(y)))
+        y += 34
+    yy, xx = np.mgrid[0:S, 0:S].astype(np.float32)
+    centre = np.clip(((xx - S / 2) / (S * 0.52)) ** 2 + ((yy - S / 2) / (S * 0.56)) ** 2, 0, 1)
+    a = np.array(ink.split()[3], np.float32) * (0.06 + 0.22 * centre)  # the print fades out behind the words
+    ink.putalpha(Image.fromarray(a.astype(np.uint8)))
+    fr.alpha_composite(ink.filter(ImageFilter.GaussianBlur(3.2)))
+    v = 1 - 0.28 * np.clip(((xx - S / 2) / (S * 0.75)) ** 2 + ((yy - S / 2) / (S * 0.75)) ** 2, 0, 1)
+    arr = np.array(fr.convert("RGB"), np.float32) * v[..., None]
+    arr += rng.normal(0, 5, (S, S, 1))
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
+
+
+def _draw_highlighter(page, pal, handle, n, of):
+    """Newspaper paper; the title and every word under a yellow highlighter, the last title word and the numbers
+    circled in red pen, the meanings underlined in red pen."""
+    dk, ac, ac2 = _tones(pal)
+    fr = _newsprint()
+    ink, grey = (22, 20, 18), (88, 82, 72)
+    marker = MARKER if _lum(ac) < 0.45 or _contrast(ac, (236, 230, 216)) < 1.15 else ac
+    y = 56
+    if page.get("title"):
+        words_t = page["title"].split()
+        t = _fit_one(lambda s_: _t(PLAYFAIR, page["title"], s_, ink, "Bold"), 104, S - 220)
+        x0 = S / 2 - _vis_w(t) / 2
+        lit = t
+        if len(words_t) > 1:  # highlight the first words, circle the last one
+            px = _font_px(t, page["title"])
+            lit = _t(PLAYFAIR, " ".join(words_t[:-1]), px, ink, "Bold")
+            last = _t(PLAYFAIR, words_t[-1], px, ink, "Bold")
+            circ, pad = _pen_circle(_vis_w(last) + 34, _h(t) + 26, RED_PEN, 6, seed=4)
+            lx = x0 + _vis_w(t) - _vis_w(last)
+            fr.alpha_composite(circ, (int(lx - 17 - pad), int(y - 13 - pad)))
+        band = _marker_band(_vis_w(lit) + 40, _h(t) * 0.62, marker, seed=7)
+        fr.alpha_composite(band, (int(x0 - 20), int(y + _h(t) * 0.42)))
+        _put(fr, t, S / 2, y + _h(t) / 2, "c")
+        y += _h(t) + 34
+    d = ImageDraw.Draw(fr)
+    if page.get("sub"):
+        st = _fit_one(lambda s_: _t(VAZIR, page["sub"], s_, ink, "Medium"), 34, S - 260)
+        d.line([(120, y), (S - 120, y)], fill=ink, width=2)
+        _put(fr, st, S / 2, y + 14 + _h(st) / 2, "c")
+        y += _h(st) + 28
+        d.line([(120, y), (S - 120, y)], fill=ink, width=2)
+        y += 10
+    words = page["words"]
+    xl, xr = 150, S - 80
+    top0 = y + 18
+    ys, rh = _rows(top0, S - 96, len(words), 0)
+    rh = min(rh, 200)
+    top = (top0 + S - 96) / 2 - rh * len(words) / 2
+
+    def texts(w, k):
+        return _row_texts(w, k, PLAYFAIR, AMIRI, ink, grey, ink, en=66, ipa=32, ar=62)
+
+    k = _common(words, lambda w, k: _sbs_need(*texts(w, k), xr - xl, rh * 0.8), k_max=1.15)
+    for j, w in enumerate(words):
+        cy = top + j * rh + rh / 2
+        e, i, a = texts(w, k)
+        word = _t(PLAYFAIR, w["en"], 66 * k, ink, "Bold")
+        hh = _h(e) + (8 + _h(i) if i is not None else 0)
+        ytop = cy - hh / 2
+        band = _marker_band(_vis_w(word) + 26, _h(word) * 0.66, marker, seed=20 + j)
+        fr.alpha_composite(band, (int(xl - 13), int(ytop + _h(word) * 0.4)))
+        _side_by_side(fr, e, i, a, xl, xr, cy)
+        ul = _pen_underline(_vis_w(a), RED_PEN, 4, seed=40 + j)
+        fr.alpha_composite(ul, (int(xr - _vis_w(a) - 6), int(cy + _h(a) / 2 - 4)))
+        num = _t(PLAYFAIR, str(j + 1), 40, ink, "Bold")
+        circ, pad = _pen_circle(58, 58, RED_PEN, 4, seed=60 + j)
+        fr.alpha_composite(circ, (int(84 - 29 - pad), int(cy - 29 - pad)))
+        _put(fr, num, 84, cy, "c")
+    _footer(fr, handle, n, of, grey, font=PLAYFAIR)
+    return fr
+
+
+def _font_px(im, txt):
+    """The font size a fitted text image was drawn at (its height ratio to the text drawn at 100 px)."""
+    ref = _t(PLAYFAIR, txt, 100, (0, 0, 0), "Bold")
+    return max(12, int(round(100 * _h(im) / max(1, _h(ref)))))
+
+
+_WATER = [(250, 168, 20), (240, 82, 110), (86, 70, 64), (12, 140, 236), (34, 170, 120), (130, 90, 220)]
+
+
+def _brush_stroke(w, h, col, seed=1):
+    """A dry-brush watercolour stroke: bristle tracks with ragged, frayed ends, wavy edges, pale streaks and
+    darker pooled edges."""
+    rng = np.random.default_rng(seed)
+    w, h = int(w), int(h)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    top = h * 0.08 + _smooth_noise(w, rng, h * 0.05, ((60, 1.0), (9, 0.4)))
+    bot = h * 0.92 + _smooth_noise(w, rng, h * 0.05, ((60, 1.0), (9, 0.4)))
+    # bristles: every 2 px row starts / ends at its own place (frayed ends), a few strands reach much further
+    rows = np.arange(h)
+    s0 = w * 0.05 + np.abs(_smooth_noise(h, rng, w * 0.035, ((14, 1.0), (3, 0.6))))
+    e0 = w * 0.95 - np.abs(_smooth_noise(h, rng, w * 0.04, ((14, 1.0), (3, 0.6))))
+    long_ = rng.uniform(0, 1, h) < 0.08
+    s0[long_] -= rng.uniform(0, w * 0.04, long_.sum())
+    e0[long_] += rng.uniform(0, w * 0.04, long_.sum())
+    m = ((xx >= s0[rows][:, None]) & (xx <= e0[rows][:, None]) &
+         (yy >= top[None, :]) & (yy <= bot[None, :])).astype(np.float32)
+    # dry-brush gaps: thin pale streaks that start near the ends of the stroke
+    for _ in range(int(h / 22)):
+        r = int(rng.integers(int(h * 0.15), int(h * 0.85)))
+        th = int(rng.integers(1, 3))
+        fade = rng.uniform(0.35, 0.7)
+        if rng.uniform() < 0.5:
+            m[r:r + th, :int(rng.uniform(w * 0.08, w * 0.18))] *= fade
+        else:
+            m[r:r + th, int(rng.uniform(w * 0.84, w * 0.93)):] *= fade
+    a = Image.fromarray((np.clip(m, 0, 1) * 255).astype(np.uint8))
+    da = ImageDraw.Draw(a)
+    for _ in range(10):  # paint specks flicked off near both ends
+        x = rng.uniform(0, w * 0.06) if rng.uniform() < 0.5 else rng.uniform(w * 0.94, w)
+        y, r = rng.uniform(h * 0.15, h * 0.85), rng.uniform(1.2, 3.2)
+        da.ellipse([x - r, y - r, x + r, y + r], fill=230)
+    a = a.filter(ImageFilter.GaussianBlur(0.9))
+    am = np.array(a, np.float32) / 255
+    edge = np.clip(am - np.array(a.filter(ImageFilter.GaussianBlur(5)), np.float32) / 255, 0, 1)
+    tex = 0.95 + 0.05 * _smooth_noise(w, rng, 1.0, ((150, 1.0),))[None, :] * np.ones((h, 1))  # gentle wash
+    rgb = np.array(col, np.float32)[None, None, :] * (tex[..., None] * (1 - 0.35 * edge[..., None]))
+    out = np.dstack([np.clip(rgb, 0, 255), (am * 255)[..., None]]).astype(np.uint8)
+    return Image.fromarray(out, "RGBA")
+
+
+def _soft_shadow_text(fr, im, x, y, anchor="l"):
+    sh = _colored(im.split()[3].filter(ImageFilter.GaussianBlur(4)), (0, 0, 0), 0.35)
+    _put(fr, sh, x + 2, y + 3, anchor)
+    _put(fr, im, x, y, anchor)
+
+
+def _draw_brush(page, pal, handle, n, of):
+    """Watercolour brush strokes on paper, one colour per word; a script title, white type on the strokes."""
+    dk, ac, ac2 = _tones(pal)
+    rng = np.random.default_rng(9)
+    arr = np.full((S, S, 3), (250, 248, 243), np.float32) + rng.normal(0, 3, (S, S, 1))
+    fr = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
+    y = 46
+    if page.get("title"):
+        t = _fit_one(lambda s_: _t(LOBSTER, page["title"], s_, dk, "Regular"), 100, S - 180)
+        _put(fr, t, S / 2, y + _h(t) / 2, "c")
+        y += _h(t) + 16
+    if page.get("sub"):
+        st = _fit_one(lambda s_: _t(ALEXANDRIA, page["sub"], s_, _mix(dk, (255, 255, 255), 0.3), "SemiBold"), 36,
+                      S - 200)
+        _put(fr, st, S / 2, y + _h(st) / 2, "c")
+        y += _h(st) + 12
+    words = page["words"]
+    top0 = y + 14
+    gap = 12
+    ys, rh = _rows(top0, S - 92, len(words), gap)
+    rh = min(rh, 175)
+    top = (top0 + S - 92) / 2 - (rh * len(words) + gap * (len(words) - 1)) / 2
+    x0, x1 = 34, S - 34
+    xl, xr = x0 + (x1 - x0) * 0.1, x1 - (x1 - x0) * 0.1
+    white = (255, 255, 255)
+    soft = (255, 255, 255)
+
+    def texts(w, k):
+        return _row_texts(w, k, LOBSTER, LALEZAR, white, soft, white, en=70, ipa=30, ar=62, w_en="Regular",
+                          w_ar="Regular", f_def=MONTSERRAT)
+
+    k = _common(words, lambda w, k: _sbs_need(*texts(w, k), xr - xl, rh * 0.74), k_max=1.15)
+    for j, w in enumerate(words):
+        yy = top + j * (rh + gap)
+        col = _WATER[j % len(_WATER)]
+        stroke = _brush_stroke(x1 - x0, rh, col, seed=100 + j)
+        fr.alpha_composite(stroke, (int(x0), int(yy)))
+        e, i, a = texts(w, k)
+        cy = yy + rh / 2
+        if i is not None:
+            hh = _h(e) + 6 + _h(i)
+            _soft_shadow_text(fr, e, xl, cy - hh / 2 + _h(e) / 2)
+            _soft_shadow_text(fr, i, xl, cy + hh / 2 - _h(i) / 2)
+        else:
+            _soft_shadow_text(fr, e, xl, cy)
+        _soft_shadow_text(fr, a, xr, cy, "r")
+    _footer(fr, handle, n, of, _mix(dk, (255, 255, 255), 0.35), font=ALEXANDRIA)
+    return fr
+
+
 _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebook": _draw_notebook,
          "minimal": _draw_minimal, "chalk": _draw_chalk, "poster": _draw_poster, "glass": _draw_glass,
          "bento": _draw_bento, "swiss": _draw_swiss, "dictionary": _draw_dictionary, "chat": _draw_chat,
-         "sticky": _draw_sticky, "brutal": _draw_brutal, "aurora": _draw_aurora}
+         "sticky": _draw_sticky, "brutal": _draw_brutal, "aurora": _draw_aurora,
+         "highlighter": _draw_highlighter, "brush": _draw_brush}
 
 
 def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1):
