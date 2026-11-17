@@ -23,7 +23,7 @@ AMIRI = _font("Amiri", "Amiri-Bold.ttf")
 
 # the app's menu: the highlight designs (clean page, clear type, one real-looking mark per word)
 STYLES = [("Highlighter", "highlighter"), ("Brush strokes", "brush"), ("Swoosh", "swoosh"), ("Washi tape", "tape"),
-          ("Soft highlight", "soft"), ("Pencil", "pencil"), ("Document", "document"), ("Page cards", "pages"),
+          ("Soft highlight", "soft"), ("Pencil", "pencil"), ("Document", "document"),
           ("Sky cards", "skycards")]
 # more designs, kept for later (post() draws them too)
 MORE_STYLES = [("Cards", "cards"), ("Flashcard grid", "grid"), ("Table", "table"), ("Notebook", "notebook"),
@@ -1523,49 +1523,6 @@ def _draw_document(page, pal, handle, n, of):
     return fr
 
 
-def _draw_pages(page, pal, handle, n, of):
-    """Every word on its own little page icon: the word (+ IPA / meaning) on the white sheet, the Arabic on the
-    curled sky band."""
-    ink, sky, line, deep = _page_tones(pal)
-    fr = Image.new("RGBA", (S, S), (255, 255, 255, 255))
-    y = _header(fr, page, 56, ink, (110, 116, 124), INTER, VAZIR, size_t=72, weight_t="ExtraBold")
-    words = page["words"]
-    cols, rows = _grid_shape(len(words))
-    if len(words) == 3:
-        cols, rows = 3, 1
-    top, bot, m, g = max(y + 18, 70), S - 90, 60, 34
-    cw = (S - 2 * m - g * (cols - 1) - 30 * cols) / cols
-    ch = min((bot - top - g * (rows - 1)) / rows, cw * 1.25)
-    top = (top + bot) / 2 - (ch * rows + g * (rows - 1)) / 2
-    band = 0.27
-
-    def texts(w, k):
-        e, i = _entry(w, k, INTER, ink, (110, 116, 124), en=58, ipa=28, align="c", wrap=cw - 50)
-        return e, i, _t(VAZIR, w["ar"], 50 * k, ink, "Bold")
-
-    def need(w, k):
-        e, i, a = texts(w, k)
-        h = _h(e) + (8 + _h(i) if i is not None else 0)
-        return (max(_vis_w(e), _vis_w(i) if i is not None else 0) / (cw - 44), h / (ch * (1 - band) - 50),
-                _vis_w(a) / (cw - 70), _h(a) / (ch * band * 0.62))
-
-    k = _common(words, need, k_max=1.3)
-    for j, w in enumerate(words):
-        r, c = divmod(j, cols)
-        x0 = m + c * (cw + g + 30)
-        y0 = top + r * (ch + g)
-        doc = _doc_shape(cw, ch, sky, edge=7, band=band, r=16)
-        _shadow(fr, doc.split()[3], x0, y0, blur=14, alpha=0.1, dy=8)
-        fr.alpha_composite(doc, (int(x0), int(y0)))
-        e, i, a = texts(w, k)
-        hh = _h(e) + (8 + _h(i) if i is not None else 0)
-        sheet_mid = y0 + (ch - ch * band * 0.55) / 2 + 4
-        _stack(fr, [e] + ([i] if i is not None else []), x0 + cw / 2, sheet_mid - hh / 2, 8)
-        _put(fr, a, x0 + cw / 2 + 20, y0 + ch - ch * band / 2, "c")
-    _footer(fr, handle, n, of, (110, 116, 124), font=INTER)
-    return fr
-
-
 def _draw_skycards(page, pal, handle, n, of):
     """Light sky rows with a sky tab and the icon's grey lines as a quiet texture under the title."""
     ink, sky, line, deep = _page_tones(pal)
@@ -1606,7 +1563,7 @@ _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebo
          "bento": _draw_bento, "swiss": _draw_swiss, "dictionary": _draw_dictionary, "chat": _draw_chat,
          "sticky": _draw_sticky, "brutal": _draw_brutal, "aurora": _draw_aurora,
          "highlighter": _draw_highlighter, "brush": _draw_brush, "swoosh": _draw_swoosh, "tape": _draw_tape,
-         "soft": _draw_soft, "pencil": _draw_pencil, "document": _draw_document, "pages": _draw_pages,
+         "soft": _draw_soft, "pencil": _draw_pencil, "document": _draw_document,
          "skycards": _draw_skycards}
 
 

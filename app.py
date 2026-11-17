@@ -1368,7 +1368,8 @@ def wl_import_ui():
             p_style = gr.Dropdown(word_posts.STYLES, value=word_posts.DEFAULT_STYLE, label="Design",
                                   info="Highlighter = marker + red-pen loop · Brush strokes = watercolour · Swoosh = "
                                        "brush-pen underline · Washi tape · Soft highlight = app-style tint · "
-                                       "Pencil = coloured-pencil shading")
+                                       "Pencil = coloured-pencil shading · Document = the words on one page "
+                                       "(page-icon look) · Sky cards = light-blue rows (best with Sky page colours)")
             p_pal = gr.Dropdown(DUO_CHOICES, value=word_posts.DEFAULT_PALETTE, label="Colours",
                                 info="The title, marker / swoosh colour (a light accent is used as the marker)")
         with gr.Row():
