@@ -189,22 +189,49 @@ TEMPLATE_ROWS = [("English", "Arabic", "IPA (optional)", "Sample sentence (optio
                  ("Deadline", "موعد نهائي", "/ˈdedlaɪn/", "", "", "", "the time by which something must be done")]
 
 
+# 2nd tab: a ready sheet for the 🖼️ Image posts — several Arabic meanings in one cell split by "|" (a bar between
+# them on the posts; Torn paper / Clouds), an English meaning for each idiom
+POSTS_ROWS = [("English", "Arabic", "IPA (optional)", "English meaning (optional)", "Title (optional)",
+               "Subtitle (optional)"),
+              ("Paper Tiger", "نمر من ورق | قوة ظاهرية بلا فعل", "", "something that looks strong but is weak",
+               "Political Idioms", "تعابير سياسية"),
+              ("Smoke-filled Room", "الغرفة المغلقة | صفقات تُعقد في السر", "",
+               "a private place where secret deals are made"),
+              ("Bamboo Curtain", "الستار الخيزراني | عزلة الصين الشيوعية", "",
+               "the political barrier around communist China"),
+              ("Scapegoat", "كبش الفداء | من يُحمّل ذنب الآخرين", "/ˈskeɪpɡəʊt/",
+               "a person blamed for the mistakes of others"),
+              ("Durable", "متين | مُعمّر | دائم", "/ˈdjʊərəbl/", "", "Word Power", "كلمات قوية"),
+              ("Foundational", "تأسيسي | أساسي | جوهري", "/faʊnˈdeɪʃənl/", ""),
+              ("Genocide", "إبادة جماعية", "/ˈdʒenəsaɪd/", ""),
+              ("Infinitely", "إلى ما لا نهاية | بلا حدود", "/ˈɪnfɪnətli/", ""),
+              ("Intellectual", "فكري | مُثقّف، مُفكّر", "/ˌɪntəˈlektʃuəl/", "")]
+
+
+def _style_sheet(ws, rtl_cols, widths):
+    from openpyxl.styles import Alignment, Font, PatternFill
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="251A66")
+    for col in rtl_cols:  # the Arabic columns read right to left
+        for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
+            for c in row:
+                c.alignment = Alignment(horizontal="right", readingOrder=2)
+    for col, w in zip("ABCDEFG", widths):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"
+
+
 def write_template(path):
     import openpyxl
-    from openpyxl.styles import Alignment, Font, PatternFill
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Words"
     for row in TEMPLATE_ROWS:
         ws.append(list(row))
-    for c in ws[1]:
-        c.font = Font(bold=True, color="FFFFFF")
-        c.fill = PatternFill("solid", fgColor="251A66")
-    for col in (2, 6):  # the Arabic columns read right to left
-        for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
-            for c in row:
-                c.alignment = Alignment(horizontal="right", readingOrder=2)
-    for col, w in zip("ABCDEFG", (28, 34, 24, 60, 30, 30, 50)):
-        ws.column_dimensions[col].width = w
-    ws.freeze_panes = "A2"
+    _style_sheet(ws, (2, 6), (28, 34, 24, 60, 30, 30, 50))
+    ws = wb.create_sheet("Image posts")
+    for row in POSTS_ROWS:
+        ws.append(list(row))
+    _style_sheet(ws, (2, 6), (24, 44, 22, 46, 22, 22))
     wb.save(path)

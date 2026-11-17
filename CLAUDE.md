@@ -99,6 +99,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   Arabic the rest, kept >= 0.9 of the English); groups evenly spaced (gap inside / between), block centred.
   Several Arabic meanings in one Excel cell split by `|` -> word `alts` (`word_import.read_words`; videos get them
   joined with "، "); `_ar_img` writes them on one line with a bar between them.
+  App: its own English Words sub-tab 🖼️ Image posts right after 📃 Word list (`app.posts_ui` / `wire_posts`: own
+  sheet + tab + title fields, live preview on every change, Preview / Make all -> gallery + zip).
+  Template `projects/word_list_template.xlsx` (`word_import.write_template`): tab Words (videos) + tab Image posts
+  (`POSTS_ROWS`: idioms with English meanings and `|` meanings).
   The user's taste: clean background, clear bold type, one realistic mark per word, not busy — never propose neon looks.
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
   (ElevenLabs word timings); words ink in as spoken (`vs`/`ve` per word), highlighted words get a marker swipe, fly
