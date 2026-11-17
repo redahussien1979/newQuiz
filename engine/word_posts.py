@@ -23,7 +23,8 @@ AMIRI = _font("Amiri", "Amiri-Bold.ttf")
 
 # the app's menu: the highlight designs (clean page, clear type, one real-looking mark per word)
 STYLES = [("Highlighter", "highlighter"), ("Brush strokes", "brush"), ("Swoosh", "swoosh"), ("Washi tape", "tape"),
-          ("Soft highlight", "soft"), ("Pencil", "pencil")]
+          ("Soft highlight", "soft"), ("Pencil", "pencil"), ("Document", "document"), ("Page cards", "pages"),
+          ("Sky cards", "skycards")]
 # more designs, kept for later (post() draws them too)
 MORE_STYLES = [("Cards", "cards"), ("Flashcard grid", "grid"), ("Table", "table"), ("Notebook", "notebook"),
                ("Minimal", "minimal"), ("Chalkboard", "chalk"), ("Poster", "poster"), ("Glass", "glass"),
@@ -1279,10 +1280,23 @@ def _tape(w, h, col, seed=1):
     return im.rotate(rng.uniform(-2.2, 2.2), Image.BICUBIC, expand=True)
 
 
+MONO_SETS = {"sky_page"}  # one-colour sets: the rainbow designs use this one colour for every word
+
+
+def _mono(pal):
+    """(sky, deep sky) of a one-colour set, else None (the design keeps its own colour per word)."""
+    if pal not in MONO_SETS:
+        return None
+    ink, sky, line, deep = _page_tones(pal)
+    return sky, deep
+
+
 def _draw_tape(page, pal, handle, n, of):
     """Each word on its own strip of pastel washi tape: the bullet-journal look."""
     def mark(fr, word, x, y, j):
-        tp = _tape(_vis_w(word) + 40, _h(word) + 14, _TAPES[j % len(_TAPES)] if j != 99 else _TAPES[0], seed=50 + j)
+        mono = _mono(pal)
+        col = _mix(mono[0], (255, 255, 255), 0.3) if mono else _TAPES[j % len(_TAPES)] if j != 99 else _TAPES[0]
+        tp = _tape(_vis_w(word) + 40, _h(word) + 14, col, seed=50 + j)
         sh = _colored(tp.split()[3].filter(ImageFilter.GaussianBlur(3)), (0, 0, 0), 0.12)
         cx, cy = x + _vis_w(word) / 2, y + _h(word) / 2 - 2
         fr.alpha_composite(sh, (int(cx - tp.width / 2 + 1), int(cy - tp.height / 2 + 3)))
@@ -1298,7 +1312,8 @@ def _draw_soft(page, pal, handle, n, of):
     """App-style text highlight (notes / docs apps): a soft rounded pastel tint behind every word, a different tint
     each."""
     def mark(fr, word, x, y, j):
-        col = _SOFT[j % len(_SOFT)] if j != 99 else _SOFT[1]
+        mono = _mono(pal)
+        col = _mix(mono[0], (255, 255, 255), 0.6) if mono else _SOFT[j % len(_SOFT)] if j != 99 else _SOFT[1]
         w_, h_ = _vis_w(word) + 28, _h(word) + 18
         fr.alpha_composite(_colored(_round_mask(w_, h_, min(16, h_ / 3)), col), (int(x - 14), int(y - 9)))
 
@@ -1335,7 +1350,9 @@ def _draw_pencil(page, pal, handle, n, of):
             (255, 160, 40), (170, 110, 255)]
 
     def mark(fr, word, x, y, j):
-        hc = _hatch(_vis_w(word) + 24, _h(word) * 0.72, cols[j % len(cols)] if j != 99 else cols[0], seed=70 + j)
+        mono = _mono(pal)
+        col = mono[0] if mono else cols[j % len(cols)] if j != 99 else cols[0]
+        hc = _hatch(_vis_w(word) + 24, _h(word) * 0.72, col, seed=70 + j)
         _multiply(fr, hc, x - 12, y + _h(word) * 0.4)
 
     return _marked_page(page, handle, n, of, dict(bg=_paper, ink=_INK, grey=_GREY, mark=mark, behind=True))
@@ -1416,9 +1433,171 @@ def _draw_brush(page, pal, handle, n, of):
     k = _common(words, lambda w, k: _sbs_need(*texts(w, k), xr - xl, rh * 0.72), k_max=1.15)
     for j, w in enumerate(words):
         yy = top + j * (rh + gap)
-        fr.alpha_composite(_brush_stroke(x1 - x0, rh, _WATER[j % len(_WATER)], seed=100 + j), (int(x0), int(yy)))
+        mono = _mono(pal)  # a one-colour set: its deep shade, so the white type stays readable
+        col = mono[1] if mono else _WATER[j % len(_WATER)]
+        fr.alpha_composite(_brush_stroke(x1 - x0, rh, col, seed=100 + j), (int(x0), int(yy)))
         _side_by_side(fr, *texts(w, k), xl, xr, yy + rh / 2)
     _footer(fr, handle, n, of, _mix(dk, (255, 255, 255), 0.35), font=ALEXANDRIA)
+    return fr
+
+
+# ---------------------------------------------------------------- page-icon designs (sky blue · line grey · ink)
+def _page_tones(pal):
+    """(ink, sky, line grey, deep sky for small accents) from a set; the sky_page set gives the icon's own colours."""
+    dk, ac, ac2 = _tones(pal)
+    sky = ac if _lum(ac) > 0.3 else _mix(ac, (255, 255, 255), 0.45)
+    line = ac2 if ac2 != ac else (183, 196, 204)
+    ink = (26, 26, 28)
+    deep = sky
+    for t in np.linspace(0.1, 0.8, 8):  # a darker sky for numbers / Arabic accents that must read on white
+        deep = _mix(sky, (8, 62, 128), t)  # towards navy, not black: it stays a clear blue
+        if _contrast(deep, (255, 255, 255)) >= 4.5:
+            break
+    return ink, sky, line, deep
+
+
+def _doc_shape(w, h, sky, edge=10, band=0.16, r=22):
+    """The page icon as an image: a white sheet with a sky outline and, at the bottom, a sky band that runs a little
+    past the right edge and rolls up under the sheet on the left (the curl)."""
+    s = 3
+    W_, H_ = int(w + 40), int(h)
+    big = Image.new("RGBA", (W_ * s, H_ * s), (0, 0, 0, 0))
+    d = ImageDraw.Draw(big)
+    bh = h * band
+    x0, y0, x1, y1 = edge / 2, edge / 2, w - edge / 2, h - bh * 0.55
+    d.rounded_rectangle([x0 * s, y0 * s, x1 * s, y1 * s], r * s, fill=(255, 255, 255, 255), outline=sky + (255,),
+                        width=int(edge * s))
+    # the band: from a little right of the left edge to past the right edge
+    bx0, by0, bx1, by1 = x0 + bh * 0.55, h - bh, w + 30, h - 2
+    d.rounded_rectangle([bx0 * s, by0 * s, bx1 * s, by1 * s], int(bh * 0.42 * s), fill=sky + (255,))
+    # the curl: the left edge runs down into the band and turns right along its bottom
+    cr = bh * 0.55
+    d.rectangle([x0 * s - edge * s / 2, (y1 - r) * s, x0 * s + edge * s / 2, (by1 - cr) * s], fill=sky + (255,))
+    d.pieslice([(x0 - edge / 2) * s, (by1 - 2 * cr) * s, (x0 - edge / 2 + 2 * cr) * s, by1 * s], 90, 180,
+               fill=sky + (255,))
+    return big.resize((W_, H_), Image.LANCZOS)
+
+
+def _draw_document(page, pal, handle, n, of):
+    """The words written on one big page, drawn like the page icon: sky outline, grey ruled lines between the rows,
+    the curled sky band at the bottom with the handle on it."""
+    ink, sky, line, deep = _page_tones(pal)
+    fr = Image.new("RGBA", (S, S), _mix(sky, (255, 255, 255), 0.88) + (255,))
+    pw, ph, px, py = 900, 990, 70, 34
+    band = 0.11
+    doc = _doc_shape(pw, ph, sky, band=band)
+    _shadow(fr, doc.split()[3], px, py, blur=22, alpha=0.12, dy=10)
+    fr.alpha_composite(doc, (px, py))
+    band_top = py + ph - ph * band
+    y = py + 60
+    if page.get("title"):
+        t = _fit_one(lambda s_: _t(INTER, page["title"], s_, ink, "ExtraBold"), 78, pw - 140)
+        _put(fr, t, px + pw / 2, y + _h(t) / 2, "c")
+        y += _h(t) + 18
+    if page.get("sub"):
+        st = _fit_one(lambda s_: _t(VAZIR, page["sub"], s_, (110, 116, 124), "Medium"), 34, pw - 140)
+        _put(fr, st, px + pw / 2, y + _h(st) / 2, "c")
+        y += _h(st) + 10
+    d = ImageDraw.Draw(fr)
+    words = page["words"]
+    xl, xr = px + 120, px + pw - 64
+    top0 = y + 26
+    ys, rh = _rows(top0, band_top - 24, len(words), 0)
+    k = _common(words, lambda w, k: _sbs_need(*_row_texts(w, k, INTER, VAZIR, ink, (110, 116, 124), ink, en=60,
+                                                          ipa=30, ar=56), xr - xl, rh * 0.74), k_max=1.15)
+    for j, (yy, w) in enumerate(zip(ys, words)):
+        cy = yy + rh / 2
+        if j:  # the icon's thick grey lines
+            d.rounded_rectangle([px + 56, yy - 4, px + pw - 56 - (120 if j == len(words) - 1 else 0), yy + 4], 4,
+                                fill=line)
+        nd = 46
+        fr.alpha_composite(_colored(_circle_mask(nd), sky), (int(px + 56), int(cy - nd / 2)))
+        _put(fr, _t(INTER, str(j + 1), 24, ink, "Bold"), px + 56 + nd / 2, cy, "c")
+        _side_by_side(fr, *_row_texts(w, k, INTER, VAZIR, ink, (110, 116, 124), ink, en=60, ipa=30, ar=56), xl, xr,
+                      cy)
+    by = py + ph - ph * band * 0.5
+    if handle:
+        _put(fr, _t(INTER, handle, 30, ink, "Bold"), px + 140, by)
+    if of > 1:
+        _put(fr, _t(INTER, f"{n} / {of}", 30, ink, "Bold"), px + pw - 20, by, "r")
+    return fr
+
+
+def _draw_pages(page, pal, handle, n, of):
+    """Every word on its own little page icon: the word (+ IPA / meaning) on the white sheet, the Arabic on the
+    curled sky band."""
+    ink, sky, line, deep = _page_tones(pal)
+    fr = Image.new("RGBA", (S, S), (255, 255, 255, 255))
+    y = _header(fr, page, 56, ink, (110, 116, 124), INTER, VAZIR, size_t=72, weight_t="ExtraBold")
+    words = page["words"]
+    cols, rows = _grid_shape(len(words))
+    if len(words) == 3:
+        cols, rows = 3, 1
+    top, bot, m, g = max(y + 18, 70), S - 90, 60, 34
+    cw = (S - 2 * m - g * (cols - 1) - 30 * cols) / cols
+    ch = min((bot - top - g * (rows - 1)) / rows, cw * 1.25)
+    top = (top + bot) / 2 - (ch * rows + g * (rows - 1)) / 2
+    band = 0.27
+
+    def texts(w, k):
+        e, i = _entry(w, k, INTER, ink, (110, 116, 124), en=58, ipa=28, align="c", wrap=cw - 50)
+        return e, i, _t(VAZIR, w["ar"], 50 * k, ink, "Bold")
+
+    def need(w, k):
+        e, i, a = texts(w, k)
+        h = _h(e) + (8 + _h(i) if i is not None else 0)
+        return (max(_vis_w(e), _vis_w(i) if i is not None else 0) / (cw - 44), h / (ch * (1 - band) - 50),
+                _vis_w(a) / (cw - 70), _h(a) / (ch * band * 0.62))
+
+    k = _common(words, need, k_max=1.3)
+    for j, w in enumerate(words):
+        r, c = divmod(j, cols)
+        x0 = m + c * (cw + g + 30)
+        y0 = top + r * (ch + g)
+        doc = _doc_shape(cw, ch, sky, edge=7, band=band, r=16)
+        _shadow(fr, doc.split()[3], x0, y0, blur=14, alpha=0.1, dy=8)
+        fr.alpha_composite(doc, (int(x0), int(y0)))
+        e, i, a = texts(w, k)
+        hh = _h(e) + (8 + _h(i) if i is not None else 0)
+        sheet_mid = y0 + (ch - ch * band * 0.55) / 2 + 4
+        _stack(fr, [e] + ([i] if i is not None else []), x0 + cw / 2, sheet_mid - hh / 2, 8)
+        _put(fr, a, x0 + cw / 2 + 20, y0 + ch - ch * band / 2, "c")
+    _footer(fr, handle, n, of, (110, 116, 124), font=INTER)
+    return fr
+
+
+def _draw_skycards(page, pal, handle, n, of):
+    """Light sky rows with a sky tab and the icon's grey lines as a quiet texture under the title."""
+    ink, sky, line, deep = _page_tones(pal)
+    fr = Image.new("RGBA", (S, S), (255, 255, 255, 255))
+    d = ImageDraw.Draw(fr)
+    y = 64
+    if page.get("title"):
+        t = _fit_one(lambda s_: _t(INTER, page["title"], s_, ink, "ExtraBold"), 84, S - 200)
+        _put(fr, t, 60, y + _h(t) / 2)
+        y += _h(t) + 16
+    for k_, wd in enumerate((300, 300, 190)):  # three grey lines, the last shorter: the icon's text lines
+        d.rounded_rectangle([60, y + k_ * 22, 60 + wd, y + k_ * 22 + 9], 5, fill=line)
+    if page.get("sub"):
+        st = _fit_one(lambda s_: _t(VAZIR, page["sub"], s_, ink, "Bold"), 38, S - 480)
+        _put(fr, st, S - 60, y + 28, "r")
+    y += 3 * 22 + 10
+    words = page["words"]
+    top0, gap = y + 18, 16
+    ys, rh = _rows(top0, S - 96, len(words), gap)
+    rh = min(rh, 180)
+    top = (top0 + S - 96) / 2 - (rh * len(words) + gap * (len(words) - 1)) / 2
+    tint = _mix(sky, (255, 255, 255), 0.8)
+    xl, xr = 60 + 50, S - 60 - 36
+    k = _common(words, lambda w, k: _sbs_need(*_row_texts(w, k, INTER, VAZIR, ink, (96, 104, 114), ink, en=60, ipa=30,
+                                                          ar=56), xr - xl, rh * 0.76), k_max=1.15)
+    for j, w in enumerate(words):
+        yy = top + j * (rh + gap)
+        fr.alpha_composite(_colored(_round_mask(S - 120, rh, 22), tint), (60, int(yy)))
+        fr.alpha_composite(_colored(_round_mask(14, rh - 30, 7), sky), (60 + 18, int(yy + 15)))
+        _side_by_side(fr, *_row_texts(w, k, INTER, VAZIR, ink, (96, 104, 114), ink, en=60, ipa=30, ar=56), xl, xr,
+                      yy + rh / 2)
+    _footer(fr, handle, n, of, (110, 116, 124), font=INTER)
     return fr
 
 
@@ -1427,7 +1606,8 @@ _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebo
          "bento": _draw_bento, "swiss": _draw_swiss, "dictionary": _draw_dictionary, "chat": _draw_chat,
          "sticky": _draw_sticky, "brutal": _draw_brutal, "aurora": _draw_aurora,
          "highlighter": _draw_highlighter, "brush": _draw_brush, "swoosh": _draw_swoosh, "tape": _draw_tape,
-         "soft": _draw_soft, "pencil": _draw_pencil}
+         "soft": _draw_soft, "pencil": _draw_pencil, "document": _draw_document, "pages": _draw_pages,
+         "skycards": _draw_skycards}
 
 
 def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1):

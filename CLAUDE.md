@@ -78,7 +78,9 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   sheet Title / Subtitle as for the videos) and drawn as square 1080x1080 PNGs (`post`, `make_posts` -> PNGs + zip in
   OUT_DIR/word_posts_*). Menu `STYLES` = the highlight designs on one shared page (`_marked_page` + a `mark` per look):
   Highlighter (marker band, `_multiply`, red-pen loop on the title) / Brush strokes (`_brush_stroke`) / Swoosh /
-  Washi tape / Soft highlight / Pencil; `MORE_STYLES` = 15 older card/poster designs, not in the menu. A word with a
+  Washi tape / Soft highlight / Pencil + the page-icon designs Document / Page cards / Sky cards (`_doc_shape`,
+  `_page_tones`); colour set `sky_page` (black · sky #7DC6F3 · line grey) is in `MONO_SETS`: the rainbow designs use
+  its one colour for every word (`_mono`); `MORE_STYLES` = 15 older card/poster designs, not in the menu. A word with a
   `def` is one block (`_entry`: word + IPA, then the meaning wrapped even, `DEF_SIZE` / `DEF_MIN`). Colours = `DUOS`.
   The user's taste: clean background, clear bold type, one realistic mark per word, not busy — never propose neon looks.
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
