@@ -321,7 +321,7 @@ def _bar_line(parts, size, col, font, weight, bar):
 _BAR = object()  # a bar between two meanings, while a meaning is wrapped
 
 
-def _ar_img(w, size, col, font, weight="Bold", bar=None, max_w=None):
+def _ar_img(w, size, col, font, weight="Bold", bar=None, max_w=None, align="c"):
     """The Arabic meaning. Several meanings (the sheet's "متين | مُعمّر | دائم" -> w["alts"]) are written on one
     line with a short bar in `bar` (default: the text colour, lighter) between them, the first one on the right.
     With max_w, a line too wide breaks into two centred lines: between two meanings when that fits (one meaning per
@@ -355,13 +355,13 @@ def _ar_img(w, size, col, font, weight="Bold", bar=None, max_w=None):
     # 1st choice: break between two meanings (they then sit on their own lines, the bar is not needed)
     bars = [split(i, True) for i, t in enumerate(toks) if t is _BAR]
     best = min(bars, key=lambda b: b[0]) if bars else None
-    if best is None or best[0] > max_w:  # else between two words, never next to a bar, as even as possible
+    if best is None or best[0] > max_w * 1.3:  # else between two words (never next to a bar), as even as possible
         words = [split(i, False) for i in range(1, len(toks)) if toks[i] is not _BAR and toks[i - 1] is not _BAR]
         if words:
             best = min(words + ([best] if best else []), key=lambda b: b[0])
     if best is None or best[0] >= _vis_w(one):
         return one
-    return _join([best[1], best[2]], int(size * 0.06), "c")  # the two lines of one meaning sit close
+    return _join([best[1], best[2]], int(size * 0.06), align)  # the two lines of one meaning sit close
 
 
 def _row_texts(w, k, f_en, f_ar, c_en, c_ipa, c_ar, en=64, ipa=34, ar=58, w_en="Bold", w_ar="Bold", align="l",
@@ -1320,13 +1320,13 @@ def _marked_page(page, handle, n, of, look):
     def en_of(w, k):
         return _entry(w, k, f_en, ink, grey, 66, 32, "Bold", "l", (xr - xl) * 0.56, None, under * k)
 
-    def ar_of(w, k):
-        return _ar_img(w, 66 * k, ar_ink, f_ar, "Bold")  # Arabic letters look smaller: a bigger base size
+    def ar_of(w, k, room=None):  # Arabic letters look smaller: a bigger base size; too long -> 2 lines
+        return _ar_img(w, 66 * k, ar_ink, f_ar, "Bold", max_w=room, align="r")
 
-    ke, ka = _two_sizes(words, en_of, ar_of, xr - xl - 20, rh)
+    ke, ka, room = _two_sizes(words, en_of, ar_of, xr - xl - 20, rh)
     for j, w in enumerate(words):
         cy = top + j * rh + rh / 2
-        (e, i), a = en_of(w, ke), ar_of(w, ka)
+        (e, i), a = en_of(w, ke), ar_of(w, ka, room)
         word = _t(f_en, w["en"], 66 * ke, ink, "Bold")
         ytop = cy - (_h(e) + (8 + _h(i) if i is not None else 0)) / 2
         if look.get("under") and i is None and not w.get("def"):  # nothing under the word: it sits at the centre
@@ -1354,6 +1354,9 @@ def _shrink(ratio, k_max):
     return k
 
 
+WRAP_BELOW = 0.62  # side by side: the Arabic wraps onto 2 lines only when on 1 line it would be smaller than this
+
+
 def _two_sizes(words, en_of, ar_of, width, rh, k_max=1.3):
     """Side by side: ONE size for every English entry and ONE (its own) for every Arabic meaning, so a long meaning
     does not shrink the words. The English takes what it needs (at most ~60 % of the row), the Arabic the rest; if
@@ -1364,16 +1367,26 @@ def _two_sizes(words, en_of, ar_of, width, rh, k_max=1.3):
     def en_h(k):
         return max(_h(e) + (8 + _h(i) if i is not None else 0) for e, i in (en_of(w, k) for w in words))
 
-    ke = _shrink(lambda k: max(en_w(k) / (width * 0.62), en_h(k) / (rh * 0.8)), k_max)
-    ka = ke
-    for _ in range(8):
-        room = width - en_w(ke) - 44
-        ka = _shrink(lambda k: max(max(_vis_w(ar_of(w, k)) for w in words) / max(60, room),
-                                   max(_h(ar_of(w, k)) for w in words) / (rh * 0.62)), ke * 1.05)
-        if ka >= ke * 0.9:
-            break
-        ke *= 0.95
-    return ke, ka
+    ke0 = _shrink(lambda k: max(en_w(k) / (width * 0.62), en_h(k) / (rh * 0.8)), k_max)
+
+    def fit(room_of, h_share, keep):
+        ke = ke0
+        for _ in range(8):
+            room = max(60, width - en_w(ke) - 44)
+            r = room_of(room)
+            ka = _shrink(lambda k: max(max(_vis_w(ar_of(w, k, r)) for w in words) / room,
+                                       max(_h(ar_of(w, k, r)) for w in words) / (rh * h_share)), ke * 1.05)
+            if ka >= ke * keep:
+                return ke, ka, r, True
+            ke *= 0.95
+        return ke, ka, r, False
+
+    # every meaning on one line (exactly as before), unless that makes the Arabic really small (long meanings)
+    ke, ka, room, ok = fit(lambda room: None, 0.62, 0.9)
+    if ka >= ke0 * WRAP_BELOW:
+        return ke, ka, None
+    # a long meaning would shrink the whole post: it wraps onto 2 lines (ar_of(w, k, room)) instead
+    return fit(lambda room: room, 0.86, 0.82)[:3]
 
 
 def _fit_stack(words, make_en, make_ar, avail_w, avail_h, gap_in, gap_out, k_max=1.4):
