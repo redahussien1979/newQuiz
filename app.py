@@ -1319,9 +1319,11 @@ WL_IMPORT_HELP = ("**📥 Words from Excel** — one word per row: **English | A
                   "posts too, under the word or idiom. Several Arabic meanings in one cell: split them with "
                   "**|** (متين | مُعمّر | دائم) — the posts show a bar between them.")
 
-POSTS_HELP = ("Every page of the sheet as a **square 1080×1080 picture** (Instagram / Facebook post, carousel slide): "
-              "the words, their IPA, English meaning (if the sheet has one) and Arabic meaning. Uses the sheet, tab "
-              "and page title / subtitle above. With English meanings, 3–4 idioms per post read best.")
+POSTS_HELP = ("**🖼️ Image posts** — every page of a words sheet as a **square 1080×1080 picture** (Instagram / "
+              "Facebook post, carousel slide): the words, their IPA, English meaning and Arabic meaning. The same "
+              "Excel as 📃 Word list (template tab **Image posts**): **English | Arabic | IPA | English meaning | "
+              "Title | Subtitle**; several Arabic meanings in one cell split by **|**. With English meanings, 3–4 "
+              "idioms per post read best.")
 
 
 def _wl_template_path():
@@ -1363,49 +1365,64 @@ def wl_import_ui():
     zipb = gr.DownloadButton("📦 Download all (.zip)", visible=False, variant="primary")
     files = gr.File(label="Rendered videos — each one appears here as soon as it finishes", file_count="multiple",
                     visible=False, height=260)
-    with gr.Accordion("🖼️ Image posts (square pictures instead of videos)", open=False):
-        gr.Markdown(POSTS_HELP)
-        with gr.Row():
-            p_style = gr.Dropdown(word_posts.STYLES, value=word_posts.DEFAULT_STYLE, label="Design",
-                                  info="Highlighter = marker + red-pen loop · Brush strokes = watercolour · Swoosh = "
-                                       "brush-pen underline · Washi tape · Soft highlight = app-style tint · "
-                                       "Pencil = coloured-pencil shading · Document = the words on one page "
-                                       "(page-icon look) · Sky cards = light-blue rows (best with Sky page colours) · "
-                                       "Swiss = strict grid, big numbers · Chat = a messaging-app screen · "
-                                       "Torn paper = blue torn edges, red Arabic, centred")
-            p_pal = gr.Dropdown(DUO_CHOICES, value=word_posts.DEFAULT_PALETTE, label="Colours",
-                                info="The title, marker / swoosh colour (a light accent is used as the marker)")
-        with gr.Row():
-            p_font = gr.Dropdown(word_posts.FONT_CHOICES, value=0, label="Fonts",
-                                 info="10 ready English + Arabic pairs (all included, free to use) — or each design's "
-                                      "own fonts. The pronunciation (IPA) keeps its own font.")
-            p_lay = gr.Dropdown(word_posts.LAYOUTS, value="side", label="Arrangement",
-                                info="Highlight designs: side by side, or each word centred with its meaning under "
-                                     "it (Torn paper is always stacked)")
-        en_menu, ar_menu = word_posts.font_menus()
-        with gr.Row():
-            p_fen = gr.Dropdown(en_menu, value="", label="English font (any)",
-                                info="Any font of your library — also the ones added in 🎨 Style & sound → 🔤 Font "
-                                     "(restart the app to see new ones)")
-            p_far = gr.Dropdown(ar_menu, value="", label="Arabic font (any)",
-                                info="Any library font that writes Arabic")
-        p_hl = gr.Dropdown(word_posts.WORD_HIGHLIGHTS, value="glow", label="Word highlight (Clouds · Torn paper)",
-                           info="How the English word is marked: soft glow, marker, watercolour brush, solid label, "
-                                "swoosh, underline, outline box, pen circle — or none")
-        with gr.Row():
-            p_per = gr.Slider(1, word_posts.POST_MAX, value=4, step=1, label="Words per post")
-            p_handle = gr.Textbox(label="Your handle (optional)", placeholder="@yourpage",
-                                  info="Written at the bottom of every post, with the post number (1 / 5)")
-        with gr.Row():
-            p_prev = gr.Button("👁️ Preview the first post", min_width=150)
-            p_go = gr.Button("🖼️ Make all posts", variant="primary", min_width=150)
-        p_info = gr.Markdown()
-        p_img = gr.Image(label="Preview", type="pil", height=420, visible=False)
-        p_gal = gr.Gallery(label="Posts", columns=4, height=420, visible=False, object_fit="contain")
-        p_zip = gr.DownloadButton("📦 Download all posts (.zip)", visible=False, variant="primary")
     return dict(sheet=sheet, tab=tab, per=per, pages=pages, title=title, sub=sub, voice=voice, info=info, part=part,
-                load=load, go=go, zip=zipb, files=files, p_style=p_style, p_pal=p_pal, p_per=p_per,
-                p_font=p_font, p_lay=p_lay, p_fen=p_fen, p_far=p_far, p_hl=p_hl, p_handle=p_handle, p_prev=p_prev, p_go=p_go, p_info=p_info, p_img=p_img, p_gal=p_gal, p_zip=p_zip)
+                load=load, go=go, zip=zipb, files=files)
+
+
+def posts_ui():
+    """🖼️ Image posts sub-tab (English Words): its own sheet + the post designs."""
+    with gr.Row(equal_height=True):
+        gr.Markdown(POSTS_HELP)
+        tpl = _wl_template_path()
+        gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), size="sm", min_width=130, scale=0)
+    sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Words sheet (.xlsx or .csv)",
+                    height=110)
+    tab = gr.Dropdown([], label="Sheet (tab)", visible=False, info="The workbook's tabs — pick the one with the words.")
+    with gr.Row():
+        title = gr.Textbox(label="Post title (optional)", placeholder="Everyday Idioms",
+                           info="For posts without a Title in the sheet · {n} = the post number")
+        sub = gr.Textbox(label="Post subtitle (optional)", placeholder="تعابير يومية", rtl=True)
+    with gr.Row():
+        p_style = gr.Dropdown(word_posts.STYLES, value=word_posts.DEFAULT_STYLE, label="Design",
+                              info="Highlighter = marker + red-pen loop · Brush strokes = watercolour · Swoosh = "
+                                   "brush-pen underline · Washi tape · Soft highlight = app-style tint · "
+                                   "Pencil = coloured-pencil shading · Document = the words on one page "
+                                   "(page-icon look) · Sky cards = light-blue rows (best with Sky page colours) · "
+                                   "Swiss = strict grid, big numbers · Chat = a messaging-app screen · "
+                                   "Torn paper = blue torn edges, red Arabic, centred")
+        p_pal = gr.Dropdown(DUO_CHOICES, value=word_posts.DEFAULT_PALETTE, label="Colours",
+                            info="The title, marker / swoosh colour (a light accent is used as the marker)")
+    with gr.Row():
+        p_font = gr.Dropdown(word_posts.FONT_CHOICES, value=0, label="Fonts",
+                             info="10 ready English + Arabic pairs (all included, free to use) — or each design's "
+                                  "own fonts. The pronunciation (IPA) keeps its own font.")
+        p_lay = gr.Dropdown(word_posts.LAYOUTS, value="side", label="Arrangement",
+                            info="Highlight designs: side by side, or each word centred with its meaning under "
+                                 "it (Torn paper is always stacked)")
+    en_menu, ar_menu = word_posts.font_menus()
+    with gr.Row():
+        p_fen = gr.Dropdown(en_menu, value="", label="English font (any)",
+                            info="Any font of your library — also the ones added in 🎨 Style & sound → 🔤 Font "
+                                 "(restart the app to see new ones)")
+        p_far = gr.Dropdown(ar_menu, value="", label="Arabic font (any)",
+                            info="Any library font that writes Arabic")
+    p_hl = gr.Dropdown(word_posts.WORD_HIGHLIGHTS, value="glow", label="Word highlight (Clouds · Torn paper)",
+                       info="How the English word is marked: soft glow, marker, watercolour brush, solid label, "
+                            "swoosh, underline, outline box, pen circle — or none")
+    with gr.Row():
+        p_per = gr.Slider(1, word_posts.POST_MAX, value=4, step=1, label="Words per post")
+        p_handle = gr.Textbox(label="Your handle (optional)", placeholder="@yourpage",
+                              info="Written at the bottom of every post, with the post number (1 / 5)")
+    with gr.Row():
+        p_prev = gr.Button("👁️ Preview the first post", min_width=150)
+        p_go = gr.Button("🖼️ Make all posts", variant="primary", min_width=150)
+    p_info = gr.Markdown()
+    p_img = gr.Image(label="Preview", type="pil", height=420, visible=False)
+    p_gal = gr.Gallery(label="Posts", columns=4, height=420, visible=False, object_fit="contain")
+    p_zip = gr.DownloadButton("📦 Download all posts (.zip)", visible=False, variant="primary")
+    return dict(sheet=sheet, tab=tab, title=title, sub=sub, p_style=p_style, p_pal=p_pal, p_per=p_per,
+                p_font=p_font, p_lay=p_lay, p_fen=p_fen, p_far=p_far, p_hl=p_hl, p_handle=p_handle, p_prev=p_prev,
+                p_go=p_go, p_info=p_info, p_img=p_img, p_gal=p_gal, p_zip=p_zip)
 
 
 def wire_wl_import(ui, pv, fields, items_box, audio_box):
@@ -1500,7 +1517,19 @@ def wire_wl_import(ui, pv, fields, items_box, audio_box):
 
         yield from _stream_batch(request, plan, progress)
 
-    # 🖼️ image posts: the same sheet, cut into posts of p_per words
+    ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
+    gr.on(triggers=[c.change for c in inputs + [ui["voice"]]], fn=check, inputs=inputs + [ui["voice"]],
+          outputs=[ui["info"], ui["part"], ui["go"]], trigger_mode="always_last", show_progress="hidden")
+    ui["load"].click(load_part, inputs + [ui["part"], ui["title"], ui["sub"], ui["voice"]], [items_box, audio_box])
+    dep = ui["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"], pv["info"],
+                                       ui["files"], ui["zip"]], queue=False)
+    dep.success(render_all, inputs + [ui["title"], ui["sub"], ui["voice"]] + fields,
+                [pv["vid"], pv["info"], ui["files"], ui["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"]],
+                **_progress_on(dep, pv["vid"]))
+
+
+def wire_posts(ui):
+    """🖼️ Image posts: the sheet cut into posts of p_per words, previewed and saved as PNGs + a zip."""
     p_inputs = [ui["sheet"], ui["tab"], ui["p_per"], ui["title"], ui["sub"]]
 
     def post_pages(sheet, tab, per, title, sub):
@@ -1538,15 +1567,17 @@ def wire_wl_import(ui, pv, fields, items_box, audio_box):
     ui["p_prev"].click(post_preview, p_inputs + p_look, [ui["p_img"], ui["p_info"]])
     ui["p_go"].click(post_all, p_inputs + p_look, [ui["p_gal"], ui["p_zip"], ui["p_info"], ui["p_img"]])
 
+    def live(*vals):  # the preview follows every change once a sheet is in (silent without one)
+        if not vals[0]:
+            return gr.update(), gr.update()
+        try:
+            return post_preview(*vals)
+        except Exception as e:
+            return gr.update(), f"⚠️ {_msg(e)}"
+
     ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
-    gr.on(triggers=[c.change for c in inputs + [ui["voice"]]], fn=check, inputs=inputs + [ui["voice"]],
-          outputs=[ui["info"], ui["part"], ui["go"]], trigger_mode="always_last", show_progress="hidden")
-    ui["load"].click(load_part, inputs + [ui["part"], ui["title"], ui["sub"], ui["voice"]], [items_box, audio_box])
-    dep = ui["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"], pv["info"],
-                                       ui["files"], ui["zip"]], queue=False)
-    dep.success(render_all, inputs + [ui["title"], ui["sub"], ui["voice"]] + fields,
-                [pv["vid"], pv["info"], ui["files"], ui["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"]],
-                **_progress_on(dep, pv["vid"]))
+    gr.on(triggers=[c.change for c in p_inputs + p_look], fn=live, inputs=p_inputs + p_look,
+          outputs=[ui["p_img"], ui["p_info"]], trigger_mode="always_last")
 
 
 # ------------------------------------------------------------------ English Texts
@@ -2952,6 +2983,9 @@ def build_ui():
                                         v_ccol = gr.Dropdown(CHALK_COLOR_CHOICES, value="pink",
                                                              label="Chalkboard: chalk colour")
                                 wl = wl_import_ui()
+                        with gr.Tab("🖼️ Image posts"):
+                            with gr.Column(elem_classes="pane"):
+                                posts = posts_ui()
                         with gr.Tab("🎙️ Audio"):
                             with gr.Column(elem_classes="pane"):
                                 gr.Markdown(VC_AUDIO_HELP)
@@ -2973,6 +3007,7 @@ def build_ui():
             wire(vc_proj, vc_pv, vc_fields)
             wire_vc_batch(vxl, vc_pv, vc_fields)
             wire_wl_import(wl, vc_pv, vc_fields, v_items, v_audio)
+            wire_posts(posts)
             gr.on(triggers=[v_audio.change, v_items.change], fn=clips_report, inputs=[v_audio, v_items],
                   outputs=v_ainfo, trigger_mode="always_last", show_progress="hidden")
             v_add.click(add_item, [v_items, v_type], v_items)
