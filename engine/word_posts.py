@@ -12,15 +12,19 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 from .core import ROOT, text_img_in
-from .list_designs import (ALEXANDRIA, DUOS, MONTSERRAT, NASKH, PLEX_B, POPPINS_B, POPPINS_K, TAJAWAL, _circle_mask,
-                           _colored, _lum, _mix, _round_mask, _vis_w)
+from .list_designs import (ALEXANDRIA, BALOO, DMSANS, DUOS, FREDOKA, INTER, LITERATA, MONTSERRAT, NASKH, PLEX_B,
+                           POPPINS_B, POPPINS_K, RUBIK, TAJAWAL, VAZIR, _circle_mask, _colored, _font, _grad_text,
+                           _lum, _mix, _round_mask, _vis_w)
 from .word_list import MESSIRI, PATRICK, PLAYFAIR, RUQAA
 
 S = 1080  # square post
 IPA_FONT = os.path.join(ROOT, "fonts", "NotoSans-Bold.ttf")
+AMIRI = _font("Amiri", "Amiri-Bold.ttf")
 
 STYLES = [("Cards", "cards"), ("Flashcard grid", "grid"), ("Table", "table"), ("Notebook", "notebook"),
-          ("Minimal", "minimal"), ("Chalkboard", "chalk"), ("Poster", "poster")]
+          ("Minimal", "minimal"), ("Chalkboard", "chalk"), ("Poster", "poster"), ("Glass", "glass"),
+          ("Bento", "bento"), ("Swiss", "swiss"), ("Dictionary", "dictionary"), ("Chat", "chat"),
+          ("Sticky notes", "sticky"), ("Neo-brutal", "brutal"), ("Aurora", "aurora")]
 DEFAULT_STYLE = "cards"
 DEFAULT_PALETTE = "navy_juice"
 
@@ -458,8 +462,488 @@ def _draw_poster(page, pal, handle, n, of):
     return fr
 
 
+def _contrast(a, b):
+    la, lb = _lum(a), _lum(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def _blob_bg(base, blobs, blur=110):
+    """A base colour with big soft colour blobs [(x, y, r, colour, strength)] (drawn at 1/4 size: fast and smooth)."""
+    q = 4
+    im = Image.new("RGBA", (S // q, S // q), tuple(base) + (255,))
+    for x, y, r, col, k in blobs:
+        m = Image.new("L", im.size, 0)
+        ImageDraw.Draw(m).ellipse([(x - r) / q, (y - r) / q, (x + r) / q, (y + r) / q], fill=int(255 * k))
+        im.alpha_composite(_colored(m.filter(ImageFilter.GaussianBlur(blur / q)), col))
+    return im.resize((S, S), Image.BICUBIC)
+
+
+def _grain(im, sigma=6, seed=11):
+    arr = np.array(im.convert("RGB"), np.float32)
+    arr += np.random.default_rng(seed).normal(0, sigma, (S, S, 1))
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
+
+
+def _hard_shadow(fr, mask, x, y, d=10, col=(0, 0, 0)):
+    fr.alpha_composite(_colored(mask, col), (int(x + d), int(y + d)))
+
+
+def _box(fr, x, y, w, h, r, fill, border=5, shadow=10):
+    """Neo-brutal box: flat fill, thick black border, hard offset shadow."""
+    m = _round_mask(w, h, r)
+    if shadow:
+        _hard_shadow(fr, m, x, y, shadow)
+    fr.alpha_composite(_colored(m, (0, 0, 0)), (int(x), int(y)))
+    fr.alpha_composite(_colored(_round_mask(w - 2 * border, h - 2 * border, max(1, r - border)), fill),
+                       (int(x + border), int(y + border)))
+
+
+def _stack(fr, parts, cx, top, gap, anchor="c"):
+    """Text images one under the other from `top` (x = left / centre / right per anchor)."""
+    y = top
+    for p in parts:
+        _put(fr, p, cx, y + _h(p) / 2, anchor)
+        y += _h(p) + gap
+    return y
+
+
+def _draw_glass(page, pal, handle, n, of):
+    """iOS-style glass: a soft colour mesh, frosted rounded panes with a fine light edge, white type."""
+    dk, ac, ac2 = _tones(pal)
+    fr = _blob_bg(_mix(dk, (0, 0, 0), 0.25), [(120, 120, 460, _mix(dk, (255, 255, 255), 0.4), 0.9),
+                                              (1020, 360, 300, ac, 0.45), (960, 1060, 420, ac2, 0.35),
+                                              (160, 980, 420, _mix(dk, (255, 255, 255), 0.22), 0.9)])
+    fr = _grain(fr, 3)
+    soft = fr.filter(ImageFilter.GaussianBlur(26))
+    white = (255, 255, 255)
+    y = _header(fr, page, 70, white, _mix(white, ac, 0.35), INTER, VAZIR, weight_t="ExtraBold")
+    words = page["words"]
+    top0 = max(y + 22, 80)
+    ys, rh = _rows(top0, S - 100, len(words), 16)
+    rh = min(rh, 190)
+    top = (top0 + S - 100) / 2 - (rh * len(words) + 16 * (len(words) - 1)) / 2
+    xl, xr = 60 + 100, S - 60 - 40
+    ipa_c = _mix(white, dk, 0.3)
+    k = _common(words, lambda w, k: _sbs_need(*_row_texts(w, k, INTER, VAZIR, white, ipa_c, white, w_en="SemiBold"),
+                                              xr - xl, rh * 0.74), k_max=1.15)
+    for j, w in enumerate(words):
+        yy = int(top + j * (rh + 16))
+        m = _round_mask(S - 120, rh, min(40, rh / 2.4))
+        _shadow(fr, m, 60, yy, blur=24, alpha=0.22, dy=12)
+        pane = soft.crop((60, yy, S - 60, yy + int(rh)))
+        pane.alpha_composite(Image.new("RGBA", pane.size, _mix(dk, (0, 0, 0), 0.2) + (70,)))
+        pane.alpha_composite(Image.new("RGBA", pane.size, (255, 255, 255, 34)))
+        pane.putalpha(m)
+        fr.alpha_composite(pane, (60, yy))
+        fr.alpha_composite(_colored(_round_mask(S - 120, rh, min(40, rh / 2.4), outline=2), white, 0.45), (60, yy))
+        d = min(64, rh * 0.5)
+        fr.alpha_composite(_colored(_circle_mask(d), white, 0.22), (int(60 + 30), int(yy + rh / 2 - d / 2)))
+        _put(fr, _t(INTER, str(j + 1), d * 0.46, white, "Bold"), 60 + 30 + d / 2, yy + rh / 2, "c")
+        _side_by_side(fr, *_row_texts(w, k, INTER, VAZIR, white, ipa_c, white, w_en="SemiBold"), xl, xr,
+                      yy + rh / 2)
+    _footer(fr, handle, n, of, _mix(white, dk, 0.25), font=INTER)
+    return fr
+
+
+def _bento_tiles(n, top, bottom, m=60, g=18):
+    """Tile rectangles (x, y, w, h) for n words: rows of two with alternating wide / narrow tiles, an odd last one
+    full width."""
+    rows = (n + 1) // 2
+    th = (bottom - top - g * (rows - 1)) / rows
+    out, inner = [], S - 2 * m - g
+    for r in range(rows):
+        y = top + r * (th + g)
+        if r == rows - 1 and n % 2:
+            out.append((m, y, S - 2 * m, th))
+            continue
+        a = 0.58 if r % 2 == 0 else 0.42
+        out += [(m, y, inner * a, th), (m + inner * a + g, y, inner * (1 - a), th)]
+    return out
+
+
+def _draw_bento(page, pal, handle, n, of):
+    """Apple-keynote bento grid: a title tile and word tiles of mixed widths and colours."""
+    dk, ac, ac2 = _tones(pal)
+    bg = (240, 240, 244)
+    fr = Image.new("RGBA", (S, S), bg + (255,))
+    words = page["words"]
+    top = 60
+    if page.get("title") or page.get("sub"):
+        th = 170 if page.get("sub") and page.get("title") else 130
+        _card(fr, 60, top, S - 120, th, 34, dk, shadow=False)
+        y = top + 34
+        if page.get("title"):
+            t = _fit_one(lambda s: _t(INTER, page["title"], s, ac, "ExtraBold"), 70, S - 220)
+            _put(fr, t, 100, y + _h(t) / 2)
+            y += _h(t) + 18
+        if page.get("sub"):
+            st = _fit_one(lambda s: _t(VAZIR, page["sub"], s, (255, 255, 255), "Medium"), 36, S - 220)
+            _put(fr, st, 100, y + _h(st) / 2)
+        top += th + 18
+    tiles = _bento_tiles(len(words), top, S - 96)
+    fills = [(255, 255, 255), ac, _mix(dk, (255, 255, 255), 0.12), _mix(ac2 if ac2 != ac else ac, (255, 255, 255),
+                                                                          0.7)]
+    order = [0, 1, 2, 3, 3, 0] if len(words) > 3 else [0, 1, 2]
+
+    def texts(w, k, fill):
+        c = _readable(fill)
+        sub = _mix(c, fill, 0.45)
+        return _row_texts(w, k, INTER, VAZIR, c, sub, c, en=66, ipa=32, ar=60, w_en="Bold"), sub
+
+    def need(item, k):
+        (w, (x, y, tw, th), fill) = item
+        (e, i, a), _ = texts(w, k, fill)
+        h = 40 + _h(e) + (8 + _h(i) if i is not None else 0) + 24 + _h(a)
+        return max(_vis_w(e), _vis_w(i) if i is not None else 0, _vis_w(a)) / (tw - 64), h / (th - 40)
+
+    items = [(w, tiles[j], fills[order[j % len(order)]]) for j, w in enumerate(words)]
+    k = _common(items, need, k_max=1.3)
+    for j, (w, (x, y, tw, th), fill) in enumerate(items):
+        _card(fr, x, y, tw, th, 30, fill, shadow=fill == (255, 255, 255))
+        (e, i, a), sub = texts(w, k, fill)
+        _put(fr, _t(INTER, f"{j + 1:02d}", 24, sub, "SemiBold"), x + 32, y + 36)
+        _stack(fr, [e] + ([i] if i is not None else []), x + 32, y + 62, 8, "l")
+        _put(fr, a, x + tw - 32, y + th - 28 - _h(a) / 2, "r")
+    _footer(fr, handle, n, of, _mix(dk, bg, 0.3), font=INTER)
+    return fr
+
+
+def _draw_swiss(page, pal, handle, n, of):
+    """International typographic style: off-white, a strict grid, huge flush-left title, big numbers, one accent."""
+    dk, ac, ac2 = _tones(pal)
+    bg, ink = (243, 241, 236), (17, 17, 17)
+    red = next((c for c in (ac2, ac, dk) if _contrast(c, bg) >= 3), dk)
+    fr = Image.new("RGBA", (S, S), bg + (255,))
+    d = ImageDraw.Draw(fr)
+    words = page["words"]
+    _put(fr, _t(INTER, "VOCABULARY", 22, ink, "Bold"), 60, 66)
+    _put(fr, _t(INTER, f"{len(words):02d} WORDS", 22, ink, "Bold"), S - 60, 66, "r")
+    d.line([(60, 90), (S - 60, 90)], fill=ink, width=2)
+    y = 116
+    if page.get("title"):
+        t = _fit_one(lambda s: _t(INTER, page["title"], s, ink, "Black"), 112, S - 120)
+        _put(fr, t, 60, y + _h(t) / 2)
+        y += _h(t) + 18
+    if page.get("sub"):
+        st = _fit_one(lambda s: _t(VAZIR, page["sub"], s, red, "Bold"), 38, S - 120)
+        _put(fr, st, 60, y + _h(st) / 2)
+        y += _h(st) + 14
+    d.rectangle([60, y + 8, S - 60, y + 14], fill=ink)
+    top = y + 14
+    ys, rh = _rows(top, S - 100, len(words), 0)
+    xl, xr = 170, S - 60
+    grey = (120, 120, 120)
+    k = _common(words, lambda w, k: _sbs_need(*_row_texts(w, k, INTER, VAZIR, ink, grey, ink, w_en="Bold",
+                                                          w_ar="Bold"), xr - xl, rh * 0.72), k_max=1.15)
+    for j, (yy, w) in enumerate(zip(ys, words)):
+        if j:
+            d.line([(60, yy), (S - 60, yy)], fill=(190, 188, 182), width=2)
+        num = _t(INTER, f"{j + 1:02d}", min(56, rh * 0.42), red, "Black")
+        _put(fr, num, 60, yy + rh / 2)
+        _side_by_side(fr, *_row_texts(w, k, INTER, VAZIR, ink, grey, ink, w_en="Bold", w_ar="Bold"), xl, xr,
+                      yy + rh / 2)
+    d.line([(60, S - 92), (S - 60, S - 92)], fill=ink, width=2)
+    _footer(fr, handle, n, of, ink, y=S - 60, font=INTER)
+    return fr
+
+
+def _draw_dictionary(page, pal, handle, n, of):
+    """A bilingual dictionary page: guide words in the header, a double rule, entries (headword, IPA, meaning), a
+    thumb-index tab with the first letter."""
+    dk, ac, ac2 = _tones(pal)
+    bg, ink, grey = (251, 248, 240), (28, 26, 24), (125, 118, 108)
+    fr = Image.new("RGBA", (S, S), bg + (255,))
+    d = ImageDraw.Draw(fr)
+    words = page["words"]
+    letter = (words[0]["en"][:1] or "A").upper()
+    d.rounded_rectangle([S - 70, 300, S + 40, 430], 18, fill=dk)  # thumb tab
+    _put(fr, _t(LITERATA, letter, 64, (255, 255, 255), "Bold"), S - 38, 365, "c")
+    _put(fr, _t(LITERATA, words[0]["en"], 28, ink, "Bold"), 70, 70)
+    if len(words) > 1:
+        _put(fr, _t(LITERATA, words[-1]["en"], 28, ink, "Bold"), S - 70, 70, "r")
+    y = 64
+    if page.get("title"):
+        t = _fit_one(lambda s: _t(LITERATA, page["title"], s, ink, "SemiBold"), 44, S - 520)
+        _put(fr, t, S / 2, y + 6, "c")
+    y = 108
+    d.line([(70, y), (S - 70, y)], fill=ink, width=3)
+    d.line([(70, y + 8), (S - 70, y + 8)], fill=ink, width=1)
+    y += 30
+    if page.get("sub"):
+        st = _fit_one(lambda s: _t(AMIRI, page["sub"], s, dk, "Bold"), 40, S - 200)
+        _put(fr, st, S / 2, y + _h(st) / 2, "c")
+        y += _h(st) + 14
+    xl, xr = 90, S - 110
+    ys, rh = _rows(y + 6, S - 100, len(words), 0)
+
+    def texts(w, k):
+        e = _t(LITERATA, w["en"], 58 * k, ink, "Bold")
+        i = _ipa(w["ipa"], 32 * k, grey) if w.get("ipa") else None
+        a = _t(AMIRI, w["ar"], 64 * k, dk, "Bold")
+        return e, i, a
+
+    k = _common(words, lambda w, k: (lambda e, i, a: (
+        (_vis_w(e) + (_vis_w(i) + 20 if i is not None else 0)) / (xr - xl - 40), _vis_w(a) / (xr - xl - 120),
+        (_h(e) + 10 + _h(a)) / (rh * 0.86)))(*texts(w, k)), k_max=1.1)
+    for j, (yy, w) in enumerate(zip(ys, words)):
+        e, i, a = texts(w, k)
+        hh = _h(e) + 10 + _h(a)
+        y0 = yy + rh / 2 - hh / 2
+        _put(fr, e, xl, y0 + _h(e) / 2)
+        if i is not None:
+            _put(fr, i, xl + _vis_w(e) + 20, y0 + _h(e) - _h(i) / 2 - 2)
+        sense = _t(LITERATA, f"{j + 1}.", 30 * k + 4, grey, "SemiBold")
+        ya = y0 + _h(e) + 10 + _h(a) / 2
+        _put(fr, sense, xl + 34, ya)
+        _put(fr, a, xl + 34 + _vis_w(sense) + 16, ya)  # "1. meaning", as in a bilingual dictionary
+        if j < len(words) - 1:
+            for xx in range(xl, xr, 14):
+                d.ellipse([xx, yy + rh - 2, xx + 3, yy + rh + 1], fill=(205, 198, 186))
+    _footer(fr, handle, n, of, grey, y=S - 56, font=LITERATA)
+    return fr
+
+
+def _tail(d, x, y, col, right):
+    s = 1 if right else -1
+    d.polygon([(x, y), (x + s * 22, y), (x, y + 22)], fill=col)
+
+
+def _draw_chat(page, pal, handle, n, of):
+    """A messaging-app screen: the title as the chat name, each word asked in a bubble, the meaning answered."""
+    dk, ac, ac2 = _tones(pal)
+    bg = _mix(dk, (255, 255, 255), 0.9)
+    fr = Image.new("RGBA", (S, S), bg + (255,))
+    d = ImageDraw.Draw(fr)
+    for r in range(150, S, 70):  # wallpaper doodles
+        for c in range((r // 70) % 2 * 35, S, 70):
+            d.ellipse([c - 4, r - 4, c + 4, r + 4], outline=_mix(dk, bg, 0.82), width=2)
+    d.rectangle([0, 0, S, 130], fill=dk)
+    av = 78
+    fr.alpha_composite(_colored(_circle_mask(av), ac), (52, 26))
+    name = page.get("title") or "Vocabulary"
+    _put(fr, _t(INTER, name[:1].upper(), 40, _readable(ac), "ExtraBold"), 52 + av / 2, 65, "c")
+    nm = _fit_one(lambda s: _t(INTER, name, s, (255, 255, 255), "Bold"), 38, S - 330)
+    stx = page.get("sub") or "online"
+    st = _fit_one(lambda s: _t(VAZIR, stx, s, _mix(ac, (255, 255, 255), 0.3), "Medium"), 26, S - 330)
+    _put(fr, nm, 152, 50)
+    _put(fr, st, 152, 92)
+    words = page["words"]
+    me = ac if _lum(ac) > 0.35 else _mix(ac, (255, 255, 255), 0.6)
+    me_ink = _readable(me)
+    top, bot, gap, pad = 158, S - 92, 12, 18
+
+    def bubbles(k):
+        out = []
+        for w in words:
+            e = _t(INTER, w["en"], 48 * k, (25, 25, 30), "SemiBold")
+            i = _ipa(w["ipa"], 27 * k, (130, 130, 140)) if w.get("ipa") else None
+            a = _t(VAZIR, w["ar"], 46 * k, me_ink, "Bold")
+            lw = max(_vis_w(e), _vis_w(i) if i is not None else 0) + 2 * pad + 10
+            lh = _h(e) + (_h(i) + 6 if i is not None else 0) + 2 * pad
+            rw, rh = _vis_w(a) + 2 * pad + 96, _h(a) + 2 * pad
+            out.append((e, i, a, lw, lh, rw, rh))
+        return out
+
+    # the answer comes in a little lower than the question (a chat, but each word takes ~1.5 bubbles of height)
+    def row_h(b):
+        return max(b[4], b[4] * 0.5 + b[6]) + gap
+
+    k = 1.35
+    for _ in range(40):
+        bs = bubbles(k)
+        hh = sum(row_h(b) for b in bs) - gap
+        if hh <= bot - top and all(b[3] + b[5] + 30 <= S - 120 for b in bs):
+            break
+        k *= 0.96
+    y = top + max(0, (bot - top - hh) / 2)
+    for j, b in enumerate(bs):
+        e, i, a, lw, lh, rw, rh = b
+        _card(fr, 60, y, lw, lh, 24, (255, 255, 255), shadow=False)
+        _tail(d, 60, y, (255, 255, 255), False)
+        _stack(fr, [e] + ([i] if i is not None else []), 60 + pad + 4, y + pad, 6, "l")
+        x, yr = S - 60 - rw, y + lh * 0.5
+        _card(fr, x, yr, rw, rh, 24, me, shadow=False)
+        _tail(d, S - 60, yr, me, True)
+        _put(fr, a, S - 60 - pad - 4, yr + rh / 2, "r")
+        tc = _mix(me_ink, me, 0.45)
+        _put(fr, _t(INTER, f"10:{j * 3 + 2:02d}", 18, tc, "Medium"), x + pad, yr + rh - 20)
+        tx, ty = x + pad + 52, yr + rh - 20
+        for o in (0, 8):  # read ticks
+            d.line([(tx + o, ty), (tx + o + 4, ty + 5), (tx + o + 12, ty - 6)], fill=tc, width=3)
+        y += row_h(b)
+    _footer(fr, handle, n, of, _mix(dk, bg, 0.35), font=INTER)
+    return fr
+
+
+_NOTE_COLS = [(255, 233, 120), (255, 186, 196), (170, 222, 255), (186, 240, 196), (220, 200, 255), (255, 206, 150)]
+_TILT = [-3.0, 2.2, -1.6, 2.8, -2.4, 1.4]
+
+
+def _draw_sticky(page, pal, handle, n, of):
+    """Sticky notes taped to a deep wall, a little tilted; the title on a paper strip."""
+    dk, ac, ac2 = _tones(pal)
+    fr = _grain(_gradient(_mix(dk, (255, 255, 255), 0.06), _mix(dk, (0, 0, 0), 0.3), angle=30), 4)
+    words = page["words"]
+    y = 50
+    if page.get("title") or page.get("sub"):
+        parts = []
+        if page.get("title"):
+            parts.append(_fit_one(lambda s: _t(FREDOKA, page["title"], s, (30, 30, 36), "Bold"), 66, S - 300))
+        if page.get("sub"):
+            parts.append(_fit_one(lambda s: _t(BALOO, page["sub"], s, dk, "Bold"), 36, S - 300))
+        bw = max(_vis_w(p) for p in parts) + 90
+        bh = sum(_h(p) for p in parts) + 12 * (len(parts) - 1) + 50
+        strip = Image.new("RGBA", (int(bw), int(bh)), (252, 250, 244, 255))
+        _stack(strip, parts, bw / 2, 25, 12)
+        rot = strip.rotate(-1.5, Image.BICUBIC, expand=True)
+        _shadow(fr, rot.split()[3], S / 2 - rot.width / 2, y, blur=10, alpha=0.4, dy=8)
+        fr.alpha_composite(rot, (int(S / 2 - rot.width / 2), int(y)))
+        tape = Image.new("RGBA", (130, 40), (255, 255, 255, 120)).rotate(-6, Image.BICUBIC, expand=True)
+        fr.alpha_composite(tape, (int(S / 2 - 65), int(y - 14)))
+        y += rot.height + 20
+    cols, rows = _grid_shape(len(words))
+    top, bot, m, g = max(y, 60), S - 90, 70, 36
+    side = min((S - 2 * m - g * (cols - 1)) / cols, (bot - top - g * (rows - 1)) / rows)
+    gx = (S - (side * cols + g * (cols - 1))) / 2
+    top = (top + bot) / 2 - (side * rows + g * (rows - 1)) / 2
+    ink = (34, 34, 40)
+
+    def texts(w, k):
+        e = _t(FREDOKA, w["en"], 64 * k, ink, "SemiBold")
+        i = _ipa(w["ipa"], 30 * k, (95, 95, 105)) if w.get("ipa") else None
+        a = _t(BALOO, w["ar"], 60 * k, dk, "Bold")
+        return e, i, a
+
+    def need(w, k):
+        e, i, a = texts(w, k)
+        h = _h(e) + (10 + _h(i) if i is not None else 0) + 26 + _h(a)
+        return max(_vis_w(e), _vis_w(i) if i is not None else 0, _vis_w(a)) / (side - 50), h / (side - 70)
+
+    k = _common(words, need, k_max=1.5)
+    palette = [_mix(ac, (255, 255, 255), 0.35)] + _NOTE_COLS
+    for j, w in enumerate(words):
+        r, c = divmod(j, cols)
+        note = Image.new("RGBA", (int(side), int(side)), palette[j % len(palette)] + (255,))
+        nd = ImageDraw.Draw(note)
+        nd.polygon([(side, side - 40), (side, side), (side - 40, side)], fill=_mix(palette[j % len(palette)],
+                                                                                   (0, 0, 0), 0.12))
+        e, i, a = texts(w, k)
+        hh = _h(e) + (10 + _h(i) if i is not None else 0) + 26 + _h(a)
+        _stack(note, [e] + ([i] if i is not None else []), side / 2, side / 2 - hh / 2, 10)
+        _put(note, a, side / 2, side / 2 + hh / 2 - _h(a) / 2, "c")
+        rot = note.rotate(_TILT[j % len(_TILT)], Image.BICUBIC, expand=True)
+        cx, cy = gx + c * (side + g) + side / 2, top + r * (side + g) + side / 2
+        _shadow(fr, rot.split()[3], cx - rot.width / 2, cy - rot.height / 2, blur=12, alpha=0.45, dy=12)
+        fr.alpha_composite(rot, (int(cx - rot.width / 2), int(cy - rot.height / 2)))
+        tape = Image.new("RGBA", (110, 34), (255, 255, 255, 110)).rotate(_TILT[j % len(_TILT)] * 2, Image.BICUBIC,
+                                                                          expand=True)
+        fr.alpha_composite(tape, (int(cx - tape.width / 2), int(cy - side / 2 - 18)))
+    _footer(fr, handle, n, of, _mix((255, 255, 255), dk, 0.25), font=FREDOKA)
+    return fr
+
+
+def _draw_brutal(page, pal, handle, n, of):
+    """Neo-brutalism: a flat bright background, thick black outlines, hard offset shadows, chunky type."""
+    dk, ac, ac2 = _tones(pal)
+    bg = ac if _lum(ac) > 0.3 else _mix(ac, (255, 255, 255), 0.5)
+    tag = ac2 if ac2 != ac and _contrast(ac2, bg) > 1.3 else (255, 255, 255)
+    black = (0, 0, 0)
+    fr = Image.new("RGBA", (S, S), bg + (255,))
+    d = ImageDraw.Draw(fr)
+    for r in range(0, S, 36):
+        for c in range(0, S, 36):
+            d.point([(c, r), (c + 1, r), (c, r + 1), (c + 1, r + 1)], fill=_mix(bg, black, 0.25))
+    y = 54
+    if page.get("title"):
+        t = _fit_one(lambda s: _t(RUBIK, page["title"].upper(), s, (255, 255, 255), "Black"), 76, S - 240)
+        bw, bh = _vis_w(t) + 70, _h(t) + 46
+        blk = Image.new("RGBA", (int(bw) + 20, int(bh) + 20), (0, 0, 0, 0))
+        _box(blk, 0, 0, bw, bh, 14, black, border=0, shadow=0)
+        _put(blk, t, bw / 2, bh / 2, "c")
+        rot = blk.rotate(1.6, Image.BICUBIC, expand=True)
+        fr.alpha_composite(_colored(rot.split()[3], tag), (int(S / 2 - rot.width / 2 + 10), int(y + 10)))
+        fr.alpha_composite(rot, (int(S / 2 - rot.width / 2), int(y)))
+        y += rot.height + 12
+    if page.get("sub"):
+        st = _fit_one(lambda s: _t(TAJAWAL, page["sub"], s, black, "Bold"), 40, S - 200)
+        _put(fr, st, S / 2, y + _h(st) / 2, "c")
+        y += _h(st) + 10
+    words = page["words"]
+    top0 = y + 18
+    ys, rh = _rows(top0, S - 100, len(words), 20)
+    rh = min(rh, 170)
+    top = (top0 + S - 100) / 2 - (rh * len(words) + 20 * (len(words) - 1)) / 2
+    x0, x1 = 56, S - 66
+    sq = min(76, rh - 40)
+    xl = x0 + 26 + sq + 26
+
+    def texts(w, k):
+        return _row_texts(w, k, RUBIK, TAJAWAL, black, (70, 70, 70), _readable(tag), en=60, ipa=30, ar=52,
+                          w_en="ExtraBold", w_ar="Black")
+
+    k = _common(words, lambda w, k: (lambda e, i, a: (
+        (max(_vis_w(e), _vis_w(i) if i is not None else 0) + _vis_w(a) + 100) / (x1 - xl - 30),
+        max(_h(e) + (_h(i) + 6 if i is not None else 0), _h(a) + 36) / (rh * 0.86)))(*texts(w, k)), k_max=1.2)
+    for j, w in enumerate(words):
+        yy = top + j * (rh + 20)
+        _box(fr, x0, yy, x1 - x0, rh, 18, (255, 255, 255))
+        _box(fr, x0 + 26, yy + rh / 2 - sq / 2, sq, sq, 10, black, border=0, shadow=0)
+        _put(fr, _t(RUBIK, str(j + 1), sq * 0.55, bg, "Black"), x0 + 26 + sq / 2, yy + rh / 2, "c")
+        e, i, a = texts(w, k)
+        if i is not None:
+            hh = _h(e) + 6 + _h(i)
+            _put(fr, e, xl, yy + rh / 2 - hh / 2 + _h(e) / 2)
+            _put(fr, i, xl, yy + rh / 2 + hh / 2 - _h(i) / 2)
+        else:
+            _put(fr, e, xl, yy + rh / 2)
+        pw, ph = _vis_w(a) + 52, _h(a) + 30
+        _box(fr, x1 - 24 - pw, yy + rh / 2 - ph / 2, pw, ph, ph / 2, tag, border=4, shadow=5)
+        _put(fr, a, x1 - 24 - pw / 2, yy + rh / 2, "c")
+    _footer(fr, handle, n, of, black, font=RUBIK)
+    return fr
+
+
+def _draw_aurora(page, pal, handle, n, of):
+    """Dark mode with an aurora glow and film grain: gradient title, quiet rows, meanings in gradient ink."""
+    dk, ac, ac2 = _tones(pal)
+    base = _mix(dk, (0, 0, 0), 0.72)
+    c2 = ac2 if ac2 != ac else _mix(ac, (255, 255, 255), 0.55)
+    fr = _blob_bg(base, [(200, -60, 520, ac, 0.55), (900, 60, 420, c2, 0.45), (540, 1180, 520,
+                                                                                _mix(dk, (255, 255, 255), 0.25), 0.7)],
+                  blur=170)
+    fr = _grain(fr, 7)
+    white = (250, 250, 252)
+    y = 74
+    if page.get("title"):
+        t = _fit_one(lambda s: _t(DMSANS, page["title"], s, white, "Bold"), 92, S - 140)
+        _put(fr, _grad_text(t, ac, c2), S / 2, y + _h(t) / 2, "c")
+        y += _h(t) + 18
+    if page.get("sub"):
+        st = _fit_one(lambda s: _t(VAZIR, page["sub"], s, _mix(white, base, 0.35), "Medium"), 36, S - 140)
+        _put(fr, st, S / 2, y + _h(st) / 2, "c")
+        y += _h(st) + 14
+    words = page["words"]
+    top0 = y + 24
+    ys, rh = _rows(top0, S - 100, len(words), 0)
+    xl, xr = 150, S - 80
+    dim = _mix(white, base, 0.5)
+    k = _common(words, lambda w, k: _sbs_need(*_row_texts(w, k, DMSANS, VAZIR, white, dim, white, w_en="SemiBold"),
+                                              xr - xl, rh * 0.72), k_max=1.15)
+    line = Image.new("RGBA", (S - 160, 2), (255, 255, 255, 30))
+    for j, (yy, w) in enumerate(zip(ys, words)):
+        if j:
+            fr.alpha_composite(line, (80, int(yy)))
+        _put(fr, _t(DMSANS, f"{j + 1:02d}", 30, dim, "Medium"), 80, yy + rh / 2)
+        e, i, a = _row_texts(w, k, DMSANS, VAZIR, white, dim, white, w_en="SemiBold")
+        _side_by_side(fr, e, i, _grad_text(a, c2, ac), xl, xr, yy + rh / 2)
+    _footer(fr, handle, n, of, dim, font=DMSANS)
+    return fr
+
+
 _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebook": _draw_notebook,
-         "minimal": _draw_minimal, "chalk": _draw_chalk, "poster": _draw_poster}
+         "minimal": _draw_minimal, "chalk": _draw_chalk, "poster": _draw_poster, "glass": _draw_glass,
+         "bento": _draw_bento, "swiss": _draw_swiss, "dictionary": _draw_dictionary, "chat": _draw_chat,
+         "sticky": _draw_sticky, "brutal": _draw_brutal, "aurora": _draw_aurora}
 
 
 def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1):
