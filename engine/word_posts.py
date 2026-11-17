@@ -1354,6 +1354,9 @@ def _shrink(ratio, k_max):
     return k
 
 
+WRAP_BELOW = 0.62  # side by side: the Arabic wraps onto 2 lines only when on 1 line it would be smaller than this
+
+
 def _two_sizes(words, en_of, ar_of, width, rh, k_max=1.3):
     """Side by side: ONE size for every English entry and ONE (its own) for every Arabic meaning, so a long meaning
     does not shrink the words. The English takes what it needs (at most ~60 % of the row), the Arabic the rest; if
@@ -1364,16 +1367,26 @@ def _two_sizes(words, en_of, ar_of, width, rh, k_max=1.3):
     def en_h(k):
         return max(_h(e) + (8 + _h(i) if i is not None else 0) for e, i in (en_of(w, k) for w in words))
 
-    ke = _shrink(lambda k: max(en_w(k) / (width * 0.62), en_h(k) / (rh * 0.8)), k_max)
-    ka, room = ke, width
-    for _ in range(8):  # a meaning too long for its room wraps onto 2 lines (ar_of(w, k, room)) instead of shrinking
-        room = max(60, width - en_w(ke) - 44)
-        ka = _shrink(lambda k: max(max(_vis_w(ar_of(w, k, room)) for w in words) / room,
-                                   max(_h(ar_of(w, k, room)) for w in words) / (rh * 0.86)), ke * 1.05)
-        if ka >= ke * 0.82:
-            break
-        ke *= 0.95
-    return ke, ka, room
+    ke0 = _shrink(lambda k: max(en_w(k) / (width * 0.62), en_h(k) / (rh * 0.8)), k_max)
+
+    def fit(room_of, h_share, keep):
+        ke = ke0
+        for _ in range(8):
+            room = max(60, width - en_w(ke) - 44)
+            r = room_of(room)
+            ka = _shrink(lambda k: max(max(_vis_w(ar_of(w, k, r)) for w in words) / room,
+                                       max(_h(ar_of(w, k, r)) for w in words) / (rh * h_share)), ke * 1.05)
+            if ka >= ke * keep:
+                return ke, ka, r, True
+            ke *= 0.95
+        return ke, ka, r, False
+
+    # every meaning on one line (exactly as before), unless that makes the Arabic really small (long meanings)
+    ke, ka, room, ok = fit(lambda room: None, 0.62, 0.9)
+    if ka >= ke0 * WRAP_BELOW:
+        return ke, ka, None
+    # a long meaning would shrink the whole post: it wraps onto 2 lines (ar_of(w, k, room)) instead
+    return fit(lambda room: room, 0.86, 0.82)[:3]
 
 
 def _fit_stack(words, make_en, make_ar, avail_w, avail_h, gap_in, gap_out, k_max=1.4):
