@@ -24,11 +24,11 @@ AMIRI = _font("Amiri", "Amiri-Bold.ttf")
 # the app's menu: the highlight designs (clean page, clear type, one real-looking mark per word)
 STYLES = [("Highlighter", "highlighter"), ("Brush strokes", "brush"), ("Swoosh", "swoosh"), ("Washi tape", "tape"),
           ("Soft highlight", "soft"), ("Pencil", "pencil"), ("Document", "document"),
-          ("Sky cards", "skycards")]
+          ("Sky cards", "skycards"), ("Swiss", "swiss"), ("Chat", "chat")]
 # more designs, kept for later (post() draws them too)
 MORE_STYLES = [("Cards", "cards"), ("Flashcard grid", "grid"), ("Table", "table"), ("Notebook", "notebook"),
                ("Minimal", "minimal"), ("Chalkboard", "chalk"), ("Poster", "poster"), ("Glass", "glass"),
-               ("Bento", "bento"), ("Swiss", "swiss"), ("Dictionary", "dictionary"), ("Chat", "chat"),
+               ("Bento", "bento"), ("Dictionary", "dictionary"),
                ("Sticky notes", "sticky"), ("Neo-brutal", "brutal"), ("Aurora", "aurora")]
 DEFAULT_STYLE = "highlighter"
 DEFAULT_PALETTE = "navy_juice"
@@ -702,7 +702,9 @@ def _draw_swiss(page, pal, handle, n, of):
     """International typographic style: off-white, a strict grid, huge flush-left title, big numbers, one accent."""
     dk, ac, ac2 = _tones(pal)
     bg, ink = (243, 241, 236), (17, 17, 17)
-    red = next((c for c in (ac2, ac, dk) if _contrast(c, bg) >= 3), dk)
+    red = next((c for c in (ac2, ac) if _contrast(c, bg) >= 3), None)
+    if red is None:  # a light set: its accent deepened towards navy (still the set's colour), else ink
+        red = _page_tones(pal)[3] if pal in MONO_SETS else dk
     fr = Image.new("RGBA", (S, S), bg + (255,))
     d = ImageDraw.Draw(fr)
     words = page["words"]
