@@ -241,8 +241,11 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   and settles, a shine sweeps them, a ring counts the words and bursts into a ✓ — with **new colours for every video**
   (12 matched colour sets, picked from the clip, always readable; a video keeps its colours when re-rendered); or
   **📋 Table** (one card with every word). The Flashcards recap lasts longer with more words (≈ 4.6–8 s).
-- Five looks (⏱️ Design): **Pop** (1–3 huge words at a time, yellow stickers), Breaking (dark), Studio (light),
-  TV broadcast (lower thirds + ticker) and Newspaper; five accent colours, shared by all the clips. Trim a clip with
+- Eight looks (⏱️ Design): **Pop** (1–3 huge words at a time, yellow stickers), Breaking (dark), Studio (light),
+  TV broadcast (lower thirds + ticker), Newspaper, **Notification** (frosted glass; each key word drops in from the
+  top like a phone notification), **Podcast clip** (a waveform that moves with the speech, lime karaoke subtitles)
+  and **Social post** (the clip inside a post with your logo; key words come in as pinned replies, the heart fills);
+  five accent colours, shared by all the clips (Podcast is always lime, Social post always blue). Trim a clip with
   *Start / End the clip at*. The 🔚 Ending *Question* line (optional) becomes the recap card's subtitle.
 - **Landscape (16:9) clips work best**: the video keeps its own frame and nothing covers it. A vertical clip fills the
   screen and the subtitles and cards go over its lower half. Keep it 15–60 s, one clear speaker, no subtitles burned
