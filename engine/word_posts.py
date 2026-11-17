@@ -256,6 +256,15 @@ def _pad_below(im, px):
     return out
 
 
+def _pad_above(im, px):
+    """A text image with `px` of empty room added over its letters."""
+    if px <= 0:
+        return im
+    out = Image.new("RGBA", (im.width, im.height + int(px)), (0, 0, 0, 0))
+    out.alpha_composite(im, (0, int(px)))
+    return out
+
+
 def _entry(w, k, f_en, c_en, c_ipa, en=64, ipa=34, w_en="Bold", align="l", wrap=None, f_def=None, head_gap=0):
     """(word image, IPA image or None). A word / idiom with an English meaning (`def`) becomes ONE block: the word
     with its IPA beside it, then the meaning wrapped in a few even lines (the IPA is then None). `wrap` = the width
@@ -1863,10 +1872,32 @@ def _poster(page, handle, n, of, L):
     en_font, en_weight, en_col, en_size, en_glow = L["en"]
     ar_font, ar_weight, ar_col, ar_size, ar_glow, bar = L["ar"]
     avail_w = S - 200
+    hl = _OPT.get("hl") or "glow"
+    accent = L.get("accent", en_col)
+    if hl == "pill":  # a solid label: the word in white on the colour
+        en_col = (255, 255, 255)
+    # room above / under the word for its mark, so it never touches the line before or after
+    room_t, room = {"swoosh": (0, 22), "underline": (0, 18), "circle": (18, 18), "pill": (16, 16),
+                    "box": (16, 16), "brush": (8, 8)}.get(hl, (0, 0))
 
     def make_en(w, k):
-        return list(_entry(w, k, en_font, en_col, L.get("sub_ink", (96, 100, 108)), en=en_size, ipa=30,
-                           w_en=en_weight, align="c", wrap=640))
+        e, i = _entry(w, k, en_font, en_col, L.get("sub_ink", (96, 100, 108)), en=en_size, ipa=30,
+                      w_en=en_weight, align="c", wrap=640, head_gap=room * k)
+        if room and i is None and not w.get("def"):
+            e = _pad_below(e, room * k)
+        if room_t:
+            e = _pad_above(e, room_t * k)
+        return [e, i]
+
+    def word_box(w, k, top):
+        """(word image, left x, top) of the English word inside its centred block."""
+        word = _t(en_font, w["en"], en_size * k, en_col, en_weight)
+        line_w = _vis_w(word)
+        if w.get("def") and w.get("ipa"):  # _entry put the IPA beside the word
+            ipa_im = _ipa(w["ipa"], 30 * k, (0, 0, 0))
+            if _vis_w(word) + _vis_w(ipa_im) <= 640 * 1.1:
+                line_w += int(14 * k) + _vis_w(ipa_im)
+        return word, S / 2 - line_w / 2, top
 
     def make_ar(w, k):
         return _ar_img(w, ar_size * k, ar_col, ar_font, ar_weight, bar, max_w=avail_w * 0.94)
@@ -1877,14 +1908,19 @@ def _poster(page, handle, n, of, L):
     groups, hs, total, k = _fit_stack(words, make_en, make_ar, avail_w, room1 - room0 - 2 * py, gap_in, gap_out,
                                       k_max=1.3)
     y = room0 + (room1 - room0 - total) / 2
-    for g, gh in zip(groups, hs):
+    for j, (w, g, gh) in enumerate(zip(words, groups, hs)):
         yy = y
+        word, wx, wy = word_box(w, k, y + room_t * k)
+        if hl != "glow":
+            _word_mark(fr, hl, word, wx, wy, j, accent, L, behind=True)
         for p in g:
-            glow = en_glow if p is g[0] else ar_glow if p is g[-1] else None  # not behind the IPA / English meaning
-            if glow:
+            glow = (en_glow if hl == "glow" else None) if p is g[0] else ar_glow if p is g[-1] else None
+            if glow:  # not behind the IPA / English meaning
                 _glow_pill(fr, S / 2, yy + _h(p) / 2, _vis_w(p) + 2 * px, _h(p) + 2 * py, glow)
             _put(fr, p, S / 2, yy + _h(p) / 2, "c")
             yy += _h(p) + gap_in * k
+        if hl != "glow":
+            _word_mark(fr, hl, word, wx, wy, j, accent, L, behind=False)
         y += gh + gap_out * k
     hc = L["h_col"]
     if under:  # the handle centred under the words, like a signature
@@ -1894,6 +1930,43 @@ def _poster(page, handle, n, of, L):
     if of > 1:
         _put(fr, _t(INTER, f"{n} / {of}", 28, L.get("n_col", hc), "Bold"), S - 60, S - 36, "r")
     return fr
+
+
+# word highlights of the poster designs (Clouds / Torn paper): post(..., hl=key)
+WORD_HIGHLIGHTS = [("Soft glow", "glow"), ("Marker", "marker"), ("Watercolour brush", "brush"),
+                   ("Solid label", "pill"), ("Swoosh underline", "swoosh"), ("Underline bar", "underline"),
+                   ("Outline box", "box"), ("Pen circle", "circle"), ("None", "none")]
+
+
+def _word_mark(fr, hl, word, x, y, j, accent, L, behind):
+    """One highlight on the English word whose letters start at (x, y): drawn behind the text (behind=True) or over
+    it, depending on the kind."""
+    w, h = _vis_w(word), _h(word)
+    back = hl in ("marker", "brush", "pill")
+    if back != behind or hl in ("glow", "none"):
+        return
+    if hl == "marker":
+        band, pad = _marker_band(w + 26, h * 0.6, L.get("marker", MARKER), seed=20 + j)
+        _multiply(fr, band, x - 13 - pad, y + h * 0.48 - pad)
+    elif hl == "brush":  # a light watercolour stroke: the dark letters stay readable on it
+        st = _brush_stroke(w + 110, h * 1.35, L.get("wash", _mix(accent, (255, 255, 255), 0.55)), seed=70 + j)
+        _multiply(fr, st, x - 44, y - h * 0.18)
+    elif hl == "pill":
+        pw, ph = w + 54, h + 30
+        m = _round_mask(pw, ph, ph / 2)
+        _shadow(fr, m, x - 27, y - 15, blur=10, alpha=0.18, dy=6)
+        fr.alpha_composite(_colored(m, L.get("pill", accent)), (int(x - 27), int(y - 15)))
+    elif hl == "swoosh":
+        sw, pad = _swoosh(w + 14, h * 0.3, accent, seed=30 + j, width=max(5, h * 0.17))
+        fr.alpha_composite(sw, (int(x - 7 - pad), int(y + h * 0.84 - pad)))
+    elif hl == "underline":
+        t = max(5.0, h * 0.11)
+        ImageDraw.Draw(fr).rounded_rectangle([x, y + h + 8, x + w, y + h + 8 + t], t / 2, fill=accent)
+    elif hl == "box":
+        ImageDraw.Draw(fr).rounded_rectangle([x - 20, y - 14, x + w + 20, y + h + 14], 14, outline=accent, width=4)
+    elif hl == "circle":
+        circ, pad = _pen_circle(w + 34, h + 30, L.get("pen", RED_PEN), 5.0, seed=4 + j)
+        fr.alpha_composite(circ, (int(x - 17 - pad), int(y - 15 - pad)))
 
 
 def _draw_torn(page, pal, handle, n, of):
@@ -1923,7 +1996,7 @@ def _draw_torn(page, pal, handle, n, of):
         bg=bg, t_font=LITERATA, t_weight="ExtraBold", t_col=white, s_col=white,
         en=(LITERATA, "ExtraBold", (24, 22, 20), 80, GLOW), ar=(TAJAWAL, "Black", TORN_RED, 82, GLOW,
                                                                _mix(blue, (0, 0, 0), 0.08)),
-        h_col=white))
+        h_col=white, accent=_mix(blue, (0, 0, 0), 0.25), pen=TORN_RED))
 
 
 CLOUD_SKY = (222, 237, 250)   # the sky around the page
@@ -1974,7 +2047,8 @@ def _draw_clouds(page, pal, handle, n, of):
     return _poster(page, handle, n, of, dict(
         bg=bg, t_font=POPPINS_B, t_weight="Bold", t_col=CLOUD_RED, s_col=ink,
         en=(POPPINS_B, "Bold", CLOUD_RED, 84, CLOUD_GLOW), ar=(TAJAWAL, "Black", ink, 80, None, CLOUD_RED),
-        h_col=(70, 70, 78), h_font=POPPINS_B, handle_at="under", sub_ink=(110, 110, 118)))
+        h_col=(70, 70, 78), h_font=POPPINS_B, handle_at="under", sub_ink=(110, 110, 118), accent=CLOUD_RED,
+        pen=(30, 110, 200), wash=_mix(sky, (120, 180, 235), 0.45)))
 
 
 _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebook": _draw_notebook,
@@ -1988,9 +2062,10 @@ _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebo
 
 
 def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1, fonts=0, layout="side",
-         en_font="", ar_font=""):
+         en_font="", ar_font="", hl="glow"):
     """One page of words as a square RGB image (fonts = a FONT_SETS number, 0 = the design's own; layout = "side" /
-    "stack" for the highlight designs; en_font / ar_font = any library font for that language, over `fonts`)."""
+    "stack" for the highlight designs; en_font / ar_font = any library font for that language, over `fonts`;
+    hl = a WORD_HIGHLIGHTS key for the poster designs)."""
     words = [dict(en=w["en"], ar=w["ar"], ipa=w.get("ipa", ""), **({"def": w["def"]} if w.get("def") else {}),
                   **({"alts": list(w["alts"])} if len(w.get("alts") or []) > 1 else {}))
              for w in page.get("words", [])][:6]
@@ -1999,7 +2074,8 @@ def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=
     pg = dict(title=page.get("title", ""), sub=page.get("sub", ""), words=words)
     fn = _DRAW.get(style, _DRAW[DEFAULT_STYLE])
     use_fonts(fonts, en_font, ar_font)
-    _OPT.update(layout=layout if layout in dict((v, v) for _, v in LAYOUTS) else "side")
+    _OPT.update(layout=layout if layout in dict((v, v) for _, v in LAYOUTS) else "side",
+                hl=hl if hl in dict((v, v) for _, v in WORD_HIGHLIGHTS) else "glow")
     try:
         return fn(pg, palette if palette in DUOS else DEFAULT_PALETTE, handle or "", n, of).convert("RGB")
     finally:
@@ -2029,7 +2105,7 @@ def pages(words, per=4, title="", subtitle=""):
 
 
 def make_posts(pgs, out_dir, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", progress=None,
-               stop=None, fonts=0, layout="side", en_font="", ar_font=""):
+               stop=None, fonts=0, layout="side", en_font="", ar_font="", hl="glow"):
     """Every page as post_NN.png in out_dir + all of them in one .zip -> (png paths, zip path)."""
     import zipfile
     os.makedirs(out_dir, exist_ok=True)
@@ -2038,7 +2114,8 @@ def make_posts(pgs, out_dir, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handl
         if stop:
             stop()
         path = os.path.join(out_dir, f"post_{k:02d}.png")
-        post(pg, style, palette, handle, k, len(pgs), fonts, layout, en_font, ar_font).save(path, optimize=True)
+        post(pg, style, palette, handle, k, len(pgs), fonts, layout, en_font, ar_font, hl).save(path,
+                                                                                               optimize=True)
         paths.append(path)
         if progress:
             progress(k / len(pgs), f"Post {k} of {len(pgs)}")

@@ -91,6 +91,9 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   (`_cloud_band`: sky frame, red English on a pink glow, heavy black Arabic, red bars, handle under the words).
   `_ar_img(..., max_w)`: a too-wide meaning wraps to 2 centred lines — between two meanings first (one per line),
   else between words, never next to a bar (`_bar_line` = meanings on one line with bars).
+  `post(..., hl=key)` (`WORD_HIGHLIGHTS`, `_OPT["hl"]`): the poster designs' mark on the English word (`_word_mark`:
+  glow / marker / brush / pill / swoosh / underline / box / circle / none; room above/under via `_pad_above` /
+  `_pad_below`; colours from the look dict: accent, marker, pen, wash, pill).
   Sizes: English and Arabic each get ONE page-wide size of their own — stacked `_fit_stack` (biggest that fits the
   width, then both scaled to the height; the Arabic is not cut twice), side by side `_two_sizes` (English <= ~60 %,
   Arabic the rest, kept >= 0.9 of the English); groups evenly spaced (gap inside / between), block centred.
