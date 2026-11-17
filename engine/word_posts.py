@@ -25,7 +25,9 @@ STYLES = [("Cards", "cards"), ("Flashcard grid", "grid"), ("Table", "table"), ("
           ("Minimal", "minimal"), ("Chalkboard", "chalk"), ("Poster", "poster"), ("Glass", "glass"),
           ("Bento", "bento"), ("Swiss", "swiss"), ("Dictionary", "dictionary"), ("Chat", "chat"),
           ("Sticky notes", "sticky"), ("Neo-brutal", "brutal"), ("Aurora", "aurora"),
-          ("Highlighter", "highlighter"), ("Brush strokes", "brush")]
+          ("Highlighter", "highlighter"), ("Brush strokes", "brush"), ("Swoosh", "swoosh"),
+          ("Washi tape", "tape"), ("Soft highlight", "soft"), ("Pencil", "pencil"), ("Neon", "neon"),
+          ("Focus", "focus")]
 DEFAULT_STYLE = "cards"
 DEFAULT_PALETTE = "navy_juice"
 
@@ -175,14 +177,24 @@ def _beside(a, b, gap):
     return out
 
 
-def _entry(w, k, f_en, c_en, c_ipa, en=64, ipa=34, w_en="Bold", align="l", wrap=None, f_def=None):
+def _pad_below(im, px):
+    """A text image with `px` of empty room added under its letters (for a mark drawn under the word)."""
+    if px <= 0:
+        return im
+    out = Image.new("RGBA", (im.width, im.height + int(px)), (0, 0, 0, 0))
+    out.alpha_composite(im, (0, 0))
+    return out
+
+
+def _entry(w, k, f_en, c_en, c_ipa, en=64, ipa=34, w_en="Bold", align="l", wrap=None, f_def=None, head_gap=0):
     """(word image, IPA image or None). A word / idiom with an English meaning (`def`) becomes ONE block: the word
     with its IPA beside it, then the meaning wrapped in a few even lines (the IPA is then None). `wrap` = the width
-    the design has for it (px); without it the meaning wraps at DEF_WRAP x k."""
+    the design has for it (px); without it the meaning wraps at DEF_WRAP x k. head_gap = extra room under the word
+    line (px) before what comes under it (IPA / meaning), for a mark drawn under the word."""
     e = _t(f_en, w["en"], en * k, c_en, w_en)
     i = _ipa(w["ipa"], ipa * k, c_ipa) if w.get("ipa") else None
     if not w.get("def"):
-        return e, i
+        return (_pad_below(e, head_gap) if i is not None else e), i
     # readable on a phone (DEF_MIN), unless the page is crowded; always clearly smaller than the word itself
     size = min(max(en * k * DEF_SIZE, DEF_MIN * min(1.0, k / 0.55)), en * k * 0.75)
     f_def = f_def or f_en  # a script word font gets a plain font for its meaning
@@ -201,12 +213,12 @@ def _entry(w, k, f_en, c_en, c_ipa, en=64, ipa=34, w_en="Bold", align="l", wrap=
     head = e
     if i is not None:
         head = _beside(e, i, int(14 * k)) if _vis_w(e) + _vis_w(i) <= limit * 1.1 else _join([e, i], 6, align)
-    return _join([head] + [img(s) for s in lines], int(max(6, 12 * k)), align), None
+    return _join([_pad_below(head, head_gap)] + [img(s) for s in lines], int(max(6, 12 * k)), align), None
 
 
 def _row_texts(w, k, f_en, f_ar, c_en, c_ipa, c_ar, en=64, ipa=34, ar=58, w_en="Bold", w_ar="Bold", align="l",
-               wrap=None, f_def=None):
-    e, i = _entry(w, k, f_en, c_en, c_ipa, en, ipa, w_en, align, wrap, f_def)
+               wrap=None, f_def=None, head_gap=0):
+    e, i = _entry(w, k, f_en, c_en, c_ipa, en, ipa, w_en, align, wrap, f_def, head_gap)
     a = _t(f_ar, w["ar"], ar * k, c_ar, w_ar)
     return e, i, a
 
@@ -1095,34 +1107,51 @@ def _pen_circle(w, h, col=RED_PEN, width=5.0, seed=2):
     return _colored(m, col, 0.93), pad
 
 
-def _draw_highlighter(page, pal, handle, n, of):
-    """Clean paper, crisp dark type, one highlighter stroke behind each word and a single red-pen loop on the title."""
-    dk, ac, ac2 = _tones(pal)
-    paper = (251, 249, 244)
-    rng = np.random.default_rng(4)
-    arr = np.full((S, S, 3), paper, np.float32) + rng.normal(0, 1.6, (S, S, 1))
-    fr = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
-    ink, grey = (20, 20, 24), (105, 105, 112)
-    marker = ac if (_lum(ac) > 0.45 and _contrast(ac, ink) > 7) else MARKER  # a light accent works as a marker
+def _paper(col=(251, 249, 244), seed=4):
+    rng = np.random.default_rng(seed)
+    arr = np.full((S, S, 3), col, np.float32) + rng.normal(0, 1.6, (S, S, 1))
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
+
+
+def _strong(dk, ac, ac2, bg, need=3.0):
+    """A colour from the set that shows clearly on bg: a second accent or accent, else the accent deepened."""
+    for c in (ac2, ac):
+        if _contrast(c, bg) >= need:
+            return c
+    for t in np.linspace(0.1, 1, 10):
+        c = _mix(ac, dk, t)
+        if _contrast(c, bg) >= need:
+            return c
+    return dk
+
+
+def _marked_page(page, handle, n, of, look):
+    """The page all highlight designs share: clean background, a crisp title, numbered rows with the English word
+    (+ IPA / English meaning) on the left and the Arabic on the right, thin rules. `look` gives the colours, the
+    background and the mark: mark(fr, word_image, x, y_top, j) draws on / behind the English word whose visible box
+    starts at (x, y_top); behind=True = drawn before the text. The title's last word gets the same mark (or
+    look["title_mark"])."""
+    fr = look["bg"]()
+    ink, grey, ar_ink = look["ink"], look["grey"], look.get("ar_ink", look["ink"])
+    f_en, f_ar = look.get("f_en", INTER), look.get("f_ar", VAZIR)
+    behind = look.get("behind", True)
     y = 70
     if page.get("title"):
         parts = page["title"].split()
-        t = _fit_one(lambda s_: _t(INTER, page["title"], s_, ink, "ExtraBold"), 92, S - 220)
+        t = _fit_one(lambda s_: _t(f_en, page["title"], s_, ink, "ExtraBold"), 92, S - 220)
         x0 = S / 2 - _vis_w(t) / 2
-        if len(parts) > 1:
-            px = _font_px(t, page["title"], INTER, "ExtraBold")
-            last = _t(INTER, parts[-1], px, ink, "ExtraBold")
-            circ, pad = _pen_circle(_vis_w(last) + 30, _h(t) + 30, RED_PEN, 5.5, seed=4)
-            lx = x0 + _vis_w(t) - _vis_w(last)
-            _put(fr, t, S / 2, y + _h(t) / 2, "c")
-            fr.alpha_composite(circ, (int(lx - 15 - pad), int(y - 15 - pad)))
-        else:
-            band, pad = _marker_band(_vis_w(t) + 30, _h(t) * 0.55, marker, seed=7)
-            _multiply(fr, band, x0 - 15 - pad, y + _h(t) * 0.5 - pad)
-            _put(fr, t, S / 2, y + _h(t) / 2, "c")
+        last = t if len(parts) < 2 else _t(f_en, parts[-1], _font_px(t, page["title"], f_en, "ExtraBold"), ink,
+                                            "ExtraBold")
+        lx = x0 + _vis_w(t) - _vis_w(last)
+        mark = look.get("title_mark", look["mark"])
+        if behind:
+            mark(fr, last, lx, y, 99)
+        _put(fr, t, S / 2, y + _h(t) / 2, "c")
+        if not behind:
+            mark(fr, last, lx, y, 99)
         y += _h(t) + 30
     if page.get("sub"):
-        st = _fit_one(lambda s_: _t(VAZIR, page["sub"], s_, grey, "Medium"), 36, S - 240)
+        st = _fit_one(lambda s_: _t(f_ar, page["sub"], s_, grey, "Medium"), 36, S - 240)
         _put(fr, st, S / 2, y + _h(st) / 2, "c")
         y += _h(st) + 16
     words = page["words"]
@@ -1133,24 +1162,228 @@ def _draw_highlighter(page, pal, handle, n, of):
     top = (top0 + S - 96) / 2 - rh * len(words) / 2
 
     def texts(w, k):
-        return _row_texts(w, k, INTER, VAZIR, ink, grey, ink, en=66, ipa=32, ar=60, w_en="Bold", w_ar="Bold")
+        return _row_texts(w, k, f_en, f_ar, ink, grey, ar_ink, en=66, ipa=32, ar=60, w_en="Bold", w_ar="Bold",
+                          head_gap=look.get("under", 0) * k)
 
     k = _common(words, lambda w, k: _sbs_need(*texts(w, k), xr - xl - 20, rh * 0.78), k_max=1.15)
     d = ImageDraw.Draw(fr)
     for j, w in enumerate(words):
         cy = top + j * rh + rh / 2
         e, i, a = texts(w, k)
-        word = _t(INTER, w["en"], 66 * k, ink, "Bold")
-        hh = _h(e) + (8 + _h(i) if i is not None else 0)
-        ytop = cy - hh / 2
-        band, pad = _marker_band(_vis_w(word) + 24, _h(word) * 0.62, marker, seed=20 + j)
-        _multiply(fr, band, xl - 12 - pad, ytop + _h(word) * 0.46 - pad)  # behind the lower part of the letters
+        word = _t(f_en, w["en"], 66 * k, ink, "Bold")
+        ytop = cy - (_h(e) + (8 + _h(i) if i is not None else 0)) / 2
+        if look.get("under") and i is None and not w.get("def"):  # nothing under the word: it sits at the centre
+            ytop = cy - _h(e) / 2
+        if behind:
+            look["mark"](fr, word, xl, ytop, j)
         _side_by_side(fr, e, i, a, xl, xr, cy)
+        if not behind:
+            look["mark"](fr, word, xl, ytop, j)
         _put(fr, _t(INTER, f"{j + 1:02d}", 26, grey, "SemiBold"), 70, cy)
         if j:
-            d.line([(70, cy - rh / 2), (S - 70, cy - rh / 2)], fill=(232, 230, 224), width=2)
+            d.line([(70, cy - rh / 2), (S - 70, cy - rh / 2)], fill=look.get("rule", (232, 230, 224)), width=2)
     _footer(fr, handle, n, of, grey, font=INTER)
     return fr
+
+
+_INK, _GREY = (20, 20, 24), (105, 105, 112)
+
+
+def _draw_highlighter(page, pal, handle, n, of):
+    """Clean paper, crisp dark type, one highlighter stroke behind each word and a single red-pen loop on the title."""
+    dk, ac, ac2 = _tones(pal)
+    marker = ac if (_lum(ac) > 0.45 and _contrast(ac, _INK) > 7) else MARKER  # a light accent works as a marker
+
+    def mark(fr, word, x, y, j):
+        band, pad = _marker_band(_vis_w(word) + 24, _h(word) * 0.62, marker, seed=20 + j)
+        _multiply(fr, band, x - 12 - pad, y + _h(word) * 0.46 - pad)  # behind the lower part of the letters
+
+    def title_mark(fr, word, x, y, j):
+        pass
+
+    def title_circle(fr, word, x, y, j):
+        circ, pad = _pen_circle(_vis_w(word) + 30, _h(word) + 30, RED_PEN, 5.5, seed=4)
+        fr.alpha_composite(circ, (int(x - 15 - pad), int(y - 15 - pad)))
+
+    single = len((page.get("title") or "").split()) < 2
+    look = dict(bg=_paper, ink=_INK, grey=_GREY, mark=mark, behind=True)
+    fr = _marked_page(page, handle, n, of, dict(look, title_mark=mark if single else title_mark))
+    if not single and page.get("title"):  # the loop goes over the title's last word, on top of the letters
+        t = _fit_one(lambda s_: _t(INTER, page["title"], s_, _INK, "ExtraBold"), 92, S - 220)
+        last = _t(INTER, page["title"].split()[-1], _font_px(t, page["title"], INTER, "ExtraBold"), _INK,
+                  "ExtraBold")
+        title_circle(fr, last, S / 2 + _vis_w(t) / 2 - _vis_w(last), 70, 0)
+    return fr
+
+
+def _swoosh(w, h, col, seed=1, width=None):
+    """A brush-pen swoosh: thin start, full belly, flicked-up thin end, a gentle curve."""
+    rng = np.random.default_rng(seed)
+    width = width or max(6.0, h * 0.3)
+    pad = int(width * 2 + 10)
+    W_, H_ = int(w + 2 * pad), int(h + 2 * pad)
+    s = 4
+    big = Image.new("L", (W_ * s, H_ * s), 0)
+    d = ImageDraw.Draw(big)
+    bow = rng.uniform(0.25, 0.45) * h
+    prev = None
+    for j in range(161):
+        t = j / 160
+        x = pad + t * w
+        y = pad + h * 0.7 + bow * math.sin(math.pi * t) * 0.5 - (t ** 3) * h * 0.55  # dips, then flicks up
+        wd = width * (0.25 + 0.75 * math.sin(math.pi * min(1, t * 1.05)) ** 0.7)
+        if prev:
+            d.line([(prev[0] * s, prev[1] * s), (x * s, y * s)], fill=255, width=max(1, int(wd * s)))
+            r = wd * s / 2
+            d.ellipse([x * s - r, y * s - r, x * s + r, y * s + r], fill=255)
+        prev = (x, y)
+    return _colored(big.resize((W_, H_), Image.LANCZOS), col, 0.9), pad
+
+
+def _draw_swoosh(page, pal, handle, n, of):
+    """A brush-pen swoosh under every word, in the set's accent: the landing-page way to stress a word."""
+    dk, ac, ac2 = _tones(pal)
+    col = _strong(dk, ac, ac2, (251, 249, 244), 2.2)
+
+    def mark(fr, word, x, y, j):
+        h = _h(word)
+        sw, pad = _swoosh(_vis_w(word) + 14, h * 0.3, col, seed=30 + j, width=max(5, h * 0.16))
+        fr.alpha_composite(sw, (int(x - 6 - pad), int(y + h * 0.82 - pad)))
+
+    return _marked_page(page, handle, n, of, dict(bg=_paper, ink=_INK, grey=_GREY, mark=mark, behind=False,
+                                                  under=22))
+
+
+_TAPES = [(255, 204, 128), (160, 214, 255), (255, 176, 196), (178, 232, 190), (214, 196, 255), (255, 232, 140)]
+
+
+def _tape(w, h, col, seed=1):
+    """A strip of washi tape: see-through paper with a fine diagonal pattern and torn, zig-zag ends, a little
+    tilted."""
+    rng = np.random.default_rng(seed)
+    w, h = int(w), int(h)
+    m = Image.new("L", (w, h), 0)
+    d = ImageDraw.Draw(m)
+    teeth = max(4, h // 7)
+    left = [(rng.uniform(0, 7), y) for y in np.linspace(0, h, teeth)]
+    right = [(w - rng.uniform(0, 7), y) for y in np.linspace(h, 0, teeth)]
+    d.polygon(left + right, fill=200)
+    pat = Image.new("L", (w, h), 0)
+    dp = ImageDraw.Draw(pat)
+    for x in range(-h, w, 14):
+        dp.line([(x, h), (x + h, 0)], fill=40, width=5)
+    a = np.clip(np.array(m, np.float32) + np.array(pat, np.float32) * (np.array(m) > 0), 0, 255)
+    a *= 0.92 + 0.08 * rng.uniform(0, 1, (h, w))
+    im = _colored(Image.fromarray(a.astype(np.uint8)), col)
+    return im.rotate(rng.uniform(-2.2, 2.2), Image.BICUBIC, expand=True)
+
+
+def _draw_tape(page, pal, handle, n, of):
+    """Each word on its own strip of pastel washi tape: the bullet-journal look."""
+    def mark(fr, word, x, y, j):
+        tp = _tape(_vis_w(word) + 40, _h(word) + 14, _TAPES[j % len(_TAPES)] if j != 99 else _TAPES[0], seed=50 + j)
+        sh = _colored(tp.split()[3].filter(ImageFilter.GaussianBlur(3)), (0, 0, 0), 0.12)
+        cx, cy = x + _vis_w(word) / 2, y + _h(word) / 2 - 2
+        fr.alpha_composite(sh, (int(cx - tp.width / 2 + 1), int(cy - tp.height / 2 + 3)))
+        fr.alpha_composite(tp, (int(cx - tp.width / 2), int(cy - tp.height / 2)))
+
+    return _marked_page(page, handle, n, of, dict(bg=_paper, ink=_INK, grey=_GREY, mark=mark, behind=True))
+
+
+_SOFT = [(255, 236, 153), (204, 229, 255), (255, 214, 224), (210, 241, 214), (232, 220, 255), (255, 222, 196)]
+
+
+def _draw_soft(page, pal, handle, n, of):
+    """App-style text highlight (notes / docs apps): a soft rounded pastel tint behind every word, a different tint
+    each."""
+    def mark(fr, word, x, y, j):
+        col = _SOFT[j % len(_SOFT)] if j != 99 else _SOFT[1]
+        w_, h_ = _vis_w(word) + 28, _h(word) + 18
+        fr.alpha_composite(_colored(_round_mask(w_, h_, min(16, h_ / 3)), col), (int(x - 14), int(y - 9)))
+
+    return _marked_page(page, handle, n, of, dict(bg=lambda: Image.new("RGBA", (S, S), (255, 255, 255, 255)),
+                                                  ink=_INK, grey=_GREY, mark=mark, behind=True,
+                                                  rule=(238, 238, 242)))
+
+
+def _hatch(w, h, col, seed=1):
+    """Coloured-pencil shading: quick parallel diagonal strokes with paper grain, ragged at both ends."""
+    rng = np.random.default_rng(seed)
+    w, h = int(w), int(h)
+    s = 2
+    big = Image.new("L", (w * s, h * s), 0)
+    d = ImageDraw.Draw(big)
+    step = 4
+    for x in range(-h, w + h, step):
+        x0 = x + rng.uniform(-1.5, 1.5)
+        y0 = h - rng.uniform(0, h * 0.12)
+        y1 = rng.uniform(0, h * 0.12)
+        d.line([(x0 * s, y0 * s), ((x0 + h * 0.55) * s, y1 * s)], fill=int(rng.uniform(205, 255)),
+               width=int(rng.uniform(2, 3.2) * s))
+    a = np.array(big.resize((w, h), Image.LANCZOS), np.float32)
+    a *= np.clip(rng.normal(0.95, 0.18, (h, w)), 0.35, 1)  # pencil grain
+    xx = np.arange(w)[None, :]
+    a *= np.clip(np.minimum(xx, w - xx) / 10, 0, 1)  # soft, uneven ends
+    return _colored(Image.fromarray(a.astype(np.uint8)), col)
+
+
+def _draw_pencil(page, pal, handle, n, of):
+    """Coloured-pencil shading behind each word, like a student marking a textbook."""
+    dk, ac, ac2 = _tones(pal)
+    cols = [_strong(dk, ac, ac2, (251, 249, 244), 1.5), (255, 96, 96), (70, 168, 255), (70, 196, 110),
+            (255, 160, 40), (170, 110, 255)]
+
+    def mark(fr, word, x, y, j):
+        hc = _hatch(_vis_w(word) + 24, _h(word) * 0.72, cols[j % len(cols)] if j != 99 else cols[0], seed=70 + j)
+        _multiply(fr, hc, x - 12, y + _h(word) * 0.4)
+
+    return _marked_page(page, handle, n, of, dict(bg=_paper, ink=_INK, grey=_GREY, mark=mark, behind=True))
+
+
+def _draw_neon(page, pal, handle, n, of):
+    """Neon sign on a dark wall: every word glows in the set's accent, the Arabic in a soft light colour."""
+    dk, ac, ac2 = _tones(pal)
+    glow = ac if _lum(ac) > 0.2 else _mix(ac, (255, 255, 255), 0.4)
+    glow2 = ac2 if ac2 != ac else _mix(glow, (255, 255, 255), 0.3)
+
+    def bg():
+        base = _mix(dk, (0, 0, 0), 0.82)
+        fr = _blob_bg(base, [(540, 420, 520, _mix(dk, (255, 255, 255), 0.12), 0.8)], blur=200)
+        return _grain(fr, 3)
+
+    def mark(fr, word, x, y, j):
+        m = _padded_alpha_im(word, 40)
+        for r, k in ((22, 0.55), (9, 0.85), (3, 0.9)):
+            fr.alpha_composite(_colored(m.filter(ImageFilter.GaussianBlur(r)), glow, k), (int(x - 30 - 40),
+                                                                                          int(y - 30 - 40)))
+
+    return _marked_page(page, handle, n, of, dict(bg=bg, ink=(255, 255, 255), grey=(170, 170, 186),
+                                                  ar_ink=_mix(glow2, (255, 255, 255), 0.55), mark=mark, behind=True,
+                                                  rule=_mix(dk, (0, 0, 0), 0.6)))
+
+
+def _padded_alpha_im(im, pad):
+    m = Image.new("L", (im.width + 2 * pad, im.height + 2 * pad), 0)
+    m.paste(im.split()[3], (pad, pad))
+    return m
+
+
+def _draw_focus(page, pal, handle, n, of):
+    """Camera-focus corner brackets around every word, in the set's accent: clean, modern, no fill."""
+    dk, ac, ac2 = _tones(pal)
+    col = _strong(dk, ac, ac2, (255, 255, 255), 4.0)
+
+    def mark(fr, word, x, y, j):
+        d = ImageDraw.Draw(fr)
+        px = 14
+        x0, y0, x1, y1 = x - px, y - 9, x + _vis_w(word) + px, y + _h(word) + 9
+        arm, wd = min(24, (y1 - y0) * 0.38), 6
+        for (cx, cy, sx, sy) in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
+            d.line([(cx, cy + sy * arm), (cx, cy), (cx + sx * arm, cy)], fill=col, width=wd, joint="curve")
+
+    return _marked_page(page, handle, n, of, dict(bg=lambda: Image.new("RGBA", (S, S), (255, 255, 255, 255)),
+                                                  ink=_INK, grey=_GREY, mark=mark, behind=False, under=12,
+                                                  rule=(238, 238, 242)))
 
 
 def _font_px(im, txt, font=PLAYFAIR, weight="Bold"):
@@ -1238,7 +1471,8 @@ _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebo
          "minimal": _draw_minimal, "chalk": _draw_chalk, "poster": _draw_poster, "glass": _draw_glass,
          "bento": _draw_bento, "swiss": _draw_swiss, "dictionary": _draw_dictionary, "chat": _draw_chat,
          "sticky": _draw_sticky, "brutal": _draw_brutal, "aurora": _draw_aurora,
-         "highlighter": _draw_highlighter, "brush": _draw_brush}
+         "highlighter": _draw_highlighter, "brush": _draw_brush, "swoosh": _draw_swoosh, "tape": _draw_tape,
+         "soft": _draw_soft, "pencil": _draw_pencil, "neon": _draw_neon, "focus": _draw_focus}
 
 
 def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1):
