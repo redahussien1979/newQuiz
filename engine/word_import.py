@@ -4,7 +4,8 @@ The sheet is one word per row: English | Arabic | IPA (optional) | Sample senten
 highlighted, read with its own clip) | Title | Subtitle (optional: written once, they go on to the next pages until
 a new title; a page takes the one in effect at its first word). Headers are recognised in English or Arabic
 (English / Word, Arabic / Meaning, IPA / Pronunciation); without a header row the columns are A = English,
-B = Arabic, C = IPA. Any number of rows: `plan()` cuts them in order into pages of `per_page` words (one
+B = Arabic, C = IPA. An optional English meaning column (English meaning / Definition /
+التعريف) gives a word or idiom its meaning in English too (used by the image posts, word_posts.py). Any number of rows: `plan()` cuts them in order into pages of `per_page` words (one
 `type: list` item each) and the pages into videos of `per_video` pages (vocab.MAX_ITEMS); only the last page / video
 takes what is left. `voice_clips()` makes one clip per
 word with the ElevenLabs settings saved in DATA_DIR/elevenlabs.json (cached in DATA_DIR/tts, so a word costs
@@ -17,8 +18,12 @@ from . import elevenlabs as el
 from .batch import read_table
 from .templates.vocab import LIST_MAX, MAX_ITEMS, clean_ipa, items_text, list_item
 
-_HEAD = {"en": ("english", "word", "words", "wordphrase", "phrase", "term", "الكلمة", "الانجليزية", "الإنجليزية",
-                "انجليزي", "إنجليزي", "كلمة"),
+_HEAD = {  # "def" first: "English meaning" must not be taken for the English word column
+         "def": ("englishmeaning", "meaninginenglish", "meaningenglish", "englishdefinition", "definition",
+                 "explanation", "enmeaning", "التعريف", "الشرح", "المعنىبالإنجليزية", "المعنىبالانجليزية",
+                 "المعنىبالانكليزية"),
+         "en": ("english", "word", "words", "wordphrase", "phrase", "term", "idiom", "idioms", "expression",
+                "التعبير", "المصطلح", "الكلمة", "الانجليزية", "الإنجليزية", "انجليزي", "إنجليزي", "كلمة"),
          "ar": ("arabic", "meaning", "translation", "arabicmeaning", "المعنى", "العربية", "الترجمة", "عربي", "معنى"),
          "ipa": ("ipa", "pronunciation", "phonetic", "phonetics", "النطق"),
          "ex": ("samplesentence", "sentence", "example", "examplesentence", "sample", "usage", "مثال", "جملة",
@@ -65,6 +70,7 @@ def read_words(path, sheet=None):
     for r, row in enumerate(rows[start:], start + 1):
         cell = lambda k: _clean(row[cols[k]]) if k in cols and cols[k] < len(row) else ""  # noqa: E731
         en, ar, ipa, ex = cell("en"), cell("ar"), cell("ipa"), cell("ex")
+        dfn = cell("def")
         if cell("title"):
             title, sub = cell("title"), cell("sub")  # a new title starts with its own subtitle (or none)
         elif cell("sub"):
@@ -74,7 +80,8 @@ def read_words(path, sheet=None):
         if not en or not ar:
             problems.append(f"row {r}: {'the English word' if not en else 'the Arabic meaning'} is empty — left out")
             continue
-        words.append(dict(en=en, ar=ar, ipa=clean_ipa(ipa) if ipa else "", ex=ex, row=r, title=title, sub=sub))
+        words.append(dict(en=en, ar=ar, ipa=clean_ipa(ipa) if ipa else "", ex=ex, row=r, title=title, sub=sub,
+                          **({"def": dfn} if dfn else {})))
     return words, problems
 
 

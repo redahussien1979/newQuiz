@@ -132,9 +132,79 @@ def _rows(top, bottom, n, gap):
     return [top + i * (rh + gap) for i in range(n)], rh
 
 
-def _row_texts(w, k, f_en, f_ar, c_en, c_ipa, c_ar, en=64, ipa=34, ar=58, w_en="Bold", w_ar="Bold"):
+DEF_WRAP = 600   # px (x k): the width an English meaning wraps at
+DEF_SIZE = 0.55  # its size against the word's
+DEF_MIN = 30     # px: its smallest size (while the page is not too crowded)
+_ONE_WEIGHT = {PATRICK}  # fonts with a single weight
+
+
+def _wrap(words, fits):
+    """Greedy lines of `words` that fit, then evened out: the narrowest width with the same number of lines."""
+    def greedy(limit):
+        lines, cur = [], []
+        for wd in words:
+            if cur and not fits(" ".join(cur + [wd]), limit):
+                lines.append(" ".join(cur))
+                cur = [wd]
+            else:
+                cur.append(wd)
+        return lines + ([" ".join(cur)] if cur else [])
+    return greedy, greedy(1.0)
+
+
+def _join(parts, gap, align):
+    """One text image (30 px margin, like text_img) of text images stacked with `gap`, aligned l / c / r."""
+    w = max(_vis_w(p) for p in parts)
+    h = sum(_h(p) for p in parts) + gap * (len(parts) - 1)
+    out = Image.new("RGBA", (int(w) + 60, int(h) + 60), (0, 0, 0, 0))
+    y = 30
+    for p in parts:
+        x = 30 if align == "l" else 30 + (w - _vis_w(p)) / 2 if align == "c" else 30 + w - _vis_w(p)
+        out.alpha_composite(p, (int(round(x - 30)), int(round(y - 30))))
+        y += _h(p) + gap
+    return out
+
+
+def _beside(a, b, gap):
+    """Two text images on one line, bottoms level (the word and its IPA)."""
+    h = max(_h(a), _h(b))
+    out = Image.new("RGBA", (_vis_w(a) + gap + _vis_w(b) + 60, int(h) + 60), (0, 0, 0, 0))
+    out.alpha_composite(a, (0, int(h - _h(a))))
+    out.alpha_composite(b, (_vis_w(a) + gap, int(h - _h(b) - 2)))
+    return out
+
+
+def _entry(w, k, f_en, c_en, c_ipa, en=64, ipa=34, w_en="Bold", align="l", wrap=None):
+    """(word image, IPA image or None). A word / idiom with an English meaning (`def`) becomes ONE block: the word
+    with its IPA beside it, then the meaning wrapped in a few even lines (the IPA is then None). `wrap` = the width
+    the design has for it (px); without it the meaning wraps at DEF_WRAP x k."""
     e = _t(f_en, w["en"], en * k, c_en, w_en)
     i = _ipa(w["ipa"], ipa * k, c_ipa) if w.get("ipa") else None
+    if not w.get("def"):
+        return e, i
+    # readable on a phone (DEF_MIN), unless the page is crowded; always clearly smaller than the word itself
+    size = min(max(en * k * DEF_SIZE, DEF_MIN * min(1.0, k / 0.55)), en * k * 0.75)
+    weight = "Regular" if f_en in _ONE_WEIGHT else "Medium"
+    limit = wrap or DEF_WRAP * k
+
+    def img(s):
+        return _t(f_en, s, size, c_ipa, weight)
+
+    greedy, lines = _wrap(w["def"].split(), lambda s, f: _vis_w(img(s)) <= limit * f)
+    for f in (0.95, 0.9, 0.85, 0.8, 0.75, 0.7):  # even lines: as narrow as possible with no extra line
+        narrower = greedy(f)
+        if len(lines) < 2 or len(narrower) != len(lines):
+            break
+        lines = narrower
+    head = e
+    if i is not None:
+        head = _beside(e, i, int(14 * k)) if _vis_w(e) + _vis_w(i) <= limit * 1.1 else _join([e, i], 6, align)
+    return _join([head] + [img(s) for s in lines], int(max(6, 12 * k)), align), None
+
+
+def _row_texts(w, k, f_en, f_ar, c_en, c_ipa, c_ar, en=64, ipa=34, ar=58, w_en="Bold", w_ar="Bold", align="l",
+               wrap=None):
+    e, i = _entry(w, k, f_en, c_en, c_ipa, en, ipa, w_en, align, wrap)
     a = _t(f_ar, w["ar"], ar * k, c_ar, w_ar)
     return e, i, a
 
@@ -206,7 +276,8 @@ def _draw_grid(page, pal, handle, n, of):
     top = (top + bot) / 2 - (ch * rows + g * (rows - 1)) / 2
 
     def need(w, k):
-        e, i, a = _row_texts(w, k, POPPINS_B, PLEX_B, dk, (110, 110, 130), dk, en=70, ipa=34, ar=62)
+        e, i, a = _row_texts(w, k, POPPINS_B, PLEX_B, dk, (110, 110, 130), dk, en=70, ipa=34, ar=62, align="c",
+                             wrap=cw - 50)
         h = _h(e) + 14 + (_h(i) + 14 if i is not None else 0) + 30 + _h(a)
         return max(_vis_w(e), _vis_w(i) if i is not None else 0, _vis_w(a)) / (cw - 50), h / (ch - 60)
 
@@ -218,7 +289,8 @@ def _draw_grid(page, pal, handle, n, of):
         strip = _round_mask(cw, ch, 30)  # the card's own top edge in the base colour
         strip.paste(0, (0, 16, strip.width, strip.height))
         fr.alpha_composite(_colored(strip, dk), (int(x0), int(y0)))
-        e, i, a = _row_texts(w, k, POPPINS_B, PLEX_B, dk, (110, 110, 130), dk, en=70, ipa=34, ar=62)
+        e, i, a = _row_texts(w, k, POPPINS_B, PLEX_B, dk, (110, 110, 130), dk, en=70, ipa=34, ar=62, align="c",
+                             wrap=cw - 50)
         parts = [e] + ([i] if i is not None else []) + ["line", a]
         hh = _h(e) + 14 + (_h(i) + 14 if i is not None else 0) + 30 + _h(a)
         yy, cx = y0 + ch / 2 - hh / 2 + 6, x0 + cw / 2
@@ -254,14 +326,16 @@ def _draw_table(page, pal, handle, n, of):
     mid = (x0 + x1) / 2
     k = _common(words, lambda w, k: (
         lambda e, i, a: (max(_vis_w(e) + (_vis_w(i) + 18 if i is not None else 0), 1) / (mid - x0 - 60),
-                         _vis_w(a) / (x1 - mid - 60), max(_h(e), _h(a)) / (rh * 0.62)))(
-        *_row_texts(w, k, POPPINS_B, PLEX_B, dk, (120, 120, 140), dk, en=56, ipa=32, ar=54)), k_max=1.2)
+                         _vis_w(a) / (x1 - mid - 60), max(_h(e), _h(a)) / (rh * (0.84 if w.get("def") else 0.62))))(
+        *_row_texts(w, k, POPPINS_B, PLEX_B, dk, (120, 120, 140), dk, en=56, ipa=32, ar=54,
+                     wrap=mid - x0 - 60)), k_max=1.2)
     for j, (yy, w) in enumerate(zip(ys, words)):
         if j % 2:
             d.rectangle([x0, yy, x1, yy + rh], fill=_mix(ac, (255, 255, 255), 0.82))
         if j:
             d.line([(x0 + 24, yy), (x1 - 24, yy)], fill=(225, 225, 232), width=2)
-        e, i, a = _row_texts(w, k, POPPINS_B, PLEX_B, dk, (120, 120, 140), dk, en=56, ipa=32, ar=54)
+        e, i, a = _row_texts(w, k, POPPINS_B, PLEX_B, dk, (120, 120, 140), dk, en=56, ipa=32, ar=54,
+                     wrap=mid - x0 - 60)
         _put(fr, e, x0 + 40, yy + rh / 2)
         if i is not None:
             _put(fr, i, x0 + 40 + _vis_w(e) + 18, yy + rh / 2 + (_h(e) - _h(i)) / 2 - 2)
@@ -585,14 +659,14 @@ def _draw_bento(page, pal, handle, n, of):
                                                                           0.7)]
     order = [0, 1, 2, 3, 3, 0] if len(words) > 3 else [0, 1, 2]
 
-    def texts(w, k, fill):
+    def texts(w, k, fill, tw):
         c = _readable(fill)
         sub = _mix(c, fill, 0.45)
-        return _row_texts(w, k, INTER, VAZIR, c, sub, c, en=66, ipa=32, ar=60, w_en="Bold"), sub
+        return _row_texts(w, k, INTER, VAZIR, c, sub, c, en=66, ipa=32, ar=60, w_en="Bold", wrap=tw - 64), sub
 
     def need(item, k):
         (w, (x, y, tw, th), fill) = item
-        (e, i, a), _ = texts(w, k, fill)
+        (e, i, a), _ = texts(w, k, fill, tw)
         h = 40 + _h(e) + (8 + _h(i) if i is not None else 0) + 24 + _h(a)
         return max(_vis_w(e), _vis_w(i) if i is not None else 0, _vis_w(a)) / (tw - 64), h / (th - 40)
 
@@ -600,7 +674,7 @@ def _draw_bento(page, pal, handle, n, of):
     k = _common(items, need, k_max=1.3)
     for j, (w, (x, y, tw, th), fill) in enumerate(items):
         _card(fr, x, y, tw, th, 30, fill, shadow=fill == (255, 255, 255))
-        (e, i, a), sub = texts(w, k, fill)
+        (e, i, a), sub = texts(w, k, fill, tw)
         _put(fr, _t(INTER, f"{j + 1:02d}", 24, sub, "SemiBold"), x + 32, y + 36)
         _stack(fr, [e] + ([i] if i is not None else []), x + 32, y + 62, 8, "l")
         _put(fr, a, x + tw - 32, y + th - 28 - _h(a) / 2, "r")
@@ -677,8 +751,7 @@ def _draw_dictionary(page, pal, handle, n, of):
     ys, rh = _rows(y + 6, S - 100, len(words), 0)
 
     def texts(w, k):
-        e = _t(LITERATA, w["en"], 58 * k, ink, "Bold")
-        i = _ipa(w["ipa"], 32 * k, grey) if w.get("ipa") else None
+        e, i = _entry(w, k, LITERATA, ink, grey, en=58, ipa=32, wrap=xr - xl - 40)
         a = _t(AMIRI, w["ar"], 64 * k, dk, "Bold")
         return e, i, a
 
@@ -735,8 +808,8 @@ def _draw_chat(page, pal, handle, n, of):
     def bubbles(k):
         out = []
         for w in words:
-            e = _t(INTER, w["en"], 48 * k, (25, 25, 30), "SemiBold")
-            i = _ipa(w["ipa"], 27 * k, (130, 130, 140)) if w.get("ipa") else None
+            e, i = _entry(w, k, INTER, (25, 25, 30), (110, 110, 120), en=48, ipa=27, w_en="SemiBold",
+                          wrap=S * 0.5)
             a = _t(VAZIR, w["ar"], 46 * k, me_ink, "Bold")
             lw = max(_vis_w(e), _vis_w(i) if i is not None else 0) + 2 * pad + 10
             lh = _h(e) + (_h(i) + 6 if i is not None else 0) + 2 * pad
@@ -809,8 +882,8 @@ def _draw_sticky(page, pal, handle, n, of):
     ink = (34, 34, 40)
 
     def texts(w, k):
-        e = _t(FREDOKA, w["en"], 64 * k, ink, "SemiBold")
-        i = _ipa(w["ipa"], 30 * k, (95, 95, 105)) if w.get("ipa") else None
+        e, i = _entry(w, k, FREDOKA, ink, (80, 80, 90), en=64, ipa=30, w_en="SemiBold", align="c",
+                      wrap=side - 50)
         a = _t(BALOO, w["ar"], 60 * k, dk, "Bold")
         return e, i, a
 
@@ -948,7 +1021,8 @@ _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebo
 
 def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1):
     """One page of words as a square RGB image."""
-    words = [dict(en=w["en"], ar=w["ar"], ipa=w.get("ipa", "")) for w in page.get("words", [])][:6]
+    words = [dict(en=w["en"], ar=w["ar"], ipa=w.get("ipa", ""), **({"def": w["def"]} if w.get("def") else {}))
+             for w in page.get("words", [])][:6]
     if not words:
         raise ValueError("a post needs at least one word")
     pg = dict(title=page.get("title", ""), sub=page.get("sub", ""), words=words)
