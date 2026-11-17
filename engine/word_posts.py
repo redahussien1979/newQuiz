@@ -69,22 +69,41 @@ LAYOUTS = [("Side by side (English left · Arabic right)", "side"), ("Stacked (w
                                                                      "stack")]
 
 
-def use_fonts(k):
-    """Pick font set k (1-10) for the next posts; 0 / anything else = each design's own fonts."""
+def use_fonts(k, en="", ar=""):
+    """Pick font set k (1-10) for the next posts (0 / anything else = each design's own fonts); en / ar = any font
+    of the app's library (a family name, see font_menus) for that language only, over the set."""
     _FONT.clear()
     try:
         k = int(k or 0)
     except (TypeError, ValueError):
         k = 0
     if 1 <= k <= len(FONT_SETS):
-        _, en, ar = FONT_SETS[k - 1]
-        _FONT.update(en=en, ar=ar)
+        _, f_en, f_ar = FONT_SETS[k - 1]
+        _FONT.update(en=f_en, ar=f_ar)
+    for key, name in (("en", en), ("ar", ar)):
+        if name:
+            from .fonts import resolve
+            _FONT[key] = resolve(name)
+
+
+def font_menus():
+    """(English choices, Arabic choices) of every family in the app's font library (bundled, added in the app, the
+    user's own folder): ("— from Fonts —", "") first, then the families that write that language."""
+    from .fonts import families
+    try:
+        fams = families()
+    except Exception:
+        fams = []
+    where = {"added": " · added", "folder": " · my folder"}
+    en = [("— from Fonts —", "")] + [(f["name"] + where.get(f["source"], ""), f["name"]) for f in fams if f["latin"]]
+    ar = [("— from Fonts —", "")] + [(f["name"] + where.get(f["source"], ""), f["name"]) for f in fams if f["arabic"]]
+    return en, ar
 
 
 # ---------------------------------------------------------------- text
 def _t(font, txt, size, col, weight="Bold"):
-    if _FONT:  # a ready pair replaces the design's fonts: Arabic text gets the Arabic one
-        font = _FONT["ar" if is_rtl(str(txt)) else "en"]
+    if _FONT:  # a ready pair / a chosen font replaces the design's fonts: Arabic text gets the Arabic one
+        font = _FONT.get("ar" if is_rtl(str(txt)) else "en", font)
     return text_img_in(font, str(txt), max(12, int(size)), tuple(col), weight, shadow=False)
 
 
@@ -1849,9 +1868,10 @@ _DRAW = {"cards": _draw_cards, "grid": _draw_grid, "table": _draw_table, "notebo
          "skycards": _draw_skycards, "torn": _draw_torn}
 
 
-def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1, fonts=0, layout="side"):
+def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=1, fonts=0, layout="side",
+         en_font="", ar_font=""):
     """One page of words as a square RGB image (fonts = a FONT_SETS number, 0 = the design's own; layout = "side" /
-    "stack" for the highlight designs)."""
+    "stack" for the highlight designs; en_font / ar_font = any library font for that language, over `fonts`)."""
     words = [dict(en=w["en"], ar=w["ar"], ipa=w.get("ipa", ""), **({"def": w["def"]} if w.get("def") else {}),
                   **({"alts": list(w["alts"])} if len(w.get("alts") or []) > 1 else {}))
              for w in page.get("words", [])][:6]
@@ -1859,7 +1879,7 @@ def post(page, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", n=1, of=
         raise ValueError("a post needs at least one word")
     pg = dict(title=page.get("title", ""), sub=page.get("sub", ""), words=words)
     fn = _DRAW.get(style, _DRAW[DEFAULT_STYLE])
-    use_fonts(fonts)
+    use_fonts(fonts, en_font, ar_font)
     _OPT.update(layout=layout if layout in dict((v, v) for _, v in LAYOUTS) else "side")
     try:
         return fn(pg, palette if palette in DUOS else DEFAULT_PALETTE, handle or "", n, of).convert("RGB")
@@ -1890,7 +1910,7 @@ def pages(words, per=4, title="", subtitle=""):
 
 
 def make_posts(pgs, out_dir, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handle="", progress=None,
-               stop=None, fonts=0, layout="side"):
+               stop=None, fonts=0, layout="side", en_font="", ar_font=""):
     """Every page as post_NN.png in out_dir + all of them in one .zip -> (png paths, zip path)."""
     import zipfile
     os.makedirs(out_dir, exist_ok=True)
@@ -1899,7 +1919,7 @@ def make_posts(pgs, out_dir, style=DEFAULT_STYLE, palette=DEFAULT_PALETTE, handl
         if stop:
             stop()
         path = os.path.join(out_dir, f"post_{k:02d}.png")
-        post(pg, style, palette, handle, k, len(pgs), fonts, layout).save(path, optimize=True)
+        post(pg, style, palette, handle, k, len(pgs), fonts, layout, en_font, ar_font).save(path, optimize=True)
         paths.append(path)
         if progress:
             progress(k / len(pgs), f"Post {k} of {len(pgs)}")

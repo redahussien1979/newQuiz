@@ -1382,6 +1382,13 @@ def wl_import_ui():
             p_lay = gr.Dropdown(word_posts.LAYOUTS, value="side", label="Arrangement",
                                 info="Highlight designs: side by side, or each word centred with its meaning under "
                                      "it (Torn paper is always stacked)")
+        en_menu, ar_menu = word_posts.font_menus()
+        with gr.Row():
+            p_fen = gr.Dropdown(en_menu, value="", label="English font (any)",
+                                info="Any font of your library — also the ones added in 🎨 Style & sound → 🔤 Font "
+                                     "(restart the app to see new ones)")
+            p_far = gr.Dropdown(ar_menu, value="", label="Arabic font (any)",
+                                info="Any library font that writes Arabic")
         with gr.Row():
             p_per = gr.Slider(1, word_posts.POST_MAX, value=4, step=1, label="Words per post")
             p_handle = gr.Textbox(label="Your handle (optional)", placeholder="@yourpage",
@@ -1395,7 +1402,7 @@ def wl_import_ui():
         p_zip = gr.DownloadButton("📦 Download all posts (.zip)", visible=False, variant="primary")
     return dict(sheet=sheet, tab=tab, per=per, pages=pages, title=title, sub=sub, voice=voice, info=info, part=part,
                 load=load, go=go, zip=zipb, files=files, p_style=p_style, p_pal=p_pal, p_per=p_per,
-                p_font=p_font, p_lay=p_lay, p_handle=p_handle, p_prev=p_prev, p_go=p_go, p_info=p_info, p_img=p_img, p_gal=p_gal, p_zip=p_zip)
+                p_font=p_font, p_lay=p_lay, p_fen=p_fen, p_far=p_far, p_handle=p_handle, p_prev=p_prev, p_go=p_go, p_info=p_info, p_img=p_img, p_gal=p_gal, p_zip=p_zip)
 
 
 def wire_wl_import(ui, pv, fields, items_box, audio_box):
@@ -1504,24 +1511,25 @@ def wire_wl_import(ui, pv, fields, items_box, audio_box):
             raise gr.Error("The sheet has no usable rows." + (f" First problem: {problems[0]}" if problems else ""))
         return word_posts.pages(words, per, title, sub), problems
 
-    def post_preview(sheet, tab, per, title, sub, style, pal, handle, font, lay):
+    def post_preview(sheet, tab, per, title, sub, style, pal, handle, font, lay, fen, far):
         pgs, problems = post_pages(sheet, tab, per, title, sub)
-        img = word_posts.post(pgs[0], style, pal, handle, 1, len(pgs), font, lay)
+        img = word_posts.post(pgs[0], style, pal, handle, 1, len(pgs), font, lay, fen, far)
         note = f"Post 1 of **{len(pgs)}**" + (f" · ⚠️ {len(problems)} row(s) left out: {problems[0]}" if problems else "")
         return gr.update(value=img, visible=True), note
 
-    def post_all(sheet, tab, per, title, sub, style, pal, handle, font, lay, progress=gr.Progress()):
+    def post_all(sheet, tab, per, title, sub, style, pal, handle, font, lay, fen, far, progress=gr.Progress()):
         pgs, problems = post_pages(sheet, tab, per, title, sub)
         out_dir = os.path.join(OUT_DIR, f"word_posts_{_stamp()}")
         paths, zpath = word_posts.make_posts(pgs, out_dir, style, pal, handle,
-                                             lambda x, d: progress(x, desc=d), fonts=font, layout=lay)
+                                             lambda x, d: progress(x, desc=d), fonts=font, layout=lay,
+                                             en_font=fen, ar_font=far)
         n = len(paths)
         note = (f"✅ **{n} post{'s' if n != 1 else ''}** saved in `{out_dir}`"
                 + (f" · ⚠️ {len(problems)} row(s) left out: {problems[0]}" if problems else ""))
         return (gr.update(value=paths, visible=True), gr.update(value=zpath, visible=True), note,
                 gr.update(visible=False))
 
-    p_look = [ui["p_style"], ui["p_pal"], ui["p_handle"], ui["p_font"], ui["p_lay"]]
+    p_look = [ui["p_style"], ui["p_pal"], ui["p_handle"], ui["p_font"], ui["p_lay"], ui["p_fen"], ui["p_far"]]
     ui["p_prev"].click(post_preview, p_inputs + p_look, [ui["p_img"], ui["p_info"]])
     ui["p_go"].click(post_all, p_inputs + p_look, [ui["p_gal"], ui["p_zip"], ui["p_info"], ui["p_img"]])
 

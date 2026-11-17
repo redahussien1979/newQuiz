@@ -83,7 +83,8 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   its one colour for every word (`_mono`); `MORE_STYLES` = 13 older card/poster designs, not in the menu. A word with a
   `def` is one block (`_entry`: word + IPA, then the meaning wrapped even, `DEF_SIZE` / `DEF_MIN`). Colours = `DUOS`.
   Fonts: `FONT_SETS` = 10 English + Arabic pairs (`FONT_CHOICES`, 0 = the design's own); `post(..., fonts=k)` sets
-  `_FONT` (`use_fonts`) and `_t` swaps every design font for the pair's English / Arabic one (by `is_rtl`).
+  `_FONT` (`use_fonts`) and `_t` swaps every design font for the pair's English / Arabic one (by `is_rtl`);
+  `en_font` / `ar_font` = any family of the font library (`font_menus` from `fonts.families`) for one language.
   `post(..., layout="side"|"stack")` (`LAYOUTS`, kept in `_OPT`): Stacked = `_stacked_rows` in `_marked_page`
   (word centred, meaning under it). Torn paper (`_draw_torn`, `_torn_band`, `_glow_pill`) is always stacked.
   Sizes: English and Arabic each get ONE page-wide size of their own — stacked `_fit_stack` (biggest that fits the
