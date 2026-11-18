@@ -19,48 +19,51 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 from ..audio import audio_length
-from ..core import (H, ROOT, W, _pil_has, _state, composite, draw_ending, ease_io, ease_out_back, fade, get_font,
-                    global_fade, parse_lines, prog, text_img_in)
+from ..core import (ARABIC_RE, H, ROOT, W, _state, composite, ease_io, ease_out_back, fade, get_font, global_fade,
+                    parse_lines, prog, text_img_in, to_rgb)
 from .vocab import clip_key
 
 NAME = "Words Video"
 
 LIB = os.path.join(ROOT, "fonts", "library")
 EN_FONT = os.path.join(LIB, "Poppins", "Poppins-Bold.ttf")
-AR_FONT = os.path.join(LIB, "Tajawal", "Tajawal-ExtraBold.ttf")
+AR_DEFAULT = "Noto Sans Arabic"  # the Arabic font family (any library family can be picked: wordsvideo.arabic_font)
 IPA_FONT = os.path.join(ROOT, "fonts", "NotoSans-Bold.ttf")
 
-# colour sets: bg = gradient top / bottom, blobs = aurora lights, acc = one accent per word (cycled),
-# card = card gradient, ink / soft = text colours, light = light background
+# Clean, light colour sets (one "a little dark"): bg = background gradient top / bottom, dots = the faint dot
+# pattern, head / head_soft = text on the background, acc = one accent per word (cycled), card = the white card,
+# ink / soft = text on cards, light = light background
+_ACC = ((233, 95, 74), (16, 145, 140), (52, 110, 220), (205, 140, 10), (148, 72, 180), (36, 150, 84))
 DESIGNS = {
-    "aurora": dict(bg=((5, 7, 22), (12, 8, 34)), blobs=((40, 190, 230), (124, 78, 255), (255, 70, 160), (30, 110, 255)),
-                   acc=((64, 224, 208), (167, 139, 250), (255, 121, 176), (255, 200, 87), (96, 165, 250), (74, 222, 128)),
-                   card=((24, 26, 58), (12, 13, 34)), ink=(246, 247, 255), soft=(172, 180, 214), light=False),
-    "gold": dict(bg=((8, 7, 6), (18, 14, 9)), blobs=((255, 190, 80), (200, 120, 40), (255, 220, 150), (150, 90, 30)),
-                 acc=((245, 197, 66), (255, 214, 140), (232, 170, 70), (250, 226, 170), (214, 160, 80), (255, 190, 110)),
-                 card=((32, 27, 19), (15, 13, 10)), ink=(255, 248, 232), soft=(206, 190, 160), light=False),
-    "sunset": dict(bg=((20, 6, 26), (44, 10, 32)), blobs=((255, 120, 60), (255, 60, 120), (160, 60, 220), (255, 180, 60)),
-                   acc=((255, 159, 67), (255, 107, 157), (255, 210, 90), (196, 132, 255), (255, 130, 110), (120, 220, 255)),
-                   card=((48, 18, 52), (22, 8, 28)), ink=(255, 246, 240), soft=(222, 182, 200), light=False),
-    "ocean": dict(bg=((3, 14, 26), (2, 22, 36)), blobs=((0, 200, 200), (30, 120, 255), (0, 230, 160), (60, 80, 220)),
-                  acc=((45, 226, 230), (90, 200, 255), (120, 240, 170), (255, 210, 100), (140, 170, 255), (255, 140, 170)),
-                  card=((10, 40, 60), (4, 20, 34)), ink=(240, 252, 255), soft=(160, 200, 214), light=False),
-    "light": dict(bg=((246, 247, 252), (232, 236, 248)), blobs=((140, 180, 255), (255, 170, 200), (150, 230, 210), (255, 214, 150)),
-                  acc=((79, 70, 229), (219, 39, 119), (5, 150, 105), (217, 119, 6), (37, 99, 235), (190, 24, 93)),
-                  card=((255, 255, 255), (247, 248, 253)), ink=(22, 26, 46), soft=(92, 100, 128), light=True),
+    "paper": dict(bg=((251, 248, 242), (244, 239, 230)), dots=(150, 130, 100), head=(30, 34, 52), head_soft=(110, 104, 96),
+                  acc=_ACC, card=(255, 255, 255), ink=(28, 32, 52), soft=(96, 102, 122), light=True),
+    "sky": dict(bg=((240, 247, 253), (224, 237, 250)), dots=(90, 130, 180), head=(20, 40, 76), head_soft=(84, 104, 136),
+                acc=((37, 99, 235), (219, 80, 74), (13, 148, 136), (217, 119, 6), (124, 58, 237), (22, 163, 74)),
+                card=(255, 255, 255), ink=(20, 32, 60), soft=(90, 104, 130), light=True),
+    "mint": dict(bg=((239, 249, 244), (224, 242, 233)), dots=(80, 150, 120), head=(18, 52, 42), head_soft=(80, 112, 100),
+                 acc=((5, 140, 110), (230, 100, 70), (40, 100, 210), (200, 140, 20), (170, 60, 140), (60, 130, 60)),
+                 card=(255, 255, 255), ink=(20, 40, 36), soft=(86, 108, 100), light=True),
+    "blush": dict(bg=((253, 244, 242), (248, 231, 230)), dots=(170, 110, 110), head=(60, 24, 36), head_soft=(130, 92, 100),
+                  acc=((214, 64, 96), (30, 130, 150), (90, 90, 210), (210, 130, 30), (150, 70, 170), (40, 140, 90)),
+                  card=(255, 255, 255), ink=(48, 26, 36), soft=(118, 96, 104), light=True),
+    "slate": dict(bg=((58, 68, 86), (40, 48, 62)), dots=(200, 210, 230), head=(248, 249, 252), head_soft=(196, 204, 220),
+                  acc=((242, 112, 86), (30, 170, 160), (70, 130, 240), (226, 160, 30), (168, 96, 220), (52, 170, 100)),
+                  card=(255, 255, 255), ink=(28, 34, 50), soft=(96, 104, 124), light=False),
 }
-DESIGN_CHOICES = [("Aurora night", "aurora"), ("Midnight gold", "gold"), ("Sunset glow", "sunset"),
-                  ("Deep ocean", "ocean"), ("Clean light", "light")]
+DESIGN_CHOICES = [("Warm paper", "paper"), ("Soft sky", "sky"), ("Fresh mint", "mint"), ("Blush", "blush"),
+                  ("Slate (a little dark)", "slate")]
 PACES = {"calm": 1.25, "normal": 1.0, "fast": 0.8}
 PICKS = [("Roulette — a light hops over the words, then lands on the next one", "roulette"),
          ("Straight to the next word", "direct")]
 
 CW = 940            # card width
-MARGIN = 64         # room around the card for its glow
+MARGIN = 64         # room around the card for its shadow
 PAD = 60            # inside the card
 CARD_MAX = 1250     # tallest card
 CARD_CY = 1000      # card centre
 ZONE = (600, 1520)  # where the bubbles float (under the header, above the Shorts captions)
+DOT_GAP = 46        # background dot pattern
+_BG_CACHE = {}
 
 
 # ------------------------------------------------------------------ the words text
@@ -307,6 +310,19 @@ def _check(d, col, width):
     return im.resize((d, d), Image.LANCZOS)
 
 
+def _arabic_font(name):
+    """The file of the Arabic font family `name` (a library family; empty / unknown = AR_DEFAULT)."""
+    from ..fonts import find, resolve
+    name = str(name or "").strip() or AR_DEFAULT
+    fam = find(name)
+    if fam is None:
+        path = resolve(name)
+        fam = find(name) or (None if path == resolve("") else {"main": path})
+    if fam is None and name != AR_DEFAULT:
+        return _arabic_font(AR_DEFAULT)
+    return fam["main"] if fam else resolve("")
+
+
 def _rotate_scale(im, scale, angle):
     if abs(scale - 1) > 0.004:
         im = im.resize((max(1, int(im.width * scale)), max(1, int(im.height * scale))), Image.BILINEAR)
@@ -345,7 +361,8 @@ EXAMPLE = {
                   "Plants thrive in warm sunlight.\n"
                   "Genuine | حقيقي، صادق | /ˈdʒenjuɪn/ | real and sincere, not fake | "
                   "She has a genuine smile."),
-        "design": "aurora",
+        "design": "paper",
+        "arabic_font": "",
         "pace": "normal",
         "pick": "roulette",
         "recap": True,
@@ -364,17 +381,17 @@ class WordsVideo:
         if not self.words:
             raise ValueError("Write at least one word: English | Arabic | IPA | English meaning | example sentence")
         self.n = n = len(self.words)
-        self.look = L = DESIGNS.get(d.get("design") or "aurora", DESIGNS["aurora"])
+        self.look = L = DESIGNS.get(d.get("design") or "paper", DESIGNS["paper"])
         self.light = L["light"]
         self.pace = PACES.get(d.get("pace") or "normal", 1.0)
         self.pick = (d.get("pick") or "roulette") == "roulette"
         self.recap_on = d.get("recap", True) is not False
         self.audio_gain = float(d.get("audio_gain") or 1.0)
         self.handle = s.get("handle") or ""
-        # a font picked in 🎨 Style & sound replaces the English font (and the Arabic one when it writes Arabic)
+        # a font picked in 🎨 Style & sound replaces the English font; the Arabic one is its own setting
         picked = _state["font"] if s.get("font_file") else None
         self.en_font = picked or EN_FONT
-        self.ar_font = picked if picked and _pil_has(picked, "ب") else AR_FONT
+        self.ar_font = _arabic_font(d.get("arabic_font"))
         cnt = str(n)
         self.title = str(d.get("title") or "{count} English Words").replace("{count}", cnt)
         self.subtitle = str(d.get("subtitle") or "").replace("{count}", cnt)
@@ -409,8 +426,7 @@ class WordsVideo:
     def _layout_header(self):
         L = self.look
         a0 = self.acc[0]
-        top_c = L["ink"]
-        bot_c = _mix(L["ink"], a0, 0.55) if not self.light else _mix(L["ink"], a0, 0.7)
+        top_c = bot_c = L["head"]
         size, lines = _fit_lines(lambda x, s: _adv(self.en_font, x, s, "Black"), self.title, 92, 50, 920, 2)
         self.h_lines = []
         y = 300
@@ -418,7 +434,7 @@ class WordsVideo:
             im, base, adv, p = _ltext(self.en_font, ln, size, "Black", (255, 255, 255))
             m = im.getchannel("A")
             g = _grad_fill(m, top_c, bot_c)
-            sh = _glow(m, (0, 0, 0) if not self.light else (60, 70, 120), 10, 0.55 if not self.light else 0.18)
+            sh = _glow(m, (0, 0, 0), 10, 0.0 if self.light else 0.25)
             lay = Image.new("RGBA", sh.size, (0, 0, 0, 0))
             lay.alpha_composite(g, (40, 32))
             sh.alpha_composite(lay)
@@ -426,21 +442,15 @@ class WordsVideo:
             y += int(size * 1.08)
         self.h_sub = None
         if self.subtitle:
-            im = text_img_in(self.ar_font, self.subtitle, 50, L["soft"], "Bold", max_w=900)
+            im = text_img_in(self.ar_font, self.subtitle, 50, L["head_soft"], "Bold", max_w=900)
             self.h_sub = (im, y + 18)
             y += 18 + im.height - 30
         # kicker pill: ENGLISH · 6 WORDS
         txt = f"ENGLISH  ·  {self.n} WORD{'S' if self.n != 1 else ''}"
-        k_im, _, adv, p = _ltext(EN_FONT, txt, 28, "Bold", a0 if not self.light else _mix(a0, (0, 0, 0), 0.1))
+        k_im, _, adv, p = _ltext(EN_FONT, txt, 28, "Bold", _on(a0))
         kw, kh = int(adv) + 56, 56
         m = _rr_mask(kw, kh, kh / 2)
-        pill = _solid(m, a0, 0.16 if not self.light else 0.12)
-        ring = Image.new("L", (kw, kh), 0)
-        ring.paste(m)
-        inner = Image.new("L", (kw, kh), 0)
-        inner.paste(_rr_mask(kw - 4, kh - 4, kh / 2 - 2), (2, 2))
-        ring = Image.fromarray(np.clip(np.array(ring, int) - np.array(inner, int), 0, 255).astype(np.uint8))
-        pill.alpha_composite(_solid(ring, a0, 0.7))
+        pill = _solid(m, a0)
         pill.alpha_composite(k_im, (28 - p, (kh - k_im.height) // 2 + 1))
         self.h_kick = (pill, 215)
         self.header_bottom = y + 10
@@ -482,9 +492,9 @@ class WordsVideo:
         if p > 0 and alpha > 0.01:
             bw = int(420 * _out3(p))
             y = self.bar_y + 40
-            track = (255, 255, 255) if not self.light else (20, 30, 60)
+            track = self.look["head"]
             lay = Image.new("RGBA", (bw + 2, 8), (0, 0, 0, 0))
-            ImageDraw.Draw(lay).rounded_rectangle([0, 0, bw + 1, 7], 4, fill=track + (int(40 * alpha),))
+            ImageDraw.Draw(lay).rounded_rectangle([0, 0, bw + 1, 7], 4, fill=tuple(track) + (int(34 * alpha),))
             fill = self._progress(t)
             if fill > 0:
                 ImageDraw.Draw(lay).rounded_rectangle([0, 0, max(8, int(bw * fill)), 7], 4,
@@ -532,28 +542,31 @@ class WordsVideo:
                 c.alpha_composite(ni, (int((dot - nadv) / 2) - npd, int(dot / 2 + dot * 0.18) - nb))
             return c
 
-        # idle: glass pill
-        idle = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-        if self.light:
-            idle.alpha_composite(_grad_fill(m, (255, 255, 255), (240, 243, 252), 0.92))
-        else:
-            idle.alpha_composite(_grad_fill(m, _mix(L["card"][0], (255, 255, 255), 0.08), L["card"][1], 0.78))
-        hl = Image.new("L", (bw, bh), 0)  # glass sheen on the upper half
-        hl.paste(_rr_mask(bw - 10, bh // 2 - 2, bh / 4), (5, 3))
-        idle.alpha_composite(_solid(hl.filter(ImageFilter.GaussianBlur(3)), (255, 255, 255), 0.06 if not self.light else 0.5))
-        idle.alpha_composite(_solid(edge, acc, 0.75))
+        # a soft shadow under the pill (drawn on a bigger canvas: SH px of room on every side)
+        SH = 18
+        shadow = Image.new("RGBA", (bw + 2 * SH, bh + 2 * SH), (0, 0, 0, 0))
+        sm = Image.new("L", shadow.size, 0)
+        sm.paste(m, (SH, SH + 5))
+        shadow.alpha_composite(_solid(sm.filter(ImageFilter.GaussianBlur(8)), (20, 24, 40), 0.16 if self.light else 0.3))
+
+        def on_shadow(im):
+            out = shadow.copy()
+            out.alpha_composite(im, (SH, SH))
+            return out
+
+        # idle: white pill, hairline edge, the number in an accent chip
+        idle = _solid(m, L["card"])
+        idle.alpha_composite(_solid(edge, L["ink"], 0.08))
         idle.alpha_composite(chip(acc, _on(acc)), (dx, (bh - dot) // 2))
         idle.alpha_composite(txt_im, (tx - p, ty))
         # done: filled with the accent, a check in the chip
-        done = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-        done.alpha_composite(_grad_fill(m, _mix(acc, (255, 255, 255), 0.18), _mix(acc, (0, 0, 0), 0.12)))
-        done.alpha_composite(_solid(hl.filter(ImageFilter.GaussianBlur(3)), (255, 255, 255), 0.18))
+        done = _solid(m, acc)
         ink = _on(acc)
         done.alpha_composite(chip(ink, acc, check=True), (dx, (bh - dot) // 2))
         dt, _, _, dp = _ltext(self.en_font, w["en"], size, "Bold", ink)
         done.alpha_composite(dt, (tx - dp, ty))
-        glow = _glow(m, acc, 22, 0.85 if not self.light else 0.55, grow=4)
-        return dict(idle=idle, done=done, glow=glow, w=bw, h=bh)
+        glow = _glow(m, acc, 18, 0.45, grow=3)
+        return dict(idle=on_shadow(idle), done=on_shadow(done), glow=glow, w=bw, h=bh)
 
     def _layout_bubbles(self):
         """Bubbles in staggered rows filling the float zone, at the biggest size that fits."""
@@ -689,66 +702,35 @@ class WordsVideo:
     # ============================================================ background + particles
     def _sprites(self):
         L = self.look
-        rng = np.random.default_rng(23)
-        cols = list(L["blobs"]) + [L["ink"]]
-        self.parts = []
-        for i in range(34):
-            d = int(rng.choice([10, 14, 20, 28, 40, 56]))
-            col = cols[int(rng.integers(len(cols)))]
-            self.parts.append((rng.uniform(0, W), rng.uniform(0, H), d, col, rng.uniform(8, 34),
-                               rng.uniform(0, 6.3), rng.uniform(0.12, 0.5)))
-        self._dot_cache = {}
-        self.stars = {tuple(c): _sprite_star(56, c) for c in set(self.acc)}
-        self.flash = _sprite_dot(520, (255, 255, 255), 3.0)
-        # low-resolution grids for the aurora (upscaled smoothly)
-        self.lw, self.lh = W // 5, H // 5
-        yy, xx = np.mgrid[0:self.lh, 0:self.lw]
-        self.gx, self.gy = xx / self.lw, yy / self.lh
-        y = np.linspace(0, 1, self.lh)[:, None, None]
-        c0, c1 = (np.array(c, float) for c in L["bg"])
-        self.base = np.repeat(c0 * (1 - y) + c1 * y, self.lw, axis=1)
-        r = np.sqrt(((self.gx - 0.5) / 0.75) ** 2 + ((self.gy - 0.5) / 0.85) ** 2)
-        self.vig = np.clip(1.12 - 0.5 * r ** 2, 0.45, 1.1)[..., None] if not self.light else \
-            np.clip(1.03 - 0.06 * r ** 2, 0.9, 1.03)[..., None]
-        self.blob_par = [(rng.uniform(0, 6.3), rng.uniform(0.11, 0.2), rng.uniform(0.08, 0.16), rng.uniform(0.32, 0.5),
-                          rng.uniform(0.2, 0.32)) for _ in L["blobs"]]
-        self.grain = (rng.standard_normal((self.lh, self.lw, 1)) * 1.4)
+        key = (L["bg"], L["dots"])
+        if key not in _BG_CACHE:  # clean background: a soft gradient + a faint dot pattern (it drifts slowly)
+            y = np.linspace(0, 1, H)[:, None, None]
+            c0, c1 = (np.array(c, float) for c in L["bg"])
+            arr = np.repeat(c0 * (1 - y) + c1 * y, W, axis=1)
+            base = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB").convert("RGBA")
+            dots = Image.new("L", (W, H + DOT_GAP), 0)
+            dd = ImageDraw.Draw(dots)
+            for gy in range(DOT_GAP // 2, H + DOT_GAP, DOT_GAP):
+                for gx in range(DOT_GAP // 2, W, DOT_GAP):
+                    dd.ellipse([gx - 2.2, gy - 2.2, gx + 2.2, gy + 2.2], fill=255)
+            _BG_CACHE[key] = (base, _solid(dots, L["dots"], 0.16 if self.light else 0.12))
+        self.bg_base, self.bg_dots = _BG_CACHE[key]
+        # confetti for the pop: crisp discs in the accent colours
+        self.confetti = {}
+        for c in set(self.acc):
+            ss = 4
+            m = Image.new("L", (24 * ss, 24 * ss), 0)
+            ImageDraw.Draw(m).ellipse([0, 0, 24 * ss - 1, 24 * ss - 1], fill=255)
+            self.confetti[tuple(c)] = _solid(m.resize((24, 24), Image.LANCZOS), c)
 
     def _background(self, t, dim):
-        L = self.look
-        arr = self.base.copy()
-        for i, col in enumerate(L["blobs"]):
-            ph, fx, fy, rx, ry = self.blob_par[i]
-            cx = 0.5 + 0.42 * math.sin(t * fx + ph)
-            cy = 0.2 + 0.25 * i + 0.12 * math.sin(t * fy + ph * 1.7)
-            g = np.exp(-(((self.gx - cx) / rx) ** 2 + ((self.gy - cy) / ry) ** 2))
-            k = 0.38 if not self.light else 0.22
-            if self.light:
-                arr += (np.array(col, float) - arr) * (g[..., None] * k)
-            else:
-                arr += g[..., None] * np.array(col, float) * k
-        arr = arr * self.vig + self.grain
-        if dim > 0:
-            arr = arr * (1 - (0.42 if not self.light else 0.12) * dim)
-        im = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB").resize((W, H), Image.BILINEAR)
-        return im.convert("RGBA")
-
-    def _dot(self, d, col):
-        k = (d, col)
-        if k not in self._dot_cache:
-            self._dot_cache[k] = _sprite_dot(d, col)
-        return self._dot_cache[k]
-
-    def _particles(self, frame, t, dim):
-        for x0, y0, d, col, sp, ph, a in self.parts:
-            y = (y0 - sp * t) % (H + 120) - 60
-            x = x0 + 18 * math.sin(t * 0.4 + ph)
-            al = a * (0.55 + 0.45 * math.sin(t * 1.3 + ph)) * (1 - 0.5 * dim)
-            if self.light:
-                al *= 0.6
-            if al > 0.02:
-                im = fade(self._dot(d, tuple(col)), al)
-                composite(frame, im, int(x - d / 2), int(y - d / 2))
+        frame = self.bg_base.copy()
+        off = int(t * 6) % DOT_GAP
+        frame.alpha_composite(self.bg_dots.crop((0, off, W, off + H)))
+        if dim > 0:  # the world steps back while a card is up
+            veil = (24, 28, 44) if self.light else (16, 20, 30)
+            frame.alpha_composite(Image.new("RGBA", (W, H), veil + (int(255 * dim * (0.15 if self.light else 0.35)),)))
+        return frame
 
     # ============================================================ the card of a word
     def _card(self, k):
@@ -772,7 +754,7 @@ class WordsVideo:
         if acc2 == acc:
             acc2 = L["acc"][(k + 1) % len(L["acc"])]
         ink, soft = L["ink"], L["soft"]
-        acc_txt = acc if not self.light else _mix(acc, (0, 0, 0), 0.08)
+        acc_txt = _mix(acc, (0, 0, 0), 0.12)  # the card is white: a slightly deeper accent reads better
         inner = CW - 2 * PAD
         els = []  # dict(kind, img, x, y (top-left in card coords), ...)
         y = 46
@@ -797,16 +779,13 @@ class WordsVideo:
         y += chip_d + int(34 * sc)
         # ---- the word (letters drop in)
         wsize, wlines = _fit_lines(lambda x, s: _adv(self.en_font, x, s, "Black"), w["en"], int(138 * sc), 58, inner, 2)
-        top_c = ink if not self.light else _mix(ink, acc, 0.15)
-        bot_c = _mix(ink, acc, 0.45) if not self.light else _mix(ink, acc, 0.75)
+        top_c, bot_c = ink, _mix(ink, acc, 0.35)
         n0 = 0
         for ln in wlines:
             im, base, adv, p = _ltext(self.en_font, ln, wsize, "Black", (255, 255, 255))
             m = im.getchannel("A")
             g = _grad_fill(m, top_c, bot_c)
             word = Image.new("RGBA", im.size, (0, 0, 0, 0))
-            word.alpha_composite(_solid(m, (0, 0, 0) if not self.light else (40, 50, 90),
-                                        0.35 if not self.light else 0.12).filter(ImageFilter.GaussianBlur(6)), (0, 0))
             word.alpha_composite(g)
             cuts = [p + _adv(self.en_font, ln[:i], wsize, "Black") for i in range(len(ln) + 1)]
             # crop the box to the ink so the line pitch is tight
@@ -826,7 +805,7 @@ class WordsVideo:
             spk = int(ph * 0.62)
             pw = int(iadv) + spk + int(isz * 1.6)
             m = _rr_mask(pw, ph, ph / 2)
-            pill = _solid(m, acc, 0.14 if not self.light else 0.1)
+            pill = _solid(m, acc, 0.1)
             ring = Image.new("L", (pw, ph), 0)
             ring.paste(_rr_mask(pw - 4, ph - 4, ph / 2 - 2), (2, 2))
             ring = Image.fromarray(np.clip(np.array(m, int) - np.array(ring, int), 0, 255).astype(np.uint8))
@@ -874,7 +853,7 @@ class WordsVideo:
                 im = im.crop((18, 18, im.width - 18, im.height - 18))
                 band_h = int(asz * 0.36)
                 bw_ = im.width + 6
-                band = _solid(_rr_mask(bw_, band_h, band_h / 2), acc, 0.16 if not self.light else 0.14)
+                band = _solid(_rr_mask(bw_, band_h, band_h / 2), acc, 0.2)
                 els.append(dict(kind="band", img=band, x=(CW - bw_) / 2, y=y + im.height - band_h - int(asz * 0.16),
                                 t="ar"))
                 els.append(dict(kind="ar", img=im, x=(CW - im.width) / 2, y=y, t="ar"))
@@ -916,18 +895,9 @@ class WordsVideo:
             ph = top_pad + pitch * len(lines) + int(esz * 0.55)
             pm = _rr_mask(pw, ph, 34)
             panel = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
-            if self.light:
-                panel.alpha_composite(_grad_fill(pm, _mix(acc, (255, 255, 255), 0.93), _mix(acc, (255, 255, 255), 0.88)))
-            else:
-                panel.alpha_composite(_grad_fill(pm, _mix(L["card"][0], (0, 0, 0), 0.35), _mix(L["card"][1], (0, 0, 0), 0.35), 0.9))
-            ring = Image.new("L", (pw, ph), 0)
-            ring.paste(_rr_mask(pw - 3, ph - 3, 33), (1, 1))
-            ring = Image.fromarray(np.clip(np.array(pm, int) - np.array(ring, int), 0, 255).astype(np.uint8))
-            panel.alpha_composite(_solid(ring, acc, 0.35))
+            panel.alpha_composite(_solid(pm, _mix(acc, (255, 255, 255), 0.92)))
             bar = _rr_mask(8, ph - 60, 4)
             panel.alpha_composite(_solid(bar, acc, 0.9), (26, 30))
-            q, qb, qadv, qp = _ltext(EN_FONT, "”", 150, "Black", acc)
-            panel.alpha_composite(fade(q, 0.22), (int(pw - qadv - 30) - qp, int(-qb + 150 * 0.95)))
             els.append(dict(kind="panel", img=panel, x=PAD, y=y, t="ex"))
             tag, tb, tadv, tp = _ltext(EN_FONT, "EXAMPLE", 24, "Bold", _on(acc))
             tw_, th_ = int(tadv) + 36, 40
@@ -967,56 +937,22 @@ class WordsVideo:
     def _card_body(self, k, ch, els, acc, acc2, acc3):
         L = self.look
         cw = CW
-        m = _rr_mask(cw, ch, 56)
+        m = _rr_mask(cw, ch, 48)
         full = (cw + 2 * MARGIN, ch + 2 * MARGIN)
         body = Image.new("RGBA", full, (0, 0, 0, 0))
-        glow = _glow(m, acc, 26, 0.55 if not self.light else 0.35, grow=2)
-        body.alpha_composite(glow, (MARGIN - 52, MARGIN - 52))
-        shadow = _glow(m, (0, 0, 0), 30, 0.55 if not self.light else 0.16)
-        body.alpha_composite(shadow, (MARGIN - 60, MARGIN - 60 + 26))
-        card = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
-        card.alpha_composite(_grad_fill(m, *L["card"], 0.97))
-        # light from above in the accent colour
-        yy, xx = np.mgrid[0:ch, 0:cw]
-        g = np.exp(-(((xx - cw / 2) / (cw * 0.55)) ** 2 + ((yy + 60) / 420.0) ** 2))
-        a = (g * (0.22 if not self.light else 0.12) * np.array(m, float)).astype(np.uint8)
-        light = np.zeros((ch, cw, 4), np.uint8)
-        light[..., :3] = acc
-        light[..., 3] = a
-        card.alpha_composite(Image.fromarray(light, "RGBA"))
-        # dot grid texture
-        dots = Image.new("L", (cw, ch), 0)
-        dd = ImageDraw.Draw(dots)
-        for gy in range(30, ch, 30):
-            for gx in range(30 + (gy // 30 % 2) * 15, cw, 30):
-                dd.ellipse([gx - 1.3, gy - 1.3, gx + 1.3, gy + 1.3], fill=255)
-        dots = Image.fromarray((np.array(dots, float) * np.array(m, float) / 255 * (0.05 if not self.light else 0.08)).astype(np.uint8))
-        card.alpha_composite(_solid(dots, L["ink"]))
-        # inner hairline
+        shadow = _glow(m, (20, 24, 40), 26, 0.22 if self.light else 0.45)
+        body.alpha_composite(shadow, (MARGIN - 52, MARGIN - 52 + 18))
+        card = _solid(m, L["card"])
+        strip = Image.new("L", (cw, ch), 0)  # accent strip along the top, clipped to the rounded corners
+        strip.paste(255, (0, 0, cw, 14))
+        strip = Image.fromarray(np.minimum(np.array(strip), np.array(m)).astype(np.uint8))
+        card.alpha_composite(_solid(strip, acc))
         inner = Image.new("L", (cw, ch), 0)
-        inner.paste(_rr_mask(cw - 6, ch - 6, 53), (3, 3))
-        in2 = Image.new("L", (cw, ch), 0)
-        in2.paste(_rr_mask(cw - 9, ch - 9, 51), (4, 4))
-        hair = Image.fromarray(np.clip(np.array(inner, int) - np.array(in2, int), 0, 255).astype(np.uint8))
-        card.alpha_composite(_solid(hair, (255, 255, 255), 0.10 if not self.light else 0.5))
+        inner.paste(_rr_mask(cw - 4, ch - 4, 46), (2, 2))
+        hair = Image.fromarray(np.clip(np.array(m, int) - np.array(inner, int), 0, 255).astype(np.uint8))
+        card.alpha_composite(_solid(hair, L["ink"], 0.08))
         body.alpha_composite(card, (MARGIN, MARGIN))
-        # the rotating gradient border: pixel indices + their angle around the centre
-        ringm = Image.new("L", full, 0)
-        ringm.paste(m, (MARGIN, MARGIN))
-        inn = Image.new("L", full, 0)
-        inn.paste(_rr_mask(cw - 10, ch - 10, 51), (MARGIN + 5, MARGIN + 5))
-        rm = np.clip(np.array(ringm, int) - np.array(inn, int), 0, 255)
-        ys, xs = np.nonzero(rm)
-        ang = (np.arctan2(ys - full[1] / 2, (xs - full[0] / 2) * (ch / cw)) / (2 * np.pi)) % 1.0
-        stops = [acc, acc2, acc3, acc]
-        lut = np.zeros((256, 3))
-        for i in range(256):
-            u = i / 256 * 3
-            j = int(u)
-            f = u - j
-            lut[i] = np.array(stops[j], float) * (1 - f) + np.array(stops[j + 1], float) * f
-        return dict(body=body, mask=m, ry=ys, rx=xs, rang=ang, ra=(rm[ys, xs] / 255.0)[:, None], lut=lut,
-                    sheen=np.array(ringm, float) / 255.0)
+        return dict(body=body)
 
     def _when(self, sg, key):
         return {"ipa": sg["ipa"], "ipa+": sg["ipa"] + 0.12, "ar": sg["ar"], "df": sg["df"] or 0,
@@ -1025,26 +961,7 @@ class WordsVideo:
     def _card_frame(self, k, t):
         sg = self.seg[k]
         c = self._card(k)
-        arr = np.array(c["body"])
-        # rotating border
-        idx = ((c["rang"] + t * 0.22) % 1.0 * 255).astype(int)
-        col = c["lut"][idx]
-        sub = arr[c["ry"], c["rx"], :3].astype(float)
-        a = c["ra"]
-        arr[c["ry"], c["rx"], :3] = (col * a + sub * (1 - a)).astype(np.uint8)
-        arr[c["ry"], c["rx"], 3] = np.maximum(arr[c["ry"], c["rx"], 3], (a[:, 0] * 255).astype(np.uint8))
-        # light sweep across the card just after it pops
-        sp = prog(t, sg["pop"] + 0.25, sg["pop"] + 0.95)
-        if 0 < sp < 1:
-            hh, ww = arr.shape[:2]
-            xx = np.arange(ww)[None, :] + np.arange(hh)[:, None] * 0.45
-            cpos = -300 + sp * (ww + hh * 0.45 + 600)
-            band = np.exp(-((xx - cpos) / 70.0) ** 2) * 0.28 * c["sheen"]
-            if self.light:
-                band *= 0.7
-            rgb = arr[..., :3].astype(float)
-            arr[..., :3] = np.clip(rgb + (255 - rgb) * band[..., None], 0, 255).astype(np.uint8)
-        img = Image.fromarray(arr, "RGBA")
+        img = c["body"].copy()
         say0, say1 = sg["say"]
         for e in c["els"]:
             kind = e["kind"]
@@ -1140,15 +1057,14 @@ class WordsVideo:
         for k, w in enumerate(self.words):
             acc = self.acc[k]
             m = _rr_mask(cw, h, h / 2)
-            row = Image.new("RGBA", (cw, h), (0, 0, 0, 0))
-            if self.light:
-                row.alpha_composite(_grad_fill(m, (255, 255, 255), (244, 246, 252), 0.95))
-            else:
-                row.alpha_composite(_grad_fill(m, _mix(L["card"][0], (255, 255, 255), 0.06), L["card"][1], 0.88))
+            row = _solid(m, L["card"])
             ring = Image.new("L", (cw, h), 0)
             ring.paste(_rr_mask(cw - 4, h - 4, h / 2 - 2), (2, 2))
             ring = Image.fromarray(np.clip(np.array(m, int) - np.array(ring, int), 0, 255).astype(np.uint8))
-            row.alpha_composite(_solid(ring, acc, 0.6))
+            row.alpha_composite(_solid(ring, L["ink"], 0.08))
+            sm = Image.new("L", (cw + 30, h + 30), 0)  # soft shadow
+            sm.paste(m, (15, 20))
+            shadowed = _solid(sm.filter(ImageFilter.GaussianBlur(7)), (20, 24, 40), 0.14 if self.light else 0.3)
             d = int(h * 0.64)
             cm = Image.new("L", (d * 3, d * 3), 0)
             ImageDraw.Draw(cm).ellipse([0, 0, d * 3 - 1, d * 3 - 1], fill=255)
@@ -1167,8 +1083,8 @@ class WordsVideo:
                 if w["ar"]:
                     ar_room = room - eadv - 30
                     asz = int(h * 0.4)
-                    ai = text_img_in(self.ar_font, w["ar"], asz, acc if not self.light else _mix(acc, (0, 0, 0), 0.1),
-                                     "Bold", max_w=max(60, ar_room))
+                    ai = text_img_in(self.ar_font, w["ar"], asz, _mix(acc, (0, 0, 0), 0.12),
+                                     "Black", max_w=max(60, ar_room))
                     composite(row, ai, int(cw - int(h * 0.4) - ai.width + 30), int(h / 2 - ai.height / 2))
             else:
                 es = int(h * 0.3)
@@ -1178,15 +1094,16 @@ class WordsVideo:
                 cy = h * (0.42 if w["ar"] else 0.5)
                 row.alpha_composite(et, (x0 - ep, int(cy + es * 0.36) - eb))
                 if w["ar"]:
-                    ai = text_img_in(self.ar_font, w["ar"], int(h * 0.24), acc if not self.light else _mix(acc, (0, 0, 0), 0.1),
-                                     "Bold", max_w=room)
+                    ai = text_img_in(self.ar_font, w["ar"], int(h * 0.24), _mix(acc, (0, 0, 0), 0.12),
+                                     "Black", max_w=room)
                     composite(row, ai, int(x0 - 30), int(h * 0.72 - ai.height / 2))
                     # Arabic reads from the right: align it to the right end of the text room
                     pass
             r, c = (k, 0) if cols == 1 else (k // 2, k % 2)
             cx = 540 if cols == 1 else 540 + (c - 0.5) * (cw + 20)
             cy = top + rh * r + rh / 2 + ((bottom - top) - rh * rows) / 2
-            self.rec.append((row, cx, cy))
+            shadowed.alpha_composite(row, (15, 15))
+            self.rec.append((shadowed, cx, cy))
         self.rec_title = _ltext(EN_FONT, "QUICK RECAP", 34, "Bold", self.acc[0])
 
     def _recap(self, frame, t):
@@ -1230,7 +1147,6 @@ class WordsVideo:
         if in_recap:
             dim = 0.0
         frame = self._background(t, dim)
-        self._particles(frame, t, dim)
         self._header(frame, t, 1 - 0.75 * dim)
         # shake after the pop
         shx = shy = 0.0
@@ -1251,8 +1167,7 @@ class WordsVideo:
         if in_recap:
             self._recap(frame, t)
         if self.has_end and t >= self.E0:
-            acc = self.acc[0]
-            draw_ending(frame, t, self.E0, self.e_intro, self.e_q, self.e_cta, self.handle, acc)
+            self._ending(frame, t)
         global_fade(frame, t, self.dur)
         return frame.convert("RGB")
 
@@ -1292,8 +1207,9 @@ class WordsVideo:
             land = prog(t, sg["out"], sg["out"] + 0.5)
             if land < 1:  # squash on landing + ring
                 sq = math.exp(-6 * land) * math.cos(16 * land)
-                im = b["done"].resize((max(1, int(b["w"] * s * (1 + 0.22 * sq))), max(1, int(b["h"] * s * (1 - 0.22 * sq)))),
-                                      Image.BILINEAR)
+                dn = b["done"]
+                im = dn.resize((max(1, int(dn.width * s * (1 + 0.22 * sq))), max(1, int(dn.height * s * (1 - 0.22 * sq)))),
+                               Image.BILINEAR)
                 _put(frame, b["glow"], x, y, (1 - land) * a)
                 _put(frame, im, x, y, a)
                 rg = _ring(b["h"] * 0.5 + land * 110, 4, self.acc[k], (1 - land) * 0.8 * a)
@@ -1340,16 +1256,53 @@ class WordsVideo:
                 ang = 6 * math.sin(math.pi * pc)
                 a = 1 - prog(pc, 0.55, 1.0)
             _put(frame, _rotate_scale(img, s, ang), x, y, a)
-            # flash + shockwave + sparks
+            # shockwave + confetti
             u = t - sg["pop"]
-            if 0 <= u < 0.5:
-                fl = 1 - u / 0.5
-                _put(frame, _rotate_scale(self.flash, 0.5 + u * 3, 0), 540, ccy, fl * (0.55 if not self.light else 0.35))
             if 0 <= u < 0.7:
                 pr = u / 0.7
                 _put(frame, _ring(120 + _out3(pr) * 620, 6 * (1 - pr) + 1, acc, (1 - pr) * 0.75), 540, ccy)
             if 0.05 <= u < 1.1:
                 self._sparks(frame, k, u - 0.05, ccy, c["ch"])
+
+    def _ending(self, frame, t):
+        """The 🔚 Ending card in the video's own colours (intro line, question lines, arrow, call to action, handle)."""
+        L = self.look
+        t0 = self.E0
+        a = ease_io(prog(t, t0, t0 + 0.5))
+        frame.alpha_composite(Image.new("RGBA", (W, H), tuple(L["bg"][0]) + (int(240 * a),)))
+
+        def txt(s, size, col):
+            path = self.ar_font if ARABIC_RE.search(s) else self.en_font
+            return text_img_in(path, s, size, col, "Black" if size >= 70 else "Bold", max_w=960)
+        y = 640
+        items = []
+        if self.e_intro:
+            items.append((txt(self.e_intro, 56, L["head_soft"]), y, t0 + 0.2))
+            y += 130
+        n = len(self.e_q)
+        size, pitch = (96, 115) if n <= 2 else (80, 98)
+        for i, (s, col) in enumerate(self.e_q):
+            col = L["head"] if col == to_rgb("white") else (_mix(col, (0, 0, 0), 0.3) if self.light else col)
+            items.append((txt(s, size, col), y + i * pitch, t0 + 0.35 + 0.15 * i))
+        last = y + (n - 1) * pitch if n else y - 130
+        arrow_y = last + 205
+        if self.e_cta:
+            items.append((txt(self.e_cta, 52, L["head"]), arrow_y + 160, t0 + 1.0))
+        if self.handle:
+            items.append((txt(self.handle, 46, L["head_soft"]), arrow_y + 330, t0 + 1.3))
+        for im, yy, ti in items:
+            p = prog(t, ti, ti + 0.35)
+            if p > 0:
+                _put(frame, _rotate_scale(im, 0.8 + 0.2 * ease_out_back(p), 0), 540, yy, min(1, p * 1.5))
+        p = prog(t, t0 + 0.8, t0 + 1.1)
+        if p > 0 and (n or self.e_cta):
+            ay = arrow_y + math.sin(t * 5) * 14
+            lay = Image.new("RGBA", (120, 140), (0, 0, 0, 0))
+            d = ImageDraw.Draw(lay)
+            c = tuple(self.acc[0]) + (int(255 * p),)
+            d.line([(60, 15), (60, 100)], fill=c, width=12)
+            d.polygon([(22, 85), (98, 85), (60, 132)], fill=c)
+            composite(frame, lay, 480, int(ay - 70))
 
     def _sparks(self, frame, k, u, cy, ch):
         rng = np.random.default_rng(100 + k)
@@ -1361,8 +1314,8 @@ class WordsVideo:
             x = 540 + math.cos(ang) * (CW * 0.36 + dist)
             y = cy + math.sin(ang) * (ch * 0.36 + dist) + 140 * u * u
             col = self.acc[(k + i) % self.n] if i % 3 else self.acc[k]
-            st = self.stars[tuple(col)]
-            sc = rng.uniform(0.35, 0.9) * (1 - pr * 0.6)
+            st = self.confetti[tuple(col)]
+            sc = rng.uniform(0.4, 1.0) * (1 - pr * 0.5)
             a = (1 - pr) ** 1.3
             _put(frame, _rotate_scale(st, sc, 0), x, y, a)
 
