@@ -35,6 +35,7 @@ from engine.templates.text import LEVEL_CHOICES as TX_LEVELS, STYLE_CHOICES as T
 from engine.templates.text import DEFAULT_LOGO as TX_LOGO, LOGO_SHAPES as TX_LOGO_SHAPES
 from engine.templates.news import ACCENT_CHOICES as NW_ACCENTS, LOOK_CHOICES as NW_LOOKS, probe as nw_probe
 from engine.templates.news import length_report as nw_length, RECAP_CHOICES as NW_RECAPS
+from engine.templates import words_video as wvid
 from engine import batch
 from engine import countries
 from engine import tl_batch
@@ -86,7 +87,8 @@ TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "
            "text_size"]
 NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", "logo", "logo_shape", "trim_start",
            "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed", "recap_style"]
-KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS}
+WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain"]
+KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS, "wordsvideo": WV_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
                 "video"}
 MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
@@ -102,7 +104,8 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
             "para_text": "", "para_store": "{}", "para_alias": "",
-            "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0, "recap_style": "flashcards"}  # for projects saved before these options existed
+            "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0, "recap_style": "flashcards",
+            "design": "aurora", "pick": "roulette"}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -529,7 +532,7 @@ def make_actions(tpl):
         except Exception as e:
             raise gr.Error(str(e))
         msg = f"Video length: **{dur:.1f} s**"
-        if tpl in ("vocab", "text", "news") and dur > 60:
+        if tpl in ("vocab", "text", "news", "wordsvideo") and dur > 60:
             msg += " — ⚠️ over 60 s: fine for YouTube Shorts and Instagram Reels, but keep Facebook Reels under 60 s"
         return img, msg, gr.update(maximum=max(1.0, round(dur, 1)))
 
@@ -589,6 +592,9 @@ def make_actions(tpl):
             logo = p["news"].get("logo") or ""
             p["news"]["logo"] = logo if os.path.abspath(logo) == os.path.abspath(TX_LOGO) else _keep_media(logo)
         stamp = _stamp()
+        if tpl == "wordsvideo":
+            p["wordsvideo"]["audio"] = _keep_media_list(p["wordsvideo"].get("audio"),
+                                                        os.path.join(MEDIA_DIR, f"words_video_audio_{stamp}"))
         if tpl == "vocab":
             p["vocab"]["audio"] = _keep_media_list(p["vocab"].get("audio"), os.path.join(MEDIA_DIR, f"words_audio_{stamp}"))
         if tpl == "mcq":
@@ -786,10 +792,11 @@ def shared_fields(st, ending):
             st["intro_sound"], st["tick_sound"], st["tick_gain"]]
 
 
-def preview_panel(tpl, posts=False):
+def preview_panel(tpl, posts=False, words_video=False):
     """Right column: live picture / video, time slider and all render buttons — always visible. posts=True adds
-    the 🖼️ Image posts preview, shown there instead while that sub-tab is open (post_col / video_col)."""
-    preview, render, save, load, example, clip = make_actions(tpl)
+    the 🖼️ Image posts preview, shown there instead while that sub-tab is open (post_col / video_col);
+    words_video=True adds a second full preview for the 🎬 Words video sub-tab (`wv` = its own panel dict, in
+    `wv_col`)."""
     extra = {}
     with gr.Column(scale=2, min_width=340, elem_classes="preview-col"):
         if posts:
@@ -798,27 +805,37 @@ def preview_panel(tpl, posts=False):
                 post_img = gr.Image(type="pil", format="png", height=POST_H, show_label=False, interactive=False)
                 post_info = gr.Markdown(elem_classes="info-line")
             extra = dict(post_col=post_col, post_img=post_img, post_info=post_info)
+        if words_video:
+            with gr.Column(visible=False) as wv_col:
+                extra["wv"] = _preview_widgets("wordsvideo")
+            extra["wv_col"] = wv_col
         with gr.Column(visible=True) as video_col:
-            with gr.Tabs(selected="pic") as out_tabs:
-                with gr.Tab("🖼️ Live preview", id="pic"):
-                    img = gr.Image(label="Preview", type="pil", format="png", height=PREVIEW_H, show_label=False,
-                                   interactive=False)
-                with gr.Tab("🎞️ Video", id="vid"):
-                    vid = gr.Video(label="Video", height=PREVIEW_H, show_label=False, autoplay=True)
-            with gr.Row(equal_height=True, elem_classes="opt-row"):
-                safe = gr.Checkbox(value=False, label="Safe zone", container=False, min_width=110)
-                auto = gr.Checkbox(value=True, label="Live update", container=False, min_width=110)
-                pv_btn = gr.Button("🔄 Refresh", size="sm", min_width=90)
-            t = gr.Slider(0, 60, value=3.0, step=0.1, label="Preview time (s)")
-            with gr.Row(equal_height=True):
-                clip_btn = gr.Button("▶️ Quick motion (6 s)", min_width=130)
-                rd_btn = gr.Button("🎬 Render video", variant="primary", min_width=130)
-                stop_btn = gr.Button("⏹ Stop", variant="stop", min_width=80, scale=0)
-            info = gr.Markdown(elem_classes="info-line")
-        busy = gr.State(False)  # True while a clip / video is being made
+            main = _preview_widgets(tpl)
+    return dict(main, video_col=video_col, **extra)
+
+
+def _preview_widgets(tpl):
+    """One set of preview widgets + its actions (live picture, video, time slider, motion / render / stop)."""
+    preview, render, save, load, example, clip = make_actions(tpl)
+    with gr.Tabs(selected="pic") as out_tabs:
+        with gr.Tab("🖼️ Live preview", id="pic"):
+            img = gr.Image(label="Preview", type="pil", format="png", height=PREVIEW_H, show_label=False,
+                           interactive=False)
+        with gr.Tab("🎞️ Video", id="vid"):
+            vid = gr.Video(label="Video", height=PREVIEW_H, show_label=False, autoplay=True)
+    with gr.Row(equal_height=True, elem_classes="opt-row"):
+        safe = gr.Checkbox(value=False, label="Safe zone", container=False, min_width=110)
+        auto = gr.Checkbox(value=True, label="Live update", container=False, min_width=110)
+        pv_btn = gr.Button("🔄 Refresh", size="sm", min_width=90)
+    t = gr.Slider(0, 60, value=3.0, step=0.1, label="Preview time (s)")
+    with gr.Row(equal_height=True):
+        clip_btn = gr.Button("▶️ Quick motion (6 s)", min_width=130)
+        rd_btn = gr.Button("🎬 Render video", variant="primary", min_width=130)
+        stop_btn = gr.Button("⏹ Stop", variant="stop", min_width=80, scale=0)
+    info = gr.Markdown(elem_classes="info-line")
+    busy = gr.State(False)  # True while a clip / video is being made
     return dict(busy=busy, img=img, vid=vid, tabs=out_tabs, t=t, safe=safe, auto=auto, pv=pv_btn, clip=clip_btn, rd=rd_btn,
-                stop=stop_btn, info=info, fns=(preview, render, save, load, example, clip), video_col=video_col,
-                **extra)
+                stop=stop_btn, info=info, fns=(preview, render, save, load, example, clip))
 
 
 def wire(proj, pv, fields):
@@ -1592,6 +1609,115 @@ def wire_posts(ui, pv):
     ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
     gr.on(triggers=[c.change for c in p_inputs + p_look], fn=live, inputs=p_inputs + p_look,
           outputs=[pv["post_img"], pv["post_info"]], trigger_mode="always_last")
+
+
+# ------------------------------------------------------------------ English Words: 🎬 Words video
+WV_HELP = ("**🎬 Words video** — any number of words float on screen as glass bubbles; one after another a bubble "
+           "is picked, flies to the centre and **pops** into a decorated card: the word dropping in letter by letter, "
+           "its IPA, the Arabic meaning written in from the right, the English meaning and an example sentence "
+           "(the word on a highlight). The card folds back into its bubble (✓), then a recap list and the 🔚 Ending. "
+           "The preview on the right is this video's own.")
+WV_WORDS_HELP = ("One word per line: `English | Arabic | IPA | English meaning | example sentence` — all but the "
+                 "English optional. `*stars*` in the sentence choose what is highlighted (else the word is found by "
+                 "itself, in any form).")
+WV_AUDIO_HELP = ("Optional voice: clips named **w1** (word 1), **w1e** (its sentence), **w2**, **w2e** … — the card "
+                 "waits for them. 📥 below can make them with your ElevenLabs voice.")
+
+
+def words_video_ui():
+    """🎬 Words video sub-tab (English Words): its own project, words, design and sheet import."""
+    with gr.Row(equal_height=True):
+        gr.Markdown(WV_HELP)
+    proj = project_bar()
+    with gr.Row():
+        title = gr.Textbox(label="Title", placeholder="{count} Words to Sound Smarter",
+                           info="{count} = the number of words")
+        sub = gr.Textbox(label="Subtitle (optional)", rtl=True, placeholder="كلمات إنجليزية ستبهر بها الجميع")
+    words = gr.Textbox(lines=10, max_lines=60, label="Words", info=WV_WORDS_HELP)
+    with gr.Row():
+        design = gr.Dropdown(wvid.DESIGN_CHOICES, value="aurora", label="Design",
+                             info="Colours of the whole video: aurora background, bubbles, card border and accents")
+        pace = gr.Radio([("Calm", "calm"), ("Normal", "normal"), ("Fast", "fast")], value="normal", label="Pace",
+                        info="How long each card stays (with voice clips the card waits for them)")
+    with gr.Row():
+        pick = gr.Radio(wvid.PICKS, value="roulette", label="Picking the next word")
+        recap = gr.Checkbox(value=True, label="Recap list at the end")
+    audio = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=120,
+                    label="Voice clips (optional: w1, w1e, w2 …)")
+    gr.Markdown(WV_AUDIO_HELP)
+    gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
+    gr.Markdown("---\n**📥 Words from Excel** — the 📃 Word list sheet: **English | Arabic | IPA | Sample sentence | "
+                "English meaning** (Title / Subtitle columns: the first ones become the video's title).")
+    with gr.Row():
+        sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Words sheet (.xlsx or .csv)",
+                        height=110)
+        tab = gr.Dropdown([], label="Sheet (tab)", visible=False)
+    with gr.Row():
+        start = gr.Number(value=1, precision=0, minimum=1, label="Start at word #")
+        count = gr.Number(value=6, precision=0, minimum=0, label="How many words", info="0 = all of them")
+    voice = gr.Checkbox(value=False, label="🎙️ Make the voice of every word and sentence with my ElevenLabs voice",
+                        info="Uses 🔑 ElevenLabs voice in 📖 English Texts → ✍️ Paragraphs (each clip costs credits "
+                             "only once)")
+    with gr.Row(equal_height=True):
+        info = gr.Markdown("Upload a sheet to put its words in the editor.")
+        load = gr.Button("📥 Put the words in the editor", min_width=200, scale=0)
+    return dict(proj=proj, title=title, sub=sub, words=words, design=design, pace=pace, pick=pick, recap=recap,
+                audio=audio, gain=gain, sheet=sheet, tab=tab, start=start, count=count, voice=voice, info=info,
+                load=load)
+
+
+def wv_fields(ui):
+    """The Words video's own fields in WV_KEYS order."""
+    return [ui["title"], ui["sub"], ui["words"], ui["design"], ui["pace"], ui["pick"], ui["recap"], ui["audio"],
+            ui["gain"]]
+
+
+def wire_words_video(ui):
+    def picked(sheet, tab, start, count):
+        if not sheet:
+            raise ValueError("Upload a words sheet first.")
+        words, problems = word_import.read_words(sheet, tab or None)
+        if not words:
+            raise ValueError("The sheet has no usable rows." + (f" First problem: {problems[0]}" if problems else ""))
+        a = max(1, int(start or 1)) - 1
+        n = int(count or 0)
+        part = words[a:a + n] if n > 0 else words[a:]
+        if not part:
+            raise ValueError(f"The sheet has {len(words)} words — 'Start at' is past the end.")
+        return words, part, problems
+
+    def check(sheet, tab, start, count):
+        if not sheet:
+            return "Upload a sheet to put its words in the editor."
+        try:
+            words, part, problems = picked(sheet, tab, start, count)
+        except Exception as e:
+            return f"⚠️ {_msg(e)}"
+        a = max(1, int(start or 1))
+        return (f"The sheet has **{len(words)}** words — this video takes **{len(part)}** (#{a}–#{a + len(part) - 1})."
+                + (f" ⚠️ {len(problems)} row(s) left out: {problems[0]}" if problems else ""))
+
+    def load(sheet, tab, start, count, voice, title, sub, progress=gr.Progress()):
+        try:
+            words, part, problems = picked(sheet, tab, start, count)
+            clips = gr.update()
+            if voice:
+                clips = word_import.word_voices(part, DATA_DIR, os.path.join(MEDIA_DIR, f"words_video_voice_{_stamp()}"),
+                                                lambda x, d: progress(x, desc=d))
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        first = part[0]
+        title = title or first.get("title") or ""
+        sub = sub or first.get("sub") or ""
+        gr.Info(f"{len(part)} words are in the editor" + (" with their voices." if voice else "."), duration=6)
+        return wvid.words_text(part), clips, title, sub
+
+    ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
+    src = [ui["sheet"], ui["tab"], ui["start"], ui["count"]]
+    gr.on(triggers=[c.change for c in src], fn=check, inputs=src, outputs=ui["info"], trigger_mode="always_last",
+          show_progress="hidden")
+    ui["load"].click(load, src + [ui["voice"], ui["title"], ui["sub"]],
+                     [ui["words"], ui["audio"], ui["title"], ui["sub"]])
 
 
 # ------------------------------------------------------------------ English Texts
@@ -3000,6 +3126,9 @@ def build_ui():
                         with gr.Tab("🖼️ Image posts"):
                             with gr.Column(elem_classes="pane"):
                                 posts = posts_ui()
+                        with gr.Tab("🎬 Words video"):
+                            with gr.Column(elem_classes="pane"):
+                                wv = words_video_ui()
                         with gr.Tab("🎙️ Audio"):
                             with gr.Column(elem_classes="pane"):
                                 gr.Markdown(VC_AUDIO_HELP)
@@ -3017,18 +3146,23 @@ def build_ui():
                                                                  v_timer, v_tfx, v_recap, v_audio, v_again,
                                                                  v_lstyle, v_lhl, v_cboard, v_cmark, v_ccol, v_lpal,
                                                                  v_lfont, v_lex, v_lkar, v_lhide, v_lwait]
-                vc_pv = preview_panel("vocab", posts=True)
+                vc_pv = preview_panel("vocab", posts=True, words_video=True)
             wire(vc_proj, vc_pv, vc_fields)
             wire_vc_batch(vxl, vc_pv, vc_fields)
             wire_wl_import(wl, vc_pv, vc_fields, v_items, v_audio)
             wire_posts(posts, vc_pv)
+            # 🎬 Words video: its own project + preview; 🎨 Style & sound and 🔚 Ending are shared with English Words
+            wire(wv["proj"], vc_pv["wv"], shared_fields(vc_st, vc_end) + wv_fields(wv))
+            wire_words_video(wv)
 
             def right_side(evt: gr.SelectData):
-                """🖼️ Image posts open: the post preview fills the right column, else the video preview."""
-                on = "Image posts" in str(evt.value)
-                return gr.update(visible=on), gr.update(visible=not on)
-            vc_tabs.select(right_side, None, [vc_pv["post_col"], vc_pv["video_col"]], show_progress="hidden",
-                           queue=False)
+                """🖼️ Image posts open: the post preview fills the right column; 🎬 Words video: its own video
+                preview; else the English Words video preview."""
+                tab = str(evt.value)
+                on, wv_on = "Image posts" in tab, "Words video" in tab
+                return gr.update(visible=on), gr.update(visible=wv_on), gr.update(visible=not (on or wv_on))
+            vc_tabs.select(right_side, None, [vc_pv["post_col"], vc_pv["wv_col"], vc_pv["video_col"]],
+                           show_progress="hidden", queue=False)
             gr.on(triggers=[v_audio.change, v_items.change], fn=clips_report, inputs=[v_audio, v_items],
                   outputs=v_ainfo, trigger_mode="always_last", show_progress="hidden")
             v_add.click(add_item, [v_items, v_type], v_items)

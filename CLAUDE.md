@@ -111,6 +111,18 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `_OPT["recolour"]` and `_set_colors(pal)` recolours the designs with fixed colours (highlighter marker + pen,
   brush inks, tape / pencil pens, soft tints, Torn paper band / Arabic / glow, Clouds sky / words / bars / glow).
   The user's taste: clean background, clear bold type, one realistic mark per word, not busy — never propose neon looks.
+- `engine/templates/words_video.py` — template `wordsvideo`, English Words sub-tab 🎬 Words video (after 🖼️ Image
+  posts; `app.words_video_ui` / `wire_words_video`, own project bar, shares 🎨 Style & sound + 🔚 Ending; its preview
+  = `preview_panel(..., words_video=True)` → `pv["wv"]` in `wv_col`, `right_side` shows one of post / wv / video).
+  `wordsvideo.words` = lines `English | Arabic | IPA | English meaning | example` (any number). Glass bubbles float over
+  a live aurora (`_background`: low-res numpy blobs upscaled + bokeh `_particles`); per word (`_timeline` → `seg`):
+  roulette hops (`pick`), bubble flies to the centre, the card pops (spring + flash + shockwave + `_sparks`; card built
+  lazily `_card` / `_build_card` = element list, LRU of 3; `_card_frame` = rotating conic border on precomputed ring
+  pixels, light sweep, letters drop in by strips, IPA pill + speaker waves, divider, Arabic wiped in RTL on a marker
+  band, meaning, example panel word by word with the word on a pill = `_ex_chunks`), collapses back to a ✓ bubble;
+  recap list (`_layout_recap`, 2 columns from 11 words) then `draw_ending`. Clips `w<k>` / `w<k>e` (vocab `clip_key`)
+  are waited for; `word_import.word_voices` makes them with ElevenLabs. Looks `DESIGNS` (aurora / gold / sunset /
+  ocean / light); fonts Poppins + Tajawal (a 🎨 Style & sound font replaces them)
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
   (ElevenLabs word timings); words ink in as spoken (`vs`/`ve` per word), highlighted words get a marker swipe, fly
   into the Word Bank, Arabic writes in right-to-left. `text.words` = lines `word | start | end | highlighted | arabic`

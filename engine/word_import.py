@@ -174,6 +174,31 @@ def voice_clips(pages, data_dir, out_dir, progress=None):
     return paths
 
 
+def word_voices(words, data_dir, out_dir, progress=None):
+    """🎬 Words video: one ElevenLabs clip per word as out_dir/w<k>.mp3 and one per sample sentence as
+    w<k>e.mp3 (k = the word's number in the video; read without the *stars*). Returns the clip paths."""
+    ok, msg = voice_ready(data_dir)
+    if not ok:
+        raise RuntimeError(msg)
+    s = el.load_settings(data_dir)
+    cache = os.path.join(data_dir, "tts")
+    os.makedirs(out_dir, exist_ok=True)
+    jobs = []
+    for k, w in enumerate(words, 1):
+        jobs.append((w["en"], f"w{k}.mp3", f"“{w['en']}”"))
+        if w.get("ex"):
+            jobs.append((" ".join(w["ex"].replace("*", "").split()), f"w{k}e.mp3", f"the sentence of “{w['en']}”"))
+    paths = []
+    for done, (text, name, what) in enumerate(jobs):
+        if progress:
+            progress(done / len(jobs), f"🎙️ Voice of {what} ({done + 1} of {len(jobs)})")
+        mp3, _ = el.speak(text, cache, s)
+        dst = os.path.join(out_dir, name)
+        shutil.copyfile(mp3, dst)
+        paths.append(dst)
+    return paths
+
+
 TEMPLATE_ROWS = [("English", "Arabic", "IPA (optional)", "Sample sentence (optional)", "Title (optional)",
                   "Subtitle (optional)", "English meaning (optional)"),
                  ("Tip of the iceberg", "قمة جبل الجليد", "", "This scandal is only the tip of the iceberg.",
