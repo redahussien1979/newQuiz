@@ -80,7 +80,7 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   Highlighter (marker band, `_multiply`, red-pen loop on the title) / Brush strokes (`_brush_stroke`) / Swoosh /
   Washi tape / Soft highlight / Pencil + the page-icon designs Document / Sky cards + Swiss / Chat (`_doc_shape`,
   `_page_tones`); rows of Document / Sky cards / Swiss / Brush by `_row_fit` (side by side, or `_two_lines` =
-  English over Arabic when that is `TWO_GAIN` bigger, always with Stacked); `_marked_page` side by side switches to
+  English over Arabic when that is `TWO_GAIN` bigger, always with Stacked = both lines centred); `_marked_page` side by side switches to
   the Stacked rows (`_stack_fit`) on the same rule; Chat puts a long answer under its question; colour set `sky_page` (black · sky #7DC6F3 · line grey) is in `MONO_SETS`: the rainbow designs use
   its one colour for every word (`_mono`); `MORE_STYLES` = 13 older card/poster designs, not in the menu. A word with a
   `def` is one block (`_entry`: word + IPA, then the meaning wrapped even, `DEF_SIZE` / `DEF_MIN`). Colours = `DUOS`.

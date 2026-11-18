@@ -405,15 +405,18 @@ def _two_need(e, i, a, box_w, box_h, gap=8, gap2=12):
 
 
 def _two_lines(fr, e, i, a, xl, xr, cy, gap=8, gap2=12):
-    """English (+ IPA) on the left, the Arabic under it on the right; the block centred on cy."""
+    """English (+ IPA) on the left, the Arabic under it on the right; the block centred on cy. With the Stacked
+    arrangement every line is centred between xl and xr instead (the word, then its meaning under it)."""
     hh = _h(e) + (gap + _h(i) if i is not None else 0) + gap2 + _h(a)
     y = cy - hh / 2
-    _put(fr, e, xl, y + _h(e) / 2)
+    mid = _OPT.get("layout") == "stack"
+    xe, xa, ae, aa = ((xl + xr) / 2, (xl + xr) / 2, "c", "c") if mid else (xl, xr, "l", "r")
+    _put(fr, e, xe, y + _h(e) / 2, ae)
     y += _h(e)
     if i is not None:
-        _put(fr, i, xl, y + gap + _h(i) / 2)
+        _put(fr, i, xe, y + gap + _h(i) / 2, ae)
         y += gap + _h(i)
-    _put(fr, a, xr, y + gap2 + _h(a) / 2, "r")
+    _put(fr, a, xa, y + gap2 + _h(a) / 2, aa)
 
 
 def _row_fit(words, make, box_w, box_h, k_max=1.15):
