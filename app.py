@@ -48,7 +48,7 @@ from engine import text_batch
 from engine import vocab_batch
 from engine import word_import
 from engine import word_posts
-from engine.list_designs import DUO_CHOICES, EX_STYLES, HIDE_STYLES, WAIT_STYLES, PALETTE_CHOICES, font_choices
+from engine.list_designs import EX_STYLES, HIDE_STYLES, WAIT_STYLES, PALETTE_CHOICES, font_choices
 from engine.word_list import BOARD_CHOICES, CHALK_COLOR_CHOICES, HIGHLIGHTS, MARKS
 from engine.know_country import video as kc_video
 
@@ -1404,8 +1404,9 @@ def posts_ui():
                                    "(page-icon look) · Sky cards = light-blue rows (best with Sky page colours) · "
                                    "Swiss = strict grid, big numbers · Chat = a messaging-app screen · "
                                    "Torn paper = blue torn edges, red Arabic, centred")
-        p_pal = gr.Dropdown(DUO_CHOICES, value=word_posts.DEFAULT_PALETTE, label="Colours",
-                            info="The title, marker / swoosh colour (a light accent is used as the marker)")
+        p_pal = gr.Dropdown(word_posts.palette_choices(), value="own", label="Colours",
+                            info="Design's own colours = each design as designed · a colour set recolours the whole "
+                                 "design (marker, strokes, tape, paper, clouds, words, bars, glow)")
     with gr.Row():
         p_font = gr.Dropdown(word_posts.FONT_CHOICES, value=0, label="Fonts",
                              info="10 ready English + Arabic pairs (all included, free to use) — or each design's "

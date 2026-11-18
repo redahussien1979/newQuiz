@@ -18,7 +18,10 @@ _reshape = _bidi = None
 if not HAS_RAQM:
     try:
         import arabic_reshaper
-        _reshape = arabic_reshaper.reshape
+        try:  # keep the vowel marks (ُ ّ …): the default reshaper deletes them
+            _reshape = arabic_reshaper.ArabicReshaper(configuration={"delete_harakat": False}).reshape
+        except Exception:
+            _reshape = arabic_reshaper.reshape
         try:
             from bidi.algorithm import get_display as _bidi
         except ImportError:
