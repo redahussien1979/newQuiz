@@ -1412,8 +1412,9 @@ def posts_ui():
                              info="10 ready English + Arabic pairs (all included, free to use) — or each design's "
                                   "own fonts. The pronunciation (IPA) keeps its own font.")
         p_lay = gr.Dropdown(word_posts.LAYOUTS, value="side", label="Arrangement",
-                            info="Highlight designs: side by side, or each word centred with its meaning under "
-                                 "it (Torn paper is always stacked)")
+                            info="Side by side, or each word centred with its meaning under it. Long idioms switch "
+                                 "to stacked rows by themselves (bigger type). Torn paper / Clouds are always "
+                                 "stacked; Chat keeps its bubbles")
     en_menu, ar_menu = word_posts.font_menus()
     with gr.Row():
         p_fen = gr.Dropdown(en_menu, value="", label="English font (any)",
