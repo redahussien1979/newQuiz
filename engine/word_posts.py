@@ -394,6 +394,39 @@ def _sbs_need(e, i, a, box_w, box_h, gap=8, mid=40):
     return (w + mid + _vis_w(a)) / box_w, h / box_h
 
 
+TWO_GAIN = 1.12  # a page goes to two lines per row when that makes its type at least this much bigger
+
+
+def _two_need(e, i, a, box_w, box_h, gap=8, gap2=12):
+    """Two lines per row: the English (+ IPA) on top, the Arabic under it, each with the whole row width."""
+    w = max(_vis_w(e), _vis_w(i) if i is not None else 0, _vis_w(a))
+    h = _h(e) + (gap + _h(i) if i is not None else 0) + gap2 + _h(a)
+    return w / box_w, h / box_h
+
+
+def _two_lines(fr, e, i, a, xl, xr, cy, gap=8, gap2=12):
+    """English (+ IPA) on the left, the Arabic under it on the right; the block centred on cy."""
+    hh = _h(e) + (gap + _h(i) if i is not None else 0) + gap2 + _h(a)
+    y = cy - hh / 2
+    _put(fr, e, xl, y + _h(e) / 2)
+    y += _h(e)
+    if i is not None:
+        _put(fr, i, xl, y + gap + _h(i) / 2)
+        y += gap + _h(i)
+    _put(fr, a, xr, y + gap2 + _h(a) / 2, "r")
+
+
+def _row_fit(words, make, box_w, box_h, k_max=1.15):
+    """(k, two_lines) for a page of rows: side by side (English left, Arabic right) when that keeps the type big,
+    else two lines per row, so one long idiom or a few Arabic meanings do not shrink the whole page. The Stacked
+    arrangement always takes two lines."""
+    k_side = _common(words, lambda w, k: _sbs_need(*make(w, k), box_w, box_h), k_max)
+    k_two = _common(words, lambda w, k: _two_need(*make(w, k), box_w, box_h), k_max)
+    if _OPT.get("layout") == "stack" or k_two > k_side * TWO_GAIN:
+        return k_two, True
+    return k_side, False
+
+
 # ---------------------------------------------------------------- designs
 def _draw_cards(page, pal, handle, n, of):
     """Deep base colour, white rounded cards, an accent number badge; English left, Arabic right."""
@@ -1815,8 +1848,11 @@ def _draw_document(page, pal, handle, n, of):
     xl, xr = px + 120, px + pw - 64
     top0 = y + 26
     ys, rh = _rows(top0, band_top - 24, len(words), 0)
-    k = _common(words, lambda w, k: _sbs_need(*_row_texts(w, k, INTER, VAZIR, ink, (110, 116, 124), ink, en=60,
-                                                          ipa=30, ar=56), xr - xl, rh * 0.74), k_max=1.15)
+
+    def make(w, k):
+        return _row_texts(w, k, INTER, VAZIR, ink, (110, 116, 124), ink, en=60, ipa=30, ar=56)
+
+    k, two = _row_fit(words, make, xr - xl, rh * 0.74)
     for j, (yy, w) in enumerate(zip(ys, words)):
         cy = yy + rh / 2
         if j:  # the icon's thick grey lines
@@ -1825,8 +1861,7 @@ def _draw_document(page, pal, handle, n, of):
         nd = 46
         fr.alpha_composite(_colored(_circle_mask(nd), sky), (int(px + 56), int(cy - nd / 2)))
         _put(fr, _t(INTER, str(j + 1), 24, ink, "Bold"), px + 56 + nd / 2, cy, "c")
-        _side_by_side(fr, *_row_texts(w, k, INTER, VAZIR, ink, (110, 116, 124), ink, en=60, ipa=30, ar=56), xl, xr,
-                      cy)
+        (_two_lines if two else _side_by_side)(fr, *make(w, k), xl, xr, cy)
     by = py + ph - ph * band * 0.5
     if handle:
         _put(fr, _t(INTER, handle, 30, ink, "Bold"), px + 140, by)
@@ -1858,14 +1893,15 @@ def _draw_skycards(page, pal, handle, n, of):
     top = (top0 + S - 96) / 2 - (rh * len(words) + gap * (len(words) - 1)) / 2
     tint = _mix(sky, (255, 255, 255), 0.8)
     xl, xr = 60 + 50, S - 60 - 36
-    k = _common(words, lambda w, k: _sbs_need(*_row_texts(w, k, INTER, VAZIR, ink, (96, 104, 114), ink, en=60, ipa=30,
-                                                          ar=56), xr - xl, rh * 0.76), k_max=1.15)
+    def make(w, k):
+        return _row_texts(w, k, INTER, VAZIR, ink, (96, 104, 114), ink, en=60, ipa=30, ar=56)
+
+    k, two = _row_fit(words, make, xr - xl, rh * 0.76)
     for j, w in enumerate(words):
         yy = top + j * (rh + gap)
         fr.alpha_composite(_colored(_round_mask(S - 120, rh, 22), tint), (60, int(yy)))
         fr.alpha_composite(_colored(_round_mask(14, rh - 30, 7), sky), (60 + 18, int(yy + 15)))
-        _side_by_side(fr, *_row_texts(w, k, INTER, VAZIR, ink, (96, 104, 114), ink, en=60, ipa=30, ar=56), xl, xr,
-                      yy + rh / 2)
+        (_two_lines if two else _side_by_side)(fr, *make(w, k), xl, xr, yy + rh / 2)
     _footer(fr, handle, n, of, (110, 116, 124), font=INTER)
     return fr
 
