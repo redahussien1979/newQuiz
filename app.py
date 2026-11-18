@@ -87,7 +87,7 @@ TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "
            "text_size"]
 NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", "logo", "logo_shape", "trim_start",
            "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed", "recap_style"]
-WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "arabic_font"]
+WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "arabic_font", "ar_style"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS, "wordsvideo": WV_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
                 "video"}
@@ -105,7 +105,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
             "para_text": "", "para_store": "{}", "para_alias": "",
             "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0, "recap_style": "flashcards",
-            "design": "paper", "pick": "roulette", "arabic_font": ""}  # for projects saved before these options existed
+            "design": "paper", "pick": "roulette", "arabic_font": "", "ar_style": "brush"}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -1641,6 +1641,9 @@ def words_video_ui():
                                                             if c[1] != wvid.AR_DEFAULT]
         ar_font = gr.Dropdown(ar_menu, value="", label="Arabic font",
                               info="Any font of your library that writes Arabic")
+    with gr.Row():
+        ar_style = gr.Dropdown(wvid.AR_STYLES, value="brush", label="Arabic meaning effect",
+                               info="How the Arabic meaning arrives on the card — word by word, right to left")
         pace = gr.Radio([("Calm", "calm"), ("Normal", "normal"), ("Fast", "fast")], value="normal", label="Pace",
                         info="How long each card stays (with voice clips the card waits for them)")
     with gr.Row():
@@ -1665,7 +1668,7 @@ def words_video_ui():
     with gr.Row(equal_height=True):
         info = gr.Markdown("Upload a sheet to put its words in the editor.")
         load = gr.Button("📥 Put the words in the editor", min_width=200, scale=0)
-    return dict(proj=proj, title=title, sub=sub, words=words, design=design, ar_font=ar_font, pace=pace, pick=pick,
+    return dict(proj=proj, title=title, sub=sub, words=words, design=design, ar_font=ar_font, ar_style=ar_style, pace=pace, pick=pick,
                 recap=recap,
                 audio=audio, gain=gain, sheet=sheet, tab=tab, start=start, count=count, voice=voice, info=info,
                 load=load)
@@ -1674,7 +1677,7 @@ def words_video_ui():
 def wv_fields(ui):
     """The Words video's own fields in WV_KEYS order."""
     return [ui["title"], ui["sub"], ui["words"], ui["design"], ui["pace"], ui["pick"], ui["recap"], ui["audio"],
-            ui["gain"], ui["ar_font"]]
+            ui["gain"], ui["ar_font"], ui["ar_style"]]
 
 
 def wire_words_video(ui):

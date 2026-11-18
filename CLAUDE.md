@@ -119,8 +119,11 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   pattern, cached per design in `_BG_CACHE`; a veil dims it while a card is up); per word (`_timeline` → `seg`):
   roulette hops (`pick`), bubble flies to the centre, the white card pops (spring + shockwave ring + confetti discs
   `_sparks`; card built lazily `_card` / `_build_card` = element list, LRU of 3; `_card_body` = white card, shadow,
-  accent strip on top; `_card_frame`: letters drop in by strips, IPA pill + speaker waves, divider, Arabic wiped in RTL
-  on a marker band, meaning, example panel word by word with the word on a pill = `_ex_chunks`), collapses back to a
+  accent strip on top; `_card_frame`: letters drop in by strips, IPA pill + speaker waves, divider, the Arabic meaning
+  word by word RTL (`_ar_words` = one image per word on one baseline) with `wordsvideo.ar_style` (`AR_STYLES` /
+  `AR_TIME` lead + step): brush (default, `_brush_mask` = textured paint stroke painted RTL, words pop), stamp (words
+  slam in + ink `splat` + stamp thud), ribbon (`_ribbon`, white words), swoosh (`_swoosh` pen stroke under), plain;
+  `seg["impacts"]` = pop + slammed words → card shake + camera punch-in (whole-frame zoom in `render`), meaning, example panel word by word with the word on a pill = `_ex_chunks`), collapses back to a
   ✓ bubble; recap list (`_layout_recap`, 2 columns from 11 words) then `_ending` (the 🔚 Ending in the design's
   colours). Clips `w<k>` / `w<k>e` (vocab `clip_key`) are waited for; `word_import.word_voices` makes them with
   ElevenLabs. Looks `DESIGNS` (paper default / sky / mint / blush / slate = a little dark; the user does not want

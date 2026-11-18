@@ -53,6 +53,14 @@ DESIGNS = {
 DESIGN_CHOICES = [("Warm paper", "paper"), ("Soft sky", "sky"), ("Fresh mint", "mint"), ("Blush", "blush"),
                   ("Slate (a little dark)", "slate")]
 PACES = {"calm": 1.25, "normal": 1.0, "fast": 0.8}
+# how the Arabic meaning arrives (word by word, right to left): (lead before the first word, step between words)
+AR_STYLES = [("Brush stroke — paint sweeps in, the words pop on it", "brush"),
+             ("Stamp — every word slams in with an ink splash", "stamp"),
+             ("Ribbon — a ribbon unrolls, white words on it", "ribbon"),
+             ("Hand-drawn swoosh under the words", "swoosh"),
+             ("Simple — the words fade in", "plain")]
+AR_TIME = {"brush": (0.1, 0.13), "stamp": (0.0, 0.22), "ribbon": (0.14, 0.12), "swoosh": (0.0, 0.1),
+           "plain": (0.0, 0.09)}
 PICKS = [("Roulette — a light hops over the words, then lands on the next one", "roulette"),
          ("Straight to the next word", "direct")]
 
@@ -323,6 +331,80 @@ def _arabic_font(name):
     return fam["main"] if fam else resolve("")
 
 
+def _ar_words(path, line, size, color):
+    """One image per Arabic word of `line`, all on one baseline: ([(image, advance)], space, ascent, pad).
+    Words are shaped one by one (words never join across a space), so they can animate apart."""
+    from ..core import _basic_font, _prep
+    path = _basic_font(line) or path
+    f = get_font(int(size), "Black", path)
+    asc, desc = f.getmetrics()
+    p = int(size * 0.35)
+    old = _state["font"]
+    _state["font"] = path  # _prep's missing-forms fix reads the current font
+    try:
+        out = []
+        for wd in line.split():
+            t2, kw = _prep(wd)
+            adv = f.getlength(t2, **kw)
+            im = Image.new("RGBA", (int(math.ceil(adv)) + 2 * p, asc + desc + 2 * p), (0, 0, 0, 0))
+            ImageDraw.Draw(im).text((p, p + asc), t2, font=f, fill=tuple(color[:3]) + (255,), anchor="ls", **kw)
+            out.append((im, adv))
+    finally:
+        _state["font"] = old
+    return out, f.getlength(" "), asc, p
+
+
+def _brush_mask(w, h, seed):
+    """A realistic paint stroke: wobbly edges, bristle streaks, a round wet start on the right and a dry, broken
+    end on the left (it is painted right to left)."""
+    rng = np.random.default_rng(seed)
+    xs = np.linspace(0, 1, w)
+    y = np.arange(h, dtype=float)[:, None]
+
+    def wave(amp):
+        v = sum(np.sin(2 * np.pi * (f * xs + rng.uniform())) * amp / f for f in (1.2, 2.6, 5.3))
+        return v + rng.normal(0, amp * 0.06, w)
+    top = h * 0.1 + wave(h * 0.06)
+    bot = h * 0.9 + wave(h * 0.06)
+    a = np.clip((y - top[None, :]) / 2.5, 0, 1) * np.clip((bot[None, :] - y) / 2.5, 0, 1)
+    rows = np.convolve(rng.normal(0, 1, h), np.ones(4) / 4, "same")
+    a *= (0.78 + 0.22 * np.tanh(rows * 1.5))[:, None]  # bristle streaks
+    yy = (np.arange(h) / h - 0.5) * 2
+    start = 0.99 - 0.035 * yy ** 2 - rng.uniform(0, 0.01, h)  # round wet start (right)
+    end = np.convolve(0.01 + 0.12 * rng.random(h), np.ones(3) / 3, "same")  # ragged dry end (left)
+    x = xs[None, :]
+    a *= np.clip((x - end[:, None]) / 0.025, 0, 1) * np.clip((start[:, None] - x) / 0.008, 0, 1)
+    gaps = rng.random(h) < 0.3  # some bristles run dry before the end
+    a *= np.where(gaps[:, None], np.clip((x - 0.06 - 0.2 * rng.random(h)[:, None]) / 0.08, 0, 1), 1)
+    return Image.fromarray((np.clip(a, 0, 1) * 255).astype(np.uint8), "L")
+
+
+def _ribbon(w, h, col):
+    """A ribbon banner with notched ends and a soft top light."""
+    ss = 3
+    W_, H_ = w * ss, h * ss
+    n = h * 0.32 * ss
+    m = Image.new("L", (W_, H_), 0)
+    ImageDraw.Draw(m).polygon([(0, 0), (W_, 0), (W_ - n, H_ / 2), (W_, H_), (0, H_), (n, H_ / 2)], fill=255)
+    m = m.resize((w, h), Image.LANCZOS)
+    im = _grad_fill(m, _mix(col, (255, 255, 255), 0.12), _mix(col, (0, 0, 0), 0.12))
+    return im
+
+
+def _swoosh(w, h, col):
+    """A hand-drawn tapered pen stroke under a line (drawn right to left, lifting at the end)."""
+    ss = 3
+    u = np.linspace(0, 1, 160)
+    xs = (1 - u) * (w - 8) + 4
+    ys = h * (0.42 + 0.12 * np.sin(np.pi * u)) - h * 0.32 * np.clip((u - 0.78) / 0.22, 0, 1) ** 2
+    wd = h * 0.2 * np.sin(np.pi * np.clip(u * 1.08, 0, 1)) ** 0.7 + 1.5
+    pts = [(x * ss, (y - d / 2) * ss) for x, y, d in zip(xs, ys, wd)] + \
+          [(x * ss, (y + d / 2) * ss) for x, y, d in zip(xs[::-1], ys[::-1], wd[::-1])]
+    m = Image.new("L", (w * ss, h * ss), 0)
+    ImageDraw.Draw(m).polygon(pts, fill=255)
+    return _solid(m.resize((w, h), Image.LANCZOS), col)
+
+
 def _rotate_scale(im, scale, angle):
     if abs(scale - 1) > 0.004:
         im = im.resize((max(1, int(im.width * scale)), max(1, int(im.height * scale))), Image.BILINEAR)
@@ -363,6 +445,7 @@ EXAMPLE = {
                   "She has a genuine smile."),
         "design": "paper",
         "arabic_font": "",
+        "ar_style": "brush",
         "pace": "normal",
         "pick": "roulette",
         "recap": True,
@@ -385,6 +468,7 @@ class WordsVideo:
         self.light = L["light"]
         self.pace = PACES.get(d.get("pace") or "normal", 1.0)
         self.pick = (d.get("pick") or "roulette") == "roulette"
+        self.ar_style = d.get("ar_style") if d.get("ar_style") in AR_TIME else "brush"
         self.recap_on = d.get("recap", True) is not False
         self.audio_gain = float(d.get("audio_gain") or 1.0)
         self.handle = s.get("handle") or ""
@@ -662,7 +746,16 @@ class WordsVideo:
             else:
                 sg["say"] = (sg["ipa"] + 0.15, sg["ipa"] + 0.95)
             sg["ar"] = max(w_end, sg["ipa"] + 0.35, clip_end + 0.1)
-            nxt = sg["ar"] + (0.5 * P if w["ar"] else 0)
+            lead, step = AR_TIME[self.ar_style]
+            nwd = len(w["ar"].split())
+            sg["ar_words"] = [sg["ar"] + lead + step * j for j in range(nwd)]
+            ar_len = (lead + step * nwd + 0.3 + (0.45 if self.ar_style == "swoosh" else 0)) if nwd else 0
+            sg["ar_mark"] = sg["ar"] + lead + step * nwd + 0.02  # the swoosh is drawn after the words
+            # impacts: the pop, and the slammed words (a camera punch + shake)
+            sg["impacts"] = [(sg["pop"] + 0.1, 1.0)] + [(a, 0.55 if self.ar_style == "stamp" else 0.2)
+                                                        for a in (sg["ar_words"] if self.ar_style in ("stamp", "brush")
+                                                                  else [])]
+            nxt = sg["ar"] + max(ar_len, 0.5 * P if nwd else 0)
             sg["df"] = nxt if w["df"] else None
             if w["df"]:
                 nxt += 0.55 * P
@@ -844,21 +937,47 @@ class WordsVideo:
             div.alpha_composite(_solid(sm, acc, 0.7), (dw // 2 + side * 30 - 5, dh // 2 - 5))
         els.append(dict(kind="divider", img=div, x=(CW - dw) / 2, y=y, t="ipa+"))
         y += dh + int(26 * sc)
-        # ---- Arabic meaning (right to left, on a marker band)
+        # ---- Arabic meaning: word by word, right to left, with the chosen effect (AR_STYLES)
         if w["ar"]:
-            asz, alines = _fit_lines(lambda x, s: _ink_w(self.ar_font, x, s, "ExtraBold"), w["ar"], int(90 * sc), 44,
-                                     inner - 40, 2)
-            for ln in alines:
-                im = text_img_in(self.ar_font, ln, asz, acc_txt, "ExtraBold")
-                im = im.crop((18, 18, im.width - 18, im.height - 18))
-                band_h = int(asz * 0.36)
-                bw_ = im.width + 6
-                band = _solid(_rr_mask(bw_, band_h, band_h / 2), acc, 0.2)
-                els.append(dict(kind="band", img=band, x=(CW - bw_) / 2, y=y + im.height - band_h - int(asz * 0.16),
-                                t="ar"))
-                els.append(dict(kind="ar", img=im, x=(CW - im.width) / 2, y=y, t="ar"))
-                y += im.height - int(asz * 0.12)
-            y += int(16 * sc)
+            st = self.ar_style
+            lead, step = AR_TIME[st]
+            asz, alines = _fit_lines(lambda x, s_: _ink_w(self.ar_font, x, s_, "Black"), w["ar"], int(92 * sc), 44,
+                                     inner - (100 if st == "ribbon" else 20), 2)
+            txt_col = _on(acc) if st == "ribbon" else _mix(acc, (0, 0, 0), 0.22)
+            j = 0
+            y += int(asz * 0.1)
+            for li, ln in enumerate(alines):
+                words, space, asc, p = _ar_words(self.ar_font, ln, asz, txt_col)
+                total = sum(a_ for _, a_ in words) + space * (len(words) - 1)
+                base = y + asz * 1.0  # the baseline of this line
+                if st == "brush":
+                    bw_, bh_ = int(total + 70), int(asz * 1.3)
+                    mark = _solid(_brush_mask(bw_, bh_, 7 + k * 13 + li), acc, 0.34)
+                    els.append(dict(kind="armark", img=mark, x=(CW - bw_) / 2, y=base - asz * 0.9, t="ar",
+                                    d=step * len(words) * li, dur=lead + step * len(words) + 0.08))
+                elif st == "ribbon":
+                    bw_, bh_ = int(total + 130), int(asz * 1.45)
+                    els.append(dict(kind="armark", img=_ribbon(bw_, bh_, acc), x=(CW - bw_) / 2, y=base - asz * 1.0,
+                                    t="ar", d=step * len(words) * li, dur=lead + step * len(words) + 0.05))
+                xr = CW / 2 + total / 2
+                for im, adv in words:
+                    x0 = xr - adv
+                    els.append(dict(kind="arword", img=im, x=x0 - p, y=base - p - asc, t="ar", d=lead + step * j,
+                                    style=st))
+                    if st == "stamp":
+                        rng = np.random.default_rng(k * 31 + j)
+                        dots = [(rng.uniform(0, 2 * math.pi), rng.uniform(0.55, 0.8), int(rng.uniform(7, 15)))
+                                for _ in range(7)]
+                        els.append(dict(kind="splat", cx=x0 + adv / 2, cy=base - asz * 0.35, rx=adv / 2 + 20,
+                                        ry=asz * 0.6, dots=dots, col=acc, t="ar", d=lead + step * j + 0.12))
+                    xr = x0 - space
+                    j += 1
+                if st == "swoosh":
+                    sw, sh_ = int(total + 50), int(asz * 0.55)
+                    els.append(dict(kind="armark", img=_swoosh(sw, sh_, acc), x=(CW - sw) / 2, y=base + asz * 0.12,
+                                    t="ar", d=lead + step * sum(len(x.split()) for x in alines) + 0.02, dur=0.42))
+                y = int(base + asz * (0.62 if st != "ribbon" else 0.72)) + (int(asz * 0.15) if li + 1 < len(alines) else 0)
+            y += int(26 * sc)
         # ---- English meaning
         if w["df"]:
             dsz, dlines = _fit_lines(lambda x, s: _adv(self.en_font, x, s, "Medium"), w["df"], int(40 * sc), 28, inner, 3)
@@ -965,6 +1084,17 @@ class WordsVideo:
         say0, say1 = sg["say"]
         for e in c["els"]:
             kind = e["kind"]
+            if kind == "splat":  # ink drops thrown out by a slammed word
+                u = t - self._when(sg, "ar") - e["d"]
+                if 0 < u < 0.5:
+                    q = _out3(u / 0.5)
+                    for ang, r0, sz in e["dots"]:
+                        rr = r0 + 0.55 * q
+                        dot = _rotate_scale(self.confetti[tuple(e["col"])], sz / 24 * (1 - 0.4 * q), 0)
+                        px = MARGIN + e["cx"] + math.cos(ang) * e["rx"] * rr * 1.3
+                        py = MARGIN + e["cy"] + math.sin(ang) * e["ry"] * rr * 1.3
+                        composite(img, fade(dot, 1 - u / 0.5), int(px - dot.width / 2), int(py - dot.height / 2))
+                continue
             if kind == "wave":
                 if say0 <= t <= say1 + 0.2:
                     u = (t - say0) * 5
@@ -982,7 +1112,7 @@ class WordsVideo:
             if kind == "tok":
                 t0 = sg["ex"] + 0.35 + e["j"] * sg["exstep"]
             p = prog(t, t0, t0 + (0.35 if kind != "tok" else 0.24))
-            if p <= 0:
+            if t <= t0:
                 continue
             im = e["img"]
             if kind == "pop" or (kind == "tok" and e["hl"]):
@@ -1000,18 +1130,40 @@ class WordsVideo:
                 wv = max(2, int(im.width * e3))
                 composite(img, im.crop(((im.width - wv) // 2, 0, (im.width + wv) // 2, im.height)),
                           int(x + (im.width - wv) / 2), int(y))
-            elif kind in ("ar", "band"):
-                pp = prog(t, t0 - (0.06 if kind == "band" else 0), t0 + (0.42 if kind == "band" else 0.6))
-                e3 = _out3(pp)
+            elif kind == "armark":  # brush / ribbon / swoosh, revealed right to left with a soft edge
+                pp = prog(t, t0, t0 + e["dur"])
+                e3 = ease_io(pp) if pp < 1 else 1.0
                 if e3 <= 0:
                     continue
                 wv = max(1, int(im.width * e3))
                 part = im.crop((im.width - wv, 0, im.width, im.height))
-                if kind == "ar" and e3 < 1:  # soft leading edge
+                if e3 < 1:
                     a_ = np.array(part.getchannel("A"), float)
-                    ramp = np.clip(np.arange(wv) / 40.0, 0, 1)[None, :]
+                    ramp = np.clip(np.arange(wv) / 26.0, 0, 1)[None, :]
                     part.putalpha(Image.fromarray((a_ * ramp).astype(np.uint8)))
                 composite(img, part, int(x + im.width - wv), int(y))
+            elif kind == "arword":
+                u = t - t0
+                st = e["style"]
+                dy = 0.0
+                if st == "stamp":  # falls from the camera and slams flat, a little bounce
+                    if u < 0.16:
+                        q = u / 0.16
+                        sc_, al = 2.2 - 1.2 * q * q, min(1, q * 1.8)
+                    else:
+                        v = u - 0.16
+                        sc_, al = 1 + 0.09 * math.exp(-v * 14) * math.cos(v * 40), 1
+                elif st in ("brush", "ribbon"):
+                    q = min(1, u / 0.32)
+                    sc_, al = 0.5 + 0.5 * ease_out_back(q), min(1, q * 3)
+                elif st == "swoosh":
+                    q = _out3(u / 0.3)
+                    sc_, al, dy = 1, q, 28 * (1 - q)
+                else:
+                    sc_, al = 1, _out3(u / 0.35)
+                si = _rotate_scale(im, sc_, 0) if abs(sc_ - 1) > 0.004 else im
+                composite(img, fade(si, al), int(x + im.width / 2 - si.width / 2),
+                          int(y + im.height / 2 - si.height / 2 + dy))
             elif kind == "panel":
                 e3 = _out3(p)
                 hh = max(2, int(im.height * (0.7 + 0.3 * e3)))
@@ -1150,12 +1302,15 @@ class WordsVideo:
         self._header(frame, t, 1 - 0.75 * dim)
         # shake after the pop
         shx = shy = 0.0
+        punch = 0.0
         if cur is not None:
-            sg = self.seg[cur]
-            u = t - sg["pop"] - 0.12
-            if 0 < u < 0.35:
-                amp = 10 * (1 - u / 0.35)
-                shx, shy = amp * math.sin(u * 90), amp * math.cos(u * 77)
+            for ti, st in self.seg[cur]["impacts"]:
+                u = t - ti
+                if 0 < u < 0.35:
+                    amp = 11 * st * (1 - u / 0.35)
+                    shx += amp * math.sin(u * 90)
+                    shy += amp * math.cos(u * 77)
+                    punch += 0.03 * st * math.exp(-u * 11)
         # bubbles
         recap_fade = 1 - prog(t, self.R0 + 0.35, self.R0 + 0.35 + self.rstep * n + 0.6) if self.recap_on else 1
         for k in range(n):
@@ -1168,6 +1323,11 @@ class WordsVideo:
             self._recap(frame, t)
         if self.has_end and t >= self.E0:
             self._ending(frame, t)
+        if punch > 0.002:  # camera punch-in on an impact
+            z = 1 + punch
+            big = frame.resize((int(W * z), int(H * z)), Image.BILINEAR)
+            ox, oy = (big.width - W) // 2, (big.height - H) // 2
+            frame = big.crop((ox, oy, ox + W, oy + H))
         global_fade(frame, t, self.dur)
         return frame.convert("RGB")
 
@@ -1336,9 +1496,20 @@ class WordsVideo:
             mx.add(sg["pop"], mx.hit(0.9), 0.32)
             mx.add(sg["pop"] + 0.02, pop, 0.45)
             mx.add(sg["pop"] + 0.08, mx.sparkle(), 0.2)
-            if self.words[k]["ar"]:
-                s, pn = mx.whoosh(0.4)
-                mx.add(sg["ar"] - 0.05, s, 0.14, pn)
+            st = self.ar_style
+            if sg["ar_words"]:
+                if st == "brush":
+                    mx.add(sg["ar"], mx.scribble(AR_TIME["brush"][1] * len(sg["ar_words"]) + 0.15), 0.16)
+                elif st in ("ribbon", "plain"):
+                    s, pn = mx.whoosh(0.45)
+                    mx.add(sg["ar"] - 0.05, s, 0.18, pn)
+                for a in sg["ar_words"]:
+                    if st == "stamp":
+                        mx.add(a + 0.14, mx.stamp(), 0.38)
+                    elif st != "plain":
+                        mx.add(a + 0.02, pop, 0.12)
+                if st == "swoosh":
+                    mx.add(sg["ar_mark"], mx.scribble(0.4), 0.2)
             if sg["ex"]:
                 mx.add(sg["ex"], mx.click(), 0.14)
             s, pn = mx.whoosh(0.5)
