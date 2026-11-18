@@ -910,15 +910,16 @@ def _draw_swiss(page, pal, handle, n, of):
     ys, rh = _rows(top, S - 100, len(words), 0)
     xl, xr = 170, S - 60
     grey = (120, 120, 120)
-    k = _common(words, lambda w, k: _sbs_need(*_row_texts(w, k, INTER, VAZIR, ink, grey, ink, w_en="Bold",
-                                                          w_ar="Bold"), xr - xl, rh * 0.72), k_max=1.15)
+    def make(w, k):
+        return _row_texts(w, k, INTER, VAZIR, ink, grey, ink, w_en="Bold", w_ar="Bold")
+
+    k, two = _row_fit(words, make, xr - xl, rh * 0.72)
     for j, (yy, w) in enumerate(zip(ys, words)):
         if j:
             d.line([(60, yy), (S - 60, yy)], fill=(190, 188, 182), width=2)
         num = _t(INTER, f"{j + 1:02d}", min(56, rh * 0.42), red, "Black")
         _put(fr, num, 60, yy + rh / 2)
-        _side_by_side(fr, *_row_texts(w, k, INTER, VAZIR, ink, grey, ink, w_en="Bold", w_ar="Bold"), xl, xr,
-                      yy + rh / 2)
+        (_two_lines if two else _side_by_side)(fr, *make(w, k), xl, xr, yy + rh / 2)
     d.line([(60, S - 92), (S - 60, S - 92)], fill=ink, width=2)
     _footer(fr, handle, n, of, ink, y=S - 60, font=INTER)
     return fr
@@ -1020,15 +1021,19 @@ def _draw_chat(page, pal, handle, n, of):
             out.append((e, i, a, lw, lh, rw, rh))
         return out
 
-    # the answer comes in a little lower than the question (a chat, but each word takes ~1.5 bubbles of height)
+    # the answer comes in a little lower than the question (a chat, but each word takes ~1.5 bubbles of height);
+    # a long word + answer that cannot share the width: the answer comes under the question (bigger type)
+    def beside(b):
+        return b[3] + b[5] + 30 <= S - 120
+
     def row_h(b):
-        return max(b[4], b[4] * 0.5 + b[6]) + gap
+        return (max(b[4], b[4] * 0.5 + b[6]) if beside(b) else b[4] + 10 + b[6]) + gap
 
     k = 1.35
     for _ in range(40):
         bs = bubbles(k)
         hh = sum(row_h(b) for b in bs) - gap
-        if hh <= bot - top and all(b[3] + b[5] + 30 <= S - 120 for b in bs):
+        if hh <= bot - top and all(max(b[3], b[5]) <= S - 120 for b in bs):
             break
         k *= 0.96
     y = top + max(0, (bot - top - hh) / 2)
@@ -1037,7 +1042,7 @@ def _draw_chat(page, pal, handle, n, of):
         _card(fr, 60, y, lw, lh, 24, (255, 255, 255), shadow=False)
         _tail(d, 60, y, (255, 255, 255), False)
         _stack(fr, [e] + ([i] if i is not None else []), 60 + pad + 4, y + pad, 6, "l")
-        x, yr = S - 60 - rw, y + lh * 0.5
+        x, yr = S - 60 - rw, y + (lh * 0.5 if beside(b) else lh + 10)
         _card(fr, x, yr, rw, rh, 24, me, shadow=False)
         _tail(d, S - 60, yr, me, True)
         _put(fr, a, S - 60 - pad - 4, yr + rh / 2, "r")
@@ -1363,6 +1368,10 @@ def _marked_page(page, handle, n, of, look):
         return _ar_img(w, 66 * k, ar_ink, f_ar, "Bold", max_w=room, align="r")
 
     ke, ka, room = _two_sizes(words, en_of, ar_of, xr - xl - 20, rh)
+    # long idioms / several meanings would make side by side small: the Stacked arrangement when it is clearly bigger
+    fit = _stack_fit(words, look, top0)
+    if 72 * fit[3] > 66 * min(ke, ka) * TWO_GAIN:
+        return _stacked_rows(fr, d, page, words, look, handle, n, of, top0, fit)
     for j, w in enumerate(words):
         cy = top + j * rh + rh / 2
         (e, i), a = en_of(w, ke), ar_of(w, ka, room)
@@ -1452,18 +1461,17 @@ def _fit_stack(words, make_en, make_ar, avail_w, avail_h, gap_in, gap_out, k_max
     return groups, hs, total, ke * f
 
 
-def _stacked_rows(fr, d, page, words, look, handle, n, of, top0):
-    """The Stacked arrangement of _marked_page: every word centred with its meaning tight under it, the groups
-    evenly spaced and the block centred in the room left under the title; the mark on the word, a short rule
-    half-way between two groups."""
+_STACK_WRAP = 620  # a centred English meaning reads best in two balanced lines, not one long one
+
+
+def _stack_fit(words, look, top0):
+    """The Stacked arrangement measured: (groups, group heights, total height, k) for the room under top0."""
     ink, grey, ar_ink = look["ink"], look["grey"], look.get("ar_ink", look["ink"])
     f_en, f_ar = look.get("f_en", INTER), look.get("f_ar", VAZIR)
-    behind = look.get("behind", True)
-    wrap = 620  # a centred English meaning reads best in two balanced lines, not one long one
     under = look.get("under", 0)
 
     def make_en(w, k):
-        e, i = _entry(w, k, f_en, ink, grey, 72, 32, "Bold", "c", wrap, None, under * k)
+        e, i = _entry(w, k, f_en, ink, grey, 72, 32, "Bold", "c", _STACK_WRAP, None, under * k)
         if under and i is None and not w.get("def"):  # a mark under a lone word needs its room too
             e = _pad_below(e, under * k)
         return [e, i]
@@ -1472,8 +1480,20 @@ def _stacked_rows(fr, d, page, words, look, handle, n, of, top0):
         return _ar_img(w, 70 * k, ar_ink, f_ar, "Bold", max_w=(S - 220) * 0.94)
 
     room0, room1 = top0 + 6, S - 104
+    return _fit_stack(words, make_en, make_ar, S - 220, room1 - room0, 10, 54, k_max=1.3)
+
+
+def _stacked_rows(fr, d, page, words, look, handle, n, of, top0, fit=None):
+    """The Stacked arrangement of _marked_page: every word centred with its meaning tight under it, the groups
+    evenly spaced and the block centred in the room left under the title; the mark on the word, a short rule
+    half-way between two groups. fit = _stack_fit(...) when already measured."""
+    ink, grey = look["ink"], look["grey"]
+    f_en = look.get("f_en", INTER)
+    behind = look.get("behind", True)
+    wrap = _STACK_WRAP
     gap_in, gap_out = 10, 54
-    groups, hs, total, k = _fit_stack(words, make_en, make_ar, S - 220, room1 - room0, gap_in, gap_out, k_max=1.3)
+    room0, room1 = top0 + 6, S - 104
+    groups, hs, total, k = fit or _stack_fit(words, look, top0)
     y = room0 + (room1 - room0 - total) / 2
     for j, (w, g, gh) in enumerate(zip(words, groups, hs)):
         if j:  # a short rule half-way between the groups
@@ -1775,13 +1795,13 @@ def _draw_brush(page, pal, handle, n, of):
         return _row_texts(w, k, POPPINS_B, ALEXANDRIA, white, (255, 255, 255), white, en=62, ipa=30, ar=58,
                           w_en="Bold", w_ar="Bold", f_def=MONTSERRAT)
 
-    k = _common(words, lambda w, k: _sbs_need(*texts(w, k), xr - xl, rh * 0.72), k_max=1.15)
+    k, two = _row_fit(words, texts, xr - xl, rh * 0.72)
     for j, w in enumerate(words):
         yy = top + j * (rh + gap)
         mono, sc = _mono(pal), _set_colors(pal)  # a set: its deep shades, so the white type stays readable
         col = mono[1] if mono else sc["inks"][j % 3] if sc else _WATER[j % len(_WATER)]
         fr.alpha_composite(_brush_stroke(x1 - x0, rh, col, seed=100 + j), (int(x0), int(yy)))
-        _side_by_side(fr, *texts(w, k), xl, xr, yy + rh / 2)
+        (_two_lines if two else _side_by_side)(fr, *texts(w, k), xl, xr, yy + rh / 2)
     _footer(fr, handle, n, of, _mix(dk, (255, 255, 255), 0.35), font=ALEXANDRIA)
     return fr
 
