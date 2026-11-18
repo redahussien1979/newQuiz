@@ -114,7 +114,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
 - `engine/templates/words_video.py` — template `wordsvideo`, English Words sub-tab 🎬 Words video (after 🖼️ Image
   posts; `app.words_video_ui` / `wire_words_video`, own project bar, shares 🎨 Style & sound + 🔚 Ending; its preview
   = `preview_panel(..., words_video=True)` → `pv["wv"]` in `wv_col`, `right_side` shows one of post / wv / video).
-  `wordsvideo.words` = lines `English | Arabic | IPA | English meaning | example` (any number). White pill bubbles
+  `wordsvideo.words` = lines `English | Arabic | IPA | English meaning | example` (any number). Idioms / expressions:
+  `wordsvideo.kind` (`KINDS`: auto = WORD / EXPRESSION by word count, or word / idiom / expression / phrasal / proverb)
+  sets the card label, header kicker and the automatic title; `_ex_chunks` retries the highlight with pronouns and
+  modals (`_ANY`) as (something) gaps; recap rows put a long item over its Arabic. White pill bubbles
   (soft shadow, accent number chip) float over a clean light background (`_background`: gradient + faint drifting dot
   pattern, cached per design in `_BG_CACHE`; a veil dims it while a card is up); per word (`_timeline` → `seg`):
   roulette hops (`pick`), bubble flies to the centre, the white card pops (spring + shockwave ring + confetti discs

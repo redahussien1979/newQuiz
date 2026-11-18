@@ -87,7 +87,7 @@ TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "
            "text_size"]
 NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", "logo", "logo_shape", "trim_start",
            "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed", "recap_style"]
-WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "arabic_font", "ar_style"]
+WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "arabic_font", "ar_style", "kind"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS, "wordsvideo": WV_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
                 "video"}
@@ -105,7 +105,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
             "para_text": "", "para_store": "{}", "para_alias": "",
             "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0, "recap_style": "flashcards",
-            "design": "paper", "pick": "roulette", "arabic_font": "", "ar_style": "brush"}  # for projects saved before these options existed
+            "design": "paper", "pick": "roulette", "arabic_font": "", "ar_style": "brush", "kind": "auto"}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -1617,9 +1617,10 @@ WV_HELP = ("**🎬 Words video** — any number of words float on screen as glas
            "its IPA, the Arabic meaning written in from the right, the English meaning and an example sentence "
            "(the word on a highlight). The card folds back into its bubble (✓), then a recap list and the 🔚 Ending. "
            "The preview on the right is this video's own.")
-WV_WORDS_HELP = ("One word per line: `English | Arabic | IPA | English meaning | example sentence` — all but the "
-                 "English optional. `*stars*` in the sentence choose what is highlighted (else the word is found by "
-                 "itself, in any form).")
+WV_WORDS_HELP = ("One word, idiom or expression per line: `English | Arabic | IPA | English meaning | example "
+                 "sentence` — all but the English optional. The highlight in the sentence is found by itself, in any "
+                 "form and person (bite off more than you can chew ≈ I bit off more than I could chew); `*stars*` "
+                 "choose it yourself.")
 WV_AUDIO_HELP = ("Optional voice: clips named **w1** (word 1), **w1e** (its sentence), **w2**, **w2e** … — the card "
                  "waits for them. 📥 below can make them with your ElevenLabs voice.")
 
@@ -1633,7 +1634,9 @@ def words_video_ui():
         title = gr.Textbox(label="Title", placeholder="{count} Words to Sound Smarter",
                            info="{count} = the number of words")
         sub = gr.Textbox(label="Subtitle (optional)", rtl=True, placeholder="كلمات إنجليزية ستبهر بها الجميع")
-    words = gr.Textbox(lines=10, max_lines=60, label="Words", info=WV_WORDS_HELP)
+    words = gr.Textbox(lines=10, max_lines=60, label="Words, idioms or expressions", info=WV_WORDS_HELP)
+    kind = gr.Dropdown(wvid.KINDS, value="auto", label="These are…",
+                       info="Sets the labels: IDIOM 2 OF 6 · ENGLISH · 6 IDIOMS (and the title when it is empty)")
     with gr.Row():
         design = gr.Dropdown(wvid.DESIGN_CHOICES, value="paper", label="Design",
                              info="Clean light background with white cards; Slate = a little dark")
@@ -1668,7 +1671,7 @@ def words_video_ui():
     with gr.Row(equal_height=True):
         info = gr.Markdown("Upload a sheet to put its words in the editor.")
         load = gr.Button("📥 Put the words in the editor", min_width=200, scale=0)
-    return dict(proj=proj, title=title, sub=sub, words=words, design=design, ar_font=ar_font, ar_style=ar_style, pace=pace, pick=pick,
+    return dict(proj=proj, title=title, sub=sub, words=words, design=design, ar_font=ar_font, ar_style=ar_style, kind=kind, pace=pace, pick=pick,
                 recap=recap,
                 audio=audio, gain=gain, sheet=sheet, tab=tab, start=start, count=count, voice=voice, info=info,
                 load=load)
@@ -1677,7 +1680,7 @@ def words_video_ui():
 def wv_fields(ui):
     """The Words video's own fields in WV_KEYS order."""
     return [ui["title"], ui["sub"], ui["words"], ui["design"], ui["pace"], ui["pick"], ui["recap"], ui["audio"],
-            ui["gain"], ui["ar_font"], ui["ar_style"]]
+            ui["gain"], ui["ar_font"], ui["ar_style"], ui["kind"]]
 
 
 def wire_words_video(ui):

@@ -59,6 +59,17 @@ AR_STYLES = [("Brush stroke — paint sweeps in, the words pop on it", "brush"),
              ("Ribbon — a ribbon unrolls, white words on it", "ribbon"),
              ("Hand-drawn swoosh under the words", "swoosh"),
              ("Simple — the words fade in", "plain")]
+# what the items are: the card label ("IDIOM 2 OF 6"), the header ("ENGLISH · 6 IDIOMS"), the automatic title
+KINDS = [("Automatic — WORD for one word, EXPRESSION for more", "auto"), ("Words", "word"), ("Idioms", "idiom"),
+         ("Expressions", "expression"), ("Phrasal verbs", "phrasal"), ("Proverbs", "proverb")]
+KIND_LABEL = {"word": ("WORD", "WORDS"), "idiom": ("IDIOM", "IDIOMS"), "expression": ("EXPRESSION", "EXPRESSIONS"),
+              "phrasal": ("PHRASAL VERB", "PHRASAL VERBS"), "proverb": ("PROVERB", "PROVERBS")}
+KIND_TITLE = {"word": "English Words", "idiom": "English Idioms", "expression": "English Expressions",
+              "phrasal": "Phrasal Verbs", "proverb": "English Proverbs"}
+# in an idiom these stand for anyone / any form ("bite off more than YOU CAN chew" ~ "I bit off more than I could chew")
+_ANY = {"i", "me", "my", "myself", "you", "your", "yours", "yourself", "he", "him", "his", "himself", "she", "her",
+        "hers", "herself", "it", "its", "itself", "we", "us", "our", "ourselves", "they", "them", "their",
+        "themselves", "one", "oneself", "can", "could", "will", "would", "may", "might", "shall", "should", "must"}
 AR_TIME = {"brush": (0.1, 0.13), "stamp": (0.0, 0.22), "ribbon": (0.14, 0.12), "swoosh": (0.0, 0.1),
            "plain": (0.0, 0.09)}
 PICKS = [("Roulette — a light hops over the words, then lands on the next one", "roulette"),
@@ -247,6 +258,10 @@ def _ex_chunks(text, phrase):
     from ..list_designs import _ex_tokens
     try:
         toks = _ex_tokens(text, phrase)
+        if "*" not in str(text) and not any(hl for _, hl in toks):  # an idiom said by another person / tense
+            loose = " ".join("(something)" if w.lower().strip(".,!?") in _ANY else w for w in str(phrase).split())
+            if loose != phrase and loose.replace("(something)", "").strip():
+                toks = _ex_tokens(text, loose)
     except Exception:
         toks = [(x, False) for x in " ".join(str(text).replace("*", "").split()).split(" ")]
     words = []  # (text, hl, glued to the previous: no space between)
@@ -446,6 +461,7 @@ EXAMPLE = {
         "design": "paper",
         "arabic_font": "",
         "ar_style": "brush",
+        "kind": "auto",
         "pace": "normal",
         "pick": "roulette",
         "recap": True,
@@ -477,7 +493,18 @@ class WordsVideo:
         self.en_font = picked or EN_FONT
         self.ar_font = _arabic_font(d.get("arabic_font"))
         cnt = str(n)
-        self.title = str(d.get("title") or "{count} English Words").replace("{count}", cnt)
+        kind = d.get("kind") if d.get("kind") in KIND_LABEL or d.get("kind") == "auto" else "auto"
+        multi = [len(w["en"].split()) > 1 for w in self.words]
+        if kind == "auto":
+            self.labels = [KIND_LABEL["expression" if m else "word"][0] for m in multi]
+            self.kicker = ("EXPRESSIONS" if all(multi) else "WORDS & EXPRESSIONS" if any(multi) else "WORDS") \
+                if n != 1 else self.labels[0]
+            auto_title = "English Expressions" if all(multi) else "English Words"
+        else:
+            self.labels = [KIND_LABEL[kind][0]] * n
+            self.kicker = KIND_LABEL[kind][1 if n != 1 else 0]
+            auto_title = KIND_TITLE[kind]
+        self.title = str(d.get("title") or "{count} " + auto_title).replace("{count}", cnt)
         self.subtitle = str(d.get("subtitle") or "").replace("{count}", cnt)
         e = project.get("ending", {})
         self.e_intro = str(e.get("intro") or "").replace("{count}", cnt)
@@ -530,7 +557,7 @@ class WordsVideo:
             self.h_sub = (im, y + 18)
             y += 18 + im.height - 30
         # kicker pill: ENGLISH · 6 WORDS
-        txt = f"ENGLISH  ·  {self.n} WORD{'S' if self.n != 1 else ''}"
+        txt = f"ENGLISH  ·  {self.n} {self.kicker}"
         k_im, _, adv, p = _ltext(EN_FONT, txt, 28, "Bold", _on(a0))
         kw, kh = int(adv) + 56, 56
         m = _rr_mask(kw, kh, kh / 2)
@@ -861,7 +888,7 @@ class WordsVideo:
         ni, nb, nadv, npd = _ltext(EN_FONT, f"{k + 1:02d}", 30, "Bold", _on(acc))
         chip.alpha_composite(ni, (int((chip_d - nadv) / 2) - npd, int(chip_d / 2 + 11) - nb))
         els.append(dict(kind="pop", img=chip, x=PAD, y=y, t=0.22))
-        lab, lb, ladv, lp = _ltext(EN_FONT, f"WORD {k + 1} OF {self.n}", 27, "Bold", soft)
+        lab, lb, ladv, lp = _ltext(EN_FONT, f"{self.labels[k]} {k + 1} OF {self.n}", 27, "Bold", soft)
         els.append(dict(kind="slide", img=lab, x=PAD + chip_d + 20 - lp, y=y + chip_d / 2 - lb + 10, t=0.3))
         for j, c in enumerate((acc, acc2, acc3)):
             dm = Image.new("L", (54, 54), 0)
@@ -1225,19 +1252,29 @@ class WordsVideo:
             row.alpha_composite(_check(d, _on(acc), max(3, d * 0.11)), (int(h * 0.18), (h - d) // 2))
             x0 = int(h * 0.18) + d + 18
             room = cw - x0 - int(h * 0.4)
-            if cols == 1:
-                en_w = room * 0.5 if w["ar"] else room
-                es = int(h * 0.42)
-                while es > 18 and _adv(self.en_font, w["en"], es, "Bold") > en_w:
+            ar_col = _mix(acc, (0, 0, 0), 0.12)
+            side = False
+            if cols == 1:  # side by side when both fit at a good size, else English on top, Arabic under it
+                es, asz = int(h * 0.4), int(h * 0.38)
+                ew = _adv(self.en_font, w["en"], es, "Bold")
+                aw = _ink_w(self.ar_font, w["ar"], asz, "Black") if w["ar"] else 0
+                side = not w["ar"] or ew + aw + 40 <= room
+            if cols == 1 and side:
+                while es > 18 and _adv(self.en_font, w["en"], es, "Bold") > (room - aw - 40 if w["ar"] else room):
                     es -= 2
                 et, eb, eadv, ep = _ltext(self.en_font, w["en"], es, "Bold", L["ink"])
                 row.alpha_composite(et, (x0 - ep, int(h / 2 + es * 0.36) - eb))
                 if w["ar"]:
-                    ar_room = room - eadv - 30
-                    asz = int(h * 0.4)
-                    ai = text_img_in(self.ar_font, w["ar"], asz, _mix(acc, (0, 0, 0), 0.12),
-                                     "Black", max_w=max(60, ar_room))
+                    ai = text_img_in(self.ar_font, w["ar"], asz, ar_col, "Black", max_w=max(60, room - eadv - 30))
                     composite(row, ai, int(cw - int(h * 0.4) - ai.width + 30), int(h / 2 - ai.height / 2))
+            elif cols == 1:
+                es = int(h * 0.31)
+                while es > 16 and _adv(self.en_font, w["en"], es, "Bold") > room:
+                    es -= 2
+                et, eb, eadv, ep = _ltext(self.en_font, w["en"], es, "Bold", L["ink"])
+                row.alpha_composite(et, (x0 - ep, int(h * 0.36 + es * 0.36) - eb))
+                ai = text_img_in(self.ar_font, w["ar"], int(h * 0.3), ar_col, "Black", max_w=room)
+                composite(row, ai, int(cw - int(h * 0.4) - ai.width + 30), int(h * 0.72 - ai.height / 2))
             else:
                 es = int(h * 0.3)
                 while es > 16 and _adv(self.en_font, w["en"], es, "Bold") > room:
@@ -1246,11 +1283,9 @@ class WordsVideo:
                 cy = h * (0.42 if w["ar"] else 0.5)
                 row.alpha_composite(et, (x0 - ep, int(cy + es * 0.36) - eb))
                 if w["ar"]:
-                    ai = text_img_in(self.ar_font, w["ar"], int(h * 0.24), _mix(acc, (0, 0, 0), 0.12),
+                    ai = text_img_in(self.ar_font, w["ar"], int(h * 0.24), ar_col,
                                      "Black", max_w=room)
                     composite(row, ai, int(x0 - 30), int(h * 0.72 - ai.height / 2))
-                    # Arabic reads from the right: align it to the right end of the text room
-                    pass
             r, c = (k, 0) if cols == 1 else (k // 2, k % 2)
             cx = 540 if cols == 1 else 540 + (c - 0.5) * (cw + 20)
             cy = top + rh * r + rh / 2 + ((bottom - top) - rh * rows) / 2
