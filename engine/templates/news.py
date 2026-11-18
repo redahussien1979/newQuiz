@@ -186,7 +186,7 @@ EXAMPLE = {
     "template": "news",
     "settings": {"theme": "Night Sky", "language": "en", "fps": 30, "music": "None", "music_gain": 0.4,
                  "music_file": "", "voice_file": "", "voice_offset": 0.0, "voice_gain": 1.0,
-                 "handle": "@Ma3loomaFast", "font_file": "", "intro_sound": "None", "tick_sound": "Classic",
+                 "handle": "@logolep AR EN", "font_file": "", "intro_sound": "None", "tick_sound": "Classic",
                  "tick_gain": 1.0},
     "ending": {"intro": "Words from the news", "question": "", "cta": "Follow for English from the news every day"},
     "news": {

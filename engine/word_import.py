@@ -192,9 +192,20 @@ def word_voices(words, data_dir, out_dir, progress=None):
     for done, (text, name, what) in enumerate(jobs):
         if progress:
             progress(done / len(jobs), f"🎙️ Voice of {what} ({done + 1} of {len(jobs)})")
-        mp3, _ = el.speak(text, cache, s)
+        mp3, al = el.speak(text, cache, s)
         dst = os.path.join(out_dir, name)
         shutil.copyfile(mp3, dst)
+        if name.endswith("e.mp3") and al:  # the sentence: keep when each word is spoken (the video lights it then)
+            try:
+                from .templates.words_video import save_timings
+                words, spans, pos = text.split(), [], 0
+                for wd in words:
+                    a = text.index(wd, pos)
+                    spans.append((a, a + len(wd)))
+                    pos = a + len(wd)
+                save_timings(dst, words, el.word_times(spans, text, al))
+            except Exception:
+                pass  # without them the words are spread over the clip
         paths.append(dst)
     return paths
 

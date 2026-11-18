@@ -70,6 +70,12 @@ KIND_TITLE = {"word": "English Words", "idiom": "English Idioms", "expression": 
 _ANY = {"i", "me", "my", "myself", "you", "your", "yours", "yourself", "he", "him", "his", "himself", "she", "her",
         "hers", "herself", "it", "its", "itself", "we", "us", "our", "ourselves", "they", "them", "their",
         "themselves", "one", "oneself", "can", "could", "will", "would", "may", "might", "shall", "should", "must"}
+# how the example sentence follows the voice (every word timed to when it is spoken)
+EX_REVEALS = [("Red + bold — the spoken word turns red and bold", "redbold"),
+              ("Karaoke — the words darken as they are spoken", "karaoke"),
+              ("Marker — a highlighter glides under the spoken word", "marker"),
+              ("Appear — each word pops in when it is spoken", "appear")]
+RED = (214, 36, 36)
 AR_TIME = {"brush": (0.1, 0.13), "stamp": (0.0, 0.22), "ribbon": (0.14, 0.12), "swoosh": (0.0, 0.1),
            "plain": (0.0, 0.09)}
 PICKS = [("Roulette — a light hops over the words, then lands on the next one", "roulette"),
@@ -253,6 +259,56 @@ def _fit_lines(measure_at, txt, size, min_size, max_w, n_max):
         s = max(min_size, int(s * 0.93))
 
 
+def timings_path(audio_path):
+    """Where the word timings of a voice clip are kept: DATA_DIR/tts/timings/<sha1 of the audio>.json (the app copies
+    uploaded files, so a file next to the clip would be lost; the content stays the same)."""
+    import hashlib
+    from ..userdata import data_dir
+    with open(audio_path, "rb") as f:
+        h = hashlib.sha1(f.read()).hexdigest()
+    return os.path.join(data_dir(ROOT), "tts", "timings", h + ".json")
+
+
+def save_timings(audio_path, words, times):
+    import json
+    path = timings_path(audio_path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"words": list(words), "times": [list(x) for x in times]}, f)
+
+
+def clip_word_times(path, length, words):
+    """[(start, end)] seconds of every word of a voice clip: the ElevenLabs timings when the clip was made by the app,
+    else spread over the part of the clip with sound, by word length."""
+    import json
+    try:
+        with open(timings_path(path), encoding="utf-8") as f:
+            d = json.load(f)
+        if len(d.get("times", [])) == len(words):
+            return [tuple(x) for x in d["times"]]
+    except (OSError, ValueError):
+        pass
+    a0, a1 = 0.05, max(0.2, length - 0.05)
+    try:
+        from ..audio import SR, load_audio
+        x = np.abs(load_audio(path)).mean(axis=1)
+        k = int(0.02 * SR)
+        env = np.convolve(x, np.ones(k) / k, "same")
+        on = np.nonzero(env > env.max() * 0.08)[0]
+        if len(on):
+            a0, a1 = on[0] / SR, on[-1] / SR
+    except Exception:
+        pass
+    wts = [len(w.strip(".,;:!?\"'")) + 2 for w in words]
+    tot = float(sum(wts)) or 1.0
+    out, c = [], a0
+    for wt in wts:
+        d = (a1 - a0) * wt / tot
+        out.append((c, c + d))
+        c += d
+    return out
+
+
 def _ex_chunks(text, phrase):
     """The sample sentence as [(text, highlighted)] chunks: a highlighted run stays one chunk (never broken)."""
     from ..list_designs import _ex_tokens
@@ -264,28 +320,67 @@ def _ex_chunks(text, phrase):
                 toks = _ex_tokens(text, loose)
     except Exception:
         toks = [(x, False) for x in " ".join(str(text).replace("*", "").split()).split(" ")]
-    words = []  # (text, hl, glued to the previous: no space between)
+    words = []  # (text, hl, glued to the previous: no space between, spoken word number)
     space = True
+    wi = -1
     for tx, hl in toks:
         if tx == " ":
             space = True
             continue
-        words.append([tx, bool(hl), not space])
+        if space:
+            wi += 1
+        words.append([tx, bool(hl), not space, wi])
         space = False
-    chunks = []
-    for tx, hl, glued in words:
+    chunks = []  # [text, hl, glued, first word, last word]
+    for tx, hl, glued, wi in words:
         if chunks and (glued or (hl and chunks[-1][1])):
             if glued and chunks[-1][1] == hl:
                 chunks[-1][0] += tx
                 continue
             if hl and chunks[-1][1] and not glued:
                 chunks[-1][0] += " " + tx
+                chunks[-1][4] = wi
                 continue
             if glued:  # punctuation right after a pill: its own chunk with no space
-                chunks.append([tx, hl, True])
+                chunks.append([tx, hl, True, wi, wi])
                 continue
-        chunks.append([tx, hl, False])
+        chunks.append([tx, hl, False, wi, wi])
     return chunks
+
+
+def _even_lines(chunks, widths, space, avail):
+    """[(chunks, width)] lines of similar width (least squared free space, the last line free) — justified lines
+    then get small, even gaps. Glued chunks (punctuation) never start a line."""
+    n = len(chunks)
+    INF = float("inf")
+    best = [INF] * (n + 1)
+    cut = [0] * (n + 1)
+    best[0] = 0.0
+
+    def width(i, j):
+        w = 0.0
+        for k in range(i, j):
+            w += widths[k] + (space if k > i and not chunks[k][2] else 0)
+        return w
+    for j in range(1, n + 1):
+        for i in range(j - 1, -1, -1):
+            if i > 0 and chunks[i][2]:
+                continue
+            w = width(i, j)
+            if w > avail and j - i > 1:
+                break
+            free = max(0.0, avail - w)
+            gaps = sum(1 for k in range(i + 1, j) if not chunks[k][2])
+            gap = free / gaps if gaps else avail * 0.6  # the extra space each gap of a justified line gets
+            cost = best[i] + avail * avail * 4 + (0 if j == n else gap * gap * max(1, gaps))  # fewest lines first
+            if cost < best[j]:
+                best[j], cut[j] = cost, i
+    out, j = [], n
+    while j > 0:
+        i = cut[j]
+        out.append((chunks[i:j], width(i, j)))
+        j = i
+    return out[::-1]
 
 
 def _sprite_dot(d, col, soft=2.2):
@@ -439,7 +534,7 @@ EXAMPLE = {
     "template": "wordsvideo",
     "settings": {"theme": "Royal Blue", "language": "ar", "fps": 30, "music": "Lo-fi Chill", "music_gain": 0.9,
                  "music_file": "", "voice_file": "", "voice_offset": 0.5, "voice_gain": 1.0,
-                 "handle": "@Ma3loomaFast", "font_file": "", "intro_sound": "Swoosh + impact",
+                 "handle": "@logolep AR EN", "font_file": "", "intro_sound": "Swoosh + impact",
                  "tick_sound": "Classic", "tick_gain": 1.0},
     "ending": {"intro": "الحلقة القادمة:", "question": "{count} more words\n[gold]for daily conversations",
                "cta": "كم كلمة كنت تعرف؟ اكتب الرقم في التعليقات"},
@@ -462,6 +557,7 @@ EXAMPLE = {
         "arabic_font": "",
         "ar_style": "brush",
         "kind": "auto",
+        "ex_reveal": "redbold",
         "pace": "normal",
         "pick": "roulette",
         "recap": True,
@@ -485,6 +581,7 @@ class WordsVideo:
         self.pace = PACES.get(d.get("pace") or "normal", 1.0)
         self.pick = (d.get("pick") or "roulette") == "roulette"
         self.ar_style = d.get("ar_style") if d.get("ar_style") in AR_TIME else "brush"
+        self.ex_reveal = d.get("ex_reveal") if d.get("ex_reveal") in dict((v, k) for k, v in EX_REVEALS) else "redbold"
         self.recap_on = d.get("recap", True) is not False
         self.audio_gain = float(d.get("audio_gain") or 1.0)
         self.handle = s.get("handle") or ""
@@ -553,7 +650,7 @@ class WordsVideo:
             y += int(size * 1.08)
         self.h_sub = None
         if self.subtitle:
-            im = text_img_in(self.ar_font, self.subtitle, 50, L["head_soft"], "Bold", max_w=900)
+            im = text_img_in(self.ar_font, self.subtitle, 62, L["head_soft"], "Bold", max_w=920)
             self.h_sub = (im, y + 18)
             y += 18 + im.height - 30
         # kicker pill: ENGLISH · 6 WORDS
@@ -788,19 +885,22 @@ class WordsVideo:
                 nxt += 0.55 * P
             if w["ex"]:
                 sg["ex"] = nxt + 0.25 * P
-                nwords = len(w["ex"].split())
-                t0 = sg["ex"] + 0.35
-                if (k, "e") in self.clip:
+                spoken = w["ex"].replace("*", "").split()
+                nwords = len(spoken)
+                t0 = sg["ex"] + 0.45
+                if (k, "e") in self.clip:  # every word lights up exactly when it is heard
                     path, ln = self.clip[(k, "e")]
                     self.voices.append((t0, path))
-                    sg["exstep"] = max(0.05, ln * 0.85 / max(1, nwords))
-                    end = max(t0 + ln + 0.9, t0 + nwords * sg["exstep"] + 0.9)
-                else:
-                    sg["exstep"] = 0.12 * P
-                    end = t0 + nwords * sg["exstep"] + (1.5 + 0.2 * nwords) * P
+                    rel = clip_word_times(path, ln, spoken)
+                    end = t0 + max(ln, rel[-1][1] if rel else 0) + 1.0
+                else:  # no voice: a calm reading pace
+                    step = (0.12 if self.ex_reveal == "appear" else 0.32) * P
+                    rel = [(i * step, i * step + step * 0.92) for i in range(nwords)]
+                    end = t0 + nwords * step + (1.4 + 0.1 * nwords) * P
+                sg["extimes"] = [(t0 + a, t0 + b) for a, b in rel]
             else:
                 sg["ex"] = None
-                sg["exstep"] = 0
+                sg["extimes"] = []
                 end = nxt + (1.8 + (0.6 if w["df"] else 0)) * P
             sg["end"] = end
             sg["out"] = end + 0.55
@@ -1017,25 +1117,20 @@ class WordsVideo:
         if w["ex"]:
             y += int(26 * sc)
             pw = inner
-            esz = int(46 * sc)
             chunks = _ex_chunks(w["ex"], w["en"])
-            while True:
+            best = None  # the biggest size whose justified lines keep their gaps small (<= ~0.9 em), at most 4 lines
+            for esz in range(int(46 * sc), max(28, int(34 * sc)) - 1, -2):
                 f = get_font(esz, "SemiBold", self.en_font)
+                fb = get_font(esz, "Black", self.en_font)
                 sp_w = f.getlength(" ")
-                lines, cur, cw_ = [], [], 0
-                for c in chunks:
-                    cwid = f.getlength(c[0]) + (24 if c[1] else 0)
-                    need = cwid if not cur else cw_ + (0 if c[2] else sp_w) + cwid
-                    if cur and need > pw - 90 and not c[2]:
-                        lines.append((cur, cw_))
-                        cur, cw_ = [c], cwid
-                    else:
-                        cur.append(c)
-                        cw_ = need
-                lines.append((cur, cw_))
-                if len(lines) <= 4 or esz <= 30:
-                    break
-                esz = int(esz * 0.92)
+                lines = _even_lines(chunks, [max(f.getlength(c[0]), fb.getlength(c[0]) + (24 if c[1] else 0))
+                                             for c in chunks], sp_w, pw - 100)
+                worst = max([(pw - 100 - wd) / max(1, sum(1 for i, c in enumerate(cur) if i and not c[2])) / esz
+                             for cur, wd in lines[:-1]] or [0])
+                score = (len(lines) > 4, worst > 0.9, worst if worst > 0.9 else -esz)
+                if best is None or score < best[0]:
+                    best = (score, esz, lines, sp_w)
+            _, esz, lines, sp_w = best
             pitch = int(esz * 1.62)
             top_pad = int(esz * 1.25)
             ph = top_pad + pitch * len(lines) + int(esz * 0.55)
@@ -1050,30 +1145,42 @@ class WordsVideo:
             tg = _solid(_rr_mask(tw_, th_, 20), acc)
             tg.alpha_composite(tag, (18 - tp, int(th_ / 2 + 9) - tb))
             els.append(dict(kind="pop", img=tg, x=PAD + 44, y=y - th_ / 2, t="ex", d=0.12))
-            # tokens
-            j = 0
+            # tokens: justified lines (the last one starts at the left), each chunk in a slot wide enough for its
+            # bold form, so a word turning bold never moves the others
+            red = RED if self.ex_reveal == "redbold" else _mix(acc, (0, 0, 0), 0.15)
+            left = PAD + 60
+            avail = pw - 100
+            if self.ex_reveal == "marker":
+                els.append(dict(kind="exmark", rects=[], col=acc))
+                mark = els[-1]
             ly = y + top_pad + int(esz * 0.75)
-            for cur, width in lines:
-                x = PAD + (pw - width) / 2 + 8
-                for i, (tx, hl, glued) in enumerate(cur):
+            for li, (cur, width) in enumerate(lines):
+                gaps = sum(1 for i, c in enumerate(cur) if i and not c[2])
+                last = li == len(lines) - 1
+                extra = (avail - width) / gaps if gaps and not last else 0
+                x = left
+                for i, (tx, hl, glued, w0, w1) in enumerate(cur):
                     if i and not glued:
-                        x += sp_w
-                    if hl:
-                        im, base, adv, p = _ltext(self.en_font, tx, esz, "SemiBold", _on(acc))
-                        pwid = int(adv) + 24
-                        pht = int(esz * 1.32)
-                        pl = Image.new("RGBA", (pwid + 2 * p, im.height), (0, 0, 0, 0))
-                        ptop = int(base - esz * 0.98)
+                        x += sp_w + extra
+                    n_im, base, adv, p = _ltext(self.en_font, tx, esz, "SemiBold", ink)
+                    b_im, bb, badv, bp = _ltext(self.en_font, tx, esz, "Black", red)
+                    sw = max(adv, badv)
+                    e = dict(kind="tok", x=x, y=ly, sw=sw, w0=w0, w1=w1, hl=hl, n=(n_im, base, adv, p),
+                             b=(b_im, bb, badv, bp))
+                    if hl:  # the word itself: on an accent pill once it is spoken
+                        h_im, hb, hadv, hp = _ltext(self.en_font, tx, esz, "Black", _on(acc))
+                        pwid, pht = int(hadv) + 24, int(esz * 1.32)
+                        pl = Image.new("RGBA", (pwid + 2 * hp, h_im.height), (0, 0, 0, 0))
                         pl.alpha_composite(_grad_fill(_rr_mask(pwid, pht, 14), _mix(acc, (255, 255, 255), 0.12), acc),
-                                           (p, ptop))
-                        pl.alpha_composite(im, (12, 0))
-                        els.append(dict(kind="tok", img=pl, x=x - p, y=ly - base, t="ex", j=j, hl=True))
-                        x += pwid
-                    else:
-                        im, base, adv, p = _ltext(self.en_font, tx, esz, "SemiBold", ink)
-                        els.append(dict(kind="tok", img=im, x=x - p, y=ly - base, t="ex", j=j, hl=False))
-                        x += adv
-                    j += 1
+                                           (hp, int(hb - esz * 0.98)))
+                        pl.alpha_composite(h_im, (12, 0))
+                        e["pill"] = (pl, hb, pwid, hp)
+                        sw = max(sw, pwid)
+                        e["sw"] = sw
+                    if self.ex_reveal == "marker":
+                        mark["rects"].append((w0, w1, x - 8, ly - esz * 0.95, x + sw + 8, ly + esz * 0.3))
+                    els.append(e)
+                    x += sw
                 ly += pitch
             y += ph
         y += 54
@@ -1122,6 +1229,12 @@ class WordsVideo:
                         py = MARGIN + e["cy"] + math.sin(ang) * e["ry"] * rr * 1.3
                         composite(img, fade(dot, 1 - u / 0.5), int(px - dot.width / 2), int(py - dot.height / 2))
                 continue
+            if kind == "tok":
+                self._token(img, e, t, sg)
+                continue
+            if kind == "exmark":
+                self._ex_marker(img, e, t, sg)
+                continue
             if kind == "wave":
                 if say0 <= t <= say1 + 0.2:
                     u = (t - say0) * 5
@@ -1136,18 +1249,16 @@ class WordsVideo:
                 self._letters(img, e, x, y, t, sg)
                 continue
             t0 = self._when(sg, e.get("t", 0)) + e.get("d", 0)
-            if kind == "tok":
-                t0 = sg["ex"] + 0.35 + e["j"] * sg["exstep"]
             p = prog(t, t0, t0 + (0.35 if kind != "tok" else 0.24))
             if t <= t0:
                 continue
             im = e["img"]
-            if kind == "pop" or (kind == "tok" and e["hl"]):
-                s = 0.4 + 0.6 * _spring(p * 1.1) if kind == "pop" else 0.6 + 0.4 * ease_out_back(p)
+            if kind == "pop":
+                s = 0.4 + 0.6 * _spring(p * 1.1)
                 si = _rotate_scale(im, s, 0)
                 composite(img, fade(si, min(1, p * 3)), int(x + im.width / 2 - si.width / 2),
                           int(y + im.height / 2 - si.height / 2))
-            elif kind in ("slide", "rise", "tok"):
+            elif kind in ("slide", "rise"):
                 e3 = _out3(p)
                 dx = -24 * (1 - e3) if kind == "slide" else 0
                 dy = 0 if kind == "slide" else (22 if kind == "rise" else 16) * (1 - e3)
@@ -1198,6 +1309,80 @@ class WordsVideo:
                 composite(img, fade(si, e3), int(x), int(y + (im.height - hh) / 2 + 20 * (1 - e3)))
         return img
 
+    def _spoken(self, sg, e):
+        """(start, end) of a chunk of the example sentence in video time."""
+        tt = sg["extimes"]
+        if not tt:
+            return 1e9, 1e9
+        a = tt[min(e["w0"], len(tt) - 1)][0]
+        b = tt[min(e["w1"], len(tt) - 1)][1]
+        return a, b
+
+    def _token(self, img, e, t, sg):
+        """One chunk of the example sentence in the chosen reveal (EX_REVEALS), timed to its spoken word."""
+        mode = self.ex_reveal
+        s0, s1 = self._spoken(sg, e)
+        open_ = prog(t, sg["ex"] + 0.15, sg["ex"] + 0.45)  # the panel is open: the sentence is there
+        if open_ <= 0:
+            return
+        bx, by = MARGIN + e["x"], MARGIN + e["y"]
+
+        def draw(spec, alpha=1.0, scale=1.0, dy=0.0):
+            im, base, adv, p = spec
+            if scale != 1.0:
+                si = _rotate_scale(im, scale, 0)
+                cx = bx + e["sw"] / 2
+                cy = by - base + im.height / 2 + dy
+                composite(img, fade(si, alpha), int(cx - si.width / 2), int(cy - si.height / 2))
+            else:
+                composite(img, fade(im, alpha), int(bx + (e["sw"] - adv) / 2 - p), int(by - base + dy))
+        if e["hl"] and t >= s0:  # the word itself pops onto its pill when it is spoken, and stays
+            q = min(1, (t - s0) / 0.3)
+            draw(e["pill"], min(1, q * 3), 0.6 + 0.4 * ease_out_back(q))
+            return
+        if mode == "appear":
+            if t < s0:
+                return
+            q = _out3((t - s0) / 0.22)
+            draw(e["n"], q, 1.0, 18 * (1 - q))
+        elif mode == "karaoke":
+            q = prog(t, s0, s0 + 0.12)
+            if q < 1:
+                draw(e["n"], 0.28 * open_)
+            if q > 0:
+                draw(e["n"], q)
+        elif mode == "redbold":
+            if s0 <= t < s1 + 0.06:  # the spoken word: red, bold, a little pop
+                u = t - s0
+                draw(e["b"], 1.0, 1 + 0.12 * math.exp(-u * 9) * math.cos(u * 14))
+            else:
+                draw(e["n"], open_)
+        else:  # marker: the words stay, the marker moves under them
+            draw(e["n"], open_)
+
+    def _ex_marker(self, img, e, t, sg):
+        rects = e["rects"]
+        if not rects or not sg["extimes"]:
+            return
+        times = [self._spoken(sg, dict(w0=r[0], w1=r[1])) for r in rects]
+        cur = None
+        for i, (a, b) in enumerate(times):
+            if t >= a:
+                cur = i
+        if cur is None:
+            return
+        fade_out = 1 - prog(t, times[-1][1] + 0.4, times[-1][1] + 0.8)
+        if fade_out <= 0:
+            return
+        x0, y0, x1, y1 = rects[cur][2:]
+        q = _out3((t - times[cur][0]) / 0.14)
+        if cur > 0 and q < 1 and abs(rects[cur - 1][3] - y0) < 1:  # glide along the line
+            px0, _, px1, _ = rects[cur - 1][2:]
+            x0, x1 = px0 + (x0 - px0) * q, px1 + (x1 - px1) * q
+        w_, h_ = max(4, int(x1 - x0)), int(y1 - y0)
+        box = _solid(_rr_mask(w_, h_, 12), e["col"], 0.3 * fade_out)
+        composite(img, box, int(MARGIN + x0), int(MARGIN + y0))
+
     def _letters(self, img, e, x, y, t, sg):
         im = e["img"]
         cuts = e["cuts"]
@@ -1222,76 +1407,80 @@ class WordsVideo:
 
     # ============================================================ recap
     def _layout_recap(self):
+        """Recap rows (✓ chip, English, Arabic) with ONE English and ONE Arabic size for every row, as big as the
+        rows allow: side by side when every row fits at a good size, else English on top and Arabic under it."""
         L = self.look
         n = self.n
         top = self.header_bottom + 130
-        bottom = 1560
+        bottom = 1580
         cols = 1 if n <= 10 else 2
         rows = math.ceil(n / cols)
-        rh = min(118, (bottom - top) / rows)
-        gap = min(16, rh * 0.14)
+        rh = min(190 if cols == 1 else 150, (bottom - top) / rows)
+        gap = min(18, rh * 0.12)
         h = int(rh - gap)
-        cw = 920 if cols == 1 else 450
+        cw = 940 if cols == 1 else 460
+        d = int(h * (0.5 if cols == 1 else 0.42))
+        x0 = int(h * 0.16) + d + 22
+        room = cw - x0 - int(h * 0.3)
+        has_ar = any(w["ar"] for w in self.words)
+
+        def ew(w, sz):
+            return _adv(self.en_font, w["en"], sz, "Bold")
+
+        def aw(w, sz):
+            return _ink_w(self.ar_font, w["ar"], sz, "Black") if w["ar"] else 0
+        side, es, asz = False, 0, 0
+        if cols == 1:
+            sz = int(h * 0.36)
+            while sz >= int(h * 0.27):
+                if all(ew(w, sz) + aw(w, sz * 1.08) + 46 <= room for w in self.words):
+                    side, es, asz = True, sz, int(sz * 1.08)
+                    break
+                sz -= 2
+        if not side:  # stacked: each language as big as the widest row allows
+            es = int(h * (0.31 if has_ar else 0.4))
+            while es > 16 and any(ew(w, es) > room for w in self.words):
+                es -= 2
+            asz = int(h * 0.31)
+            while asz > 16 and any(aw(w, asz) > room for w in self.words):
+                asz -= 2
         self.rec = []
         for k, w in enumerate(self.words):
             acc = self.acc[k]
-            m = _rr_mask(cw, h, h / 2)
+            m = _rr_mask(cw, h, min(h / 2, 44))
             row = _solid(m, L["card"])
             ring = Image.new("L", (cw, h), 0)
-            ring.paste(_rr_mask(cw - 4, h - 4, h / 2 - 2), (2, 2))
+            ring.paste(_rr_mask(cw - 4, h - 4, min(h / 2, 44) - 2), (2, 2))
             ring = Image.fromarray(np.clip(np.array(m, int) - np.array(ring, int), 0, 255).astype(np.uint8))
             row.alpha_composite(_solid(ring, L["ink"], 0.08))
             sm = Image.new("L", (cw + 30, h + 30), 0)  # soft shadow
             sm.paste(m, (15, 20))
             shadowed = _solid(sm.filter(ImageFilter.GaussianBlur(7)), (20, 24, 40), 0.14 if self.light else 0.3)
-            d = int(h * 0.64)
             cm = Image.new("L", (d * 3, d * 3), 0)
             ImageDraw.Draw(cm).ellipse([0, 0, d * 3 - 1, d * 3 - 1], fill=255)
             cm = cm.resize((d, d), Image.LANCZOS)
-            row.alpha_composite(_solid(cm, acc), (int(h * 0.18), (h - d) // 2))
-            row.alpha_composite(_check(d, _on(acc), max(3, d * 0.11)), (int(h * 0.18), (h - d) // 2))
-            x0 = int(h * 0.18) + d + 18
-            room = cw - x0 - int(h * 0.4)
-            ar_col = _mix(acc, (0, 0, 0), 0.12)
-            side = False
-            if cols == 1:  # side by side when both fit at a good size, else English on top, Arabic under it
-                es, asz = int(h * 0.4), int(h * 0.38)
-                ew = _adv(self.en_font, w["en"], es, "Bold")
-                aw = _ink_w(self.ar_font, w["ar"], asz, "Black") if w["ar"] else 0
-                side = not w["ar"] or ew + aw + 40 <= room
-            if cols == 1 and side:
-                while es > 18 and _adv(self.en_font, w["en"], es, "Bold") > (room - aw - 40 if w["ar"] else room):
-                    es -= 2
-                et, eb, eadv, ep = _ltext(self.en_font, w["en"], es, "Bold", L["ink"])
+            row.alpha_composite(_solid(cm, acc), (int(h * 0.16), (h - d) // 2))
+            row.alpha_composite(_check(d, _on(acc), max(3, d * 0.11)), (int(h * 0.16), (h - d) // 2))
+            ar_col = _mix(acc, (0, 0, 0), 0.15)
+            right = cw - int(h * 0.3)
+            et, eb, eadv, ep = _ltext(self.en_font, w["en"], es, "Bold", L["ink"])
+            if side:
                 row.alpha_composite(et, (x0 - ep, int(h / 2 + es * 0.36) - eb))
                 if w["ar"]:
-                    ai = text_img_in(self.ar_font, w["ar"], asz, ar_col, "Black", max_w=max(60, room - eadv - 30))
-                    composite(row, ai, int(cw - int(h * 0.4) - ai.width + 30), int(h / 2 - ai.height / 2))
-            elif cols == 1:
-                es = int(h * 0.31)
-                while es > 16 and _adv(self.en_font, w["en"], es, "Bold") > room:
-                    es -= 2
-                et, eb, eadv, ep = _ltext(self.en_font, w["en"], es, "Bold", L["ink"])
-                row.alpha_composite(et, (x0 - ep, int(h * 0.36 + es * 0.36) - eb))
-                ai = text_img_in(self.ar_font, w["ar"], int(h * 0.3), ar_col, "Black", max_w=room)
-                composite(row, ai, int(cw - int(h * 0.4) - ai.width + 30), int(h * 0.72 - ai.height / 2))
+                    ai = text_img_in(self.ar_font, w["ar"], asz, ar_col, "Black")
+                    composite(row, ai, int(right - ai.width + 30), int(h / 2 - ai.height / 2))
             else:
-                es = int(h * 0.3)
-                while es > 16 and _adv(self.en_font, w["en"], es, "Bold") > room:
-                    es -= 2
-                et, eb, eadv, ep = _ltext(self.en_font, w["en"], es, "Bold", L["ink"])
-                cy = h * (0.42 if w["ar"] else 0.5)
-                row.alpha_composite(et, (x0 - ep, int(cy + es * 0.36) - eb))
+                ey = h * (0.32 if w["ar"] else 0.5)
+                row.alpha_composite(et, (x0 - ep, int(ey + es * 0.36) - eb))
                 if w["ar"]:
-                    ai = text_img_in(self.ar_font, w["ar"], int(h * 0.24), ar_col,
-                                     "Black", max_w=room)
-                    composite(row, ai, int(x0 - 30), int(h * 0.72 - ai.height / 2))
+                    ai = text_img_in(self.ar_font, w["ar"], asz, ar_col, "Black")
+                    composite(row, ai, int(right - ai.width + 30), int(h * 0.71 - ai.height / 2))
             r, c = (k, 0) if cols == 1 else (k // 2, k % 2)
-            cx = 540 if cols == 1 else 540 + (c - 0.5) * (cw + 20)
+            cx = 540 if cols == 1 else 540 + (c - 0.5) * (cw + 16)
             cy = top + rh * r + rh / 2 + ((bottom - top) - rh * rows) / 2
             shadowed.alpha_composite(row, (15, 15))
             self.rec.append((shadowed, cx, cy))
-        self.rec_title = _ltext(EN_FONT, "QUICK RECAP", 34, "Bold", self.acc[0])
+        self.rec_title = _ltext(EN_FONT, "QUICK RECAP", 40, "Bold", self.acc[0])
 
     def _recap(self, frame, t):
         R0 = self.R0

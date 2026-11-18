@@ -97,7 +97,7 @@ EXAMPLE = {
     "template": "text",
     "settings": {"theme": "Night Sky", "language": "en", "fps": 30, "music": "Lo-fi Chill", "music_gain": 0.6,
                  "music_file": "", "voice_file": "", "voice_offset": 0.5, "voice_gain": 1.0,
-                 "handle": "@Ma3loomaFast", "font_file": "", "intro_sound": "None", "tick_sound": "Classic",
+                 "handle": "@logolep AR EN", "font_file": "", "intro_sound": "None", "tick_sound": "Classic",
                  "tick_gain": 1.0},
     "ending": {"intro": "Next reading:", "question": "Sleep and Memory", "cta": "Follow for a new reading every day"},
     "text": {
