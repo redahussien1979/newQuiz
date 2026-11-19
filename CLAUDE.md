@@ -154,7 +154,8 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   pops onto its accent pill when spoken (`_ex_chunks` chunks carry their spoken word range); collapses back to a
   ✓ bubble; recap list (`_layout_recap`: ONE English + ONE Arabic size for all rows, side by side or stacked; 2 columns from 11 words) then `_ending` (the 🔚 Ending in the design's
   colours). Clips `w<k>` / `w<k>e` (vocab `clip_key`) are waited for; `word_import.word_voices` makes them with
-  ElevenLabs. Looks `DESIGNS` (paper default / sky / mint / blush / slate = a little dark; the user does not want
+  ElevenLabs — from the sheet (📥 with the box ticked), on ticking the box (`ticked`, words in the editor) or the
+  🎙️ Make the voices button (`make_voices`); `voices_status` = the line saying which words / sentences have a voice. Looks `DESIGNS` (paper default / sky / mint / blush / slate = a little dark; the user does not want
   glass, aurora or dark looks); fonts Poppins (a 🎨 Style & sound font replaces it) + `wordsvideo.arabic_font` (any
   library family, default `AR_DEFAULT` = Noto Sans Arabic, `_arabic_font`)
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording

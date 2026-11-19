@@ -36,6 +36,7 @@ from engine.templates.text import DEFAULT_LOGO as TX_LOGO, LOGO_SHAPES as TX_LOG
 from engine.templates.news import ACCENT_CHOICES as NW_ACCENTS, LOOK_CHOICES as NW_LOOKS, probe as nw_probe
 from engine.templates.news import length_report as nw_length, RECAP_CHOICES as NW_RECAPS
 from engine.templates import words_video as wvid
+from engine.templates.vocab import clip_key as vocab_clip_key
 from engine import batch
 from engine import countries
 from engine import tl_batch
@@ -1669,6 +1670,9 @@ def words_video_ui():
     audio = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=120,
                     label="Voice clips (optional: w1, w1e, w2 …)")
     gr.Markdown(WV_AUDIO_HELP)
+    with gr.Row(equal_height=True):
+        v_status = gr.Markdown("")
+        v_make = gr.Button("🎙️ Make the voices", min_width=170, scale=0)
     gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
     gr.Markdown("---\n**📥 Words from Excel** — the 📃 Word list sheet: **English | Arabic | IPA | Sample sentence | "
                 "English meaning** (Title / Subtitle columns: the first ones become the video's title).")
@@ -1680,14 +1684,15 @@ def words_video_ui():
         start = gr.Number(value=1, precision=0, minimum=1, label="Start at word #")
         count = gr.Number(value=6, precision=0, minimum=0, label="How many words", info="0 = all of them")
     voice = gr.Checkbox(value=False, label="🎙️ Make the voice of every word and sentence with my ElevenLabs voice",
-                        info="Uses 🔑 ElevenLabs voice in 📖 English Texts → ✍️ Paragraphs (each clip costs credits "
-                             "only once)")
+                        info="Ticking it voices the words in the editor right away (and every sheet you put in the "
+                             "editor). Uses 🔑 ElevenLabs voice in 📖 English Texts → ✍️ Paragraphs; each clip costs "
+                             "credits only once")
     with gr.Row(equal_height=True):
         info = gr.Markdown("Upload a sheet to put its words in the editor.")
         load = gr.Button("📥 Put the words in the editor", min_width=200, scale=0)
     return dict(proj=proj, title=title, sub=sub, words=words, design=design, ar_font=ar_font, ar_style=ar_style, kind=kind, ex_reveal=ex_reveal, pop_fx=pop_fx, touches=touches, bubble_style=bubble_style, pace=pace, pick=pick,
                 recap=recap,
-                audio=audio, gain=gain, sheet=sheet, tab=tab, start=start, count=count, voice=voice, info=info,
+                audio=audio, gain=gain, v_status=v_status, v_make=v_make, sheet=sheet, tab=tab, start=start, count=count, voice=voice, info=info,
                 load=load)
 
 
@@ -1736,6 +1741,52 @@ def wire_words_video(ui):
         sub = sub or first.get("sub") or ""
         gr.Info(f"{len(part)} words are in the editor" + (" with their voices." if voice else "."), duration=6)
         return wvid.words_text(part), clips, title, sub
+
+    def voices_status(text, clips):
+        """What the video will sound like: which words have a voice clip (w<k> / w<k>e)."""
+        words = wvid.parse_words(text)
+        if not words:
+            return ""
+        have = set()
+        for c in clips or []:
+            k = vocab_clip_key(c)
+            if k:
+                have.add(k)
+        nw = sum(1 for i in range(len(words)) if (i + 1, "w") in have)
+        ne = sum(1 for i, w in enumerate(words) if w["ex"] and (i + 1, "e") in have)
+        nx = sum(1 for w in words if w["ex"])
+        if not have:
+            ok, why = word_import.voice_ready(DATA_DIR)
+            return ("⚠️ **No voice clips** — the video will only have the music and the sound effects. "
+                    + ("Press 🎙️ Make the voices (or tick the box below)." if ok else why))
+        miss = len(words) - nw + nx - ne
+        return (f"🎙️ **{nw} of {len(words)} words** and **{ne} of {nx} sentences** have a voice"
+                + (f" — ⚠️ {miss} missing: press 🎙️ Make the voices" if miss else " ✅"))
+
+    def make_voices(text, progress=gr.Progress()):
+        words = wvid.parse_words(text)
+        if not words:
+            raise gr.Error("Write or import the words first.")
+        ok, why = word_import.voice_ready(DATA_DIR)
+        if not ok:
+            raise gr.Error(why)
+        try:
+            clips = word_import.word_voices(words, DATA_DIR, os.path.join(MEDIA_DIR, f"words_video_voice_{_stamp()}"),
+                                            lambda x, d: progress(x, desc=d))
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        gr.Info(f"🎙️ {len(clips)} voice clips are ready.", duration=5)
+        return clips
+
+    def ticked(on, text, progress=gr.Progress()):
+        if not on or not wvid.parse_words(text):
+            return gr.update()
+        return make_voices(text, progress)
+
+    ui["v_make"].click(make_voices, ui["words"], ui["audio"])
+    ui["voice"].input(ticked, [ui["voice"], ui["words"]], ui["audio"])
+    gr.on(triggers=[ui["words"].change, ui["audio"].change], fn=voices_status, inputs=[ui["words"], ui["audio"]],
+          outputs=ui["v_status"], trigger_mode="always_last", show_progress="hidden")
 
     ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
     src = [ui["sheet"], ui["tab"], ui["start"], ui["count"]]
