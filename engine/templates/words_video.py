@@ -90,6 +90,11 @@ POP_FX = [("Confetti — dots and paper strips burst out and fall", "confetti"),
           ("Light rays — soft rays fan out behind the card", "rays"),
           ("Ring — a thin ring sweeps out", "ring"),
           ("None — a clean pop", "none")]
+TOUCHES = [("Folded corner on the card", "corner"), ("Deck of cards behind it", "deck"),
+           ("Soft colour tint at the top of the card", "tint"), ("Paper grain on the card", "grain"),
+           ("Depth of field — the words behind go soft", "focus"), ("Brand bar — logo + handle at the top", "brand")]
+TOUCH_DEFAULT = ["corner", "deck", "tint", "grain", "focus", "brand"]
+LOGO = os.path.join(ROOT, "projects", "brand", "logolept_logo.png")
 PICK_LEN = {"roulette": 0.85, "tap": 0.95, "spotlight": 1.25, "shake": 0.9, "direct": 0}
 
 CW = 940            # card width
@@ -585,6 +590,7 @@ EXAMPLE = {
         "kind": "auto",
         "ex_reveal": "redbold",
         "pop_fx": "confetti",
+        "touches": ["corner", "deck", "tint", "grain", "focus", "brand"],
         "pace": "normal",
         "pick": "roulette",
         "recap": True,
@@ -607,6 +613,8 @@ class WordsVideo:
         self.light = L["light"]
         self.pace = PACES.get(d.get("pace") or "normal", 1.0)
         self.pick = d.get("pick") if d.get("pick") in PICK_LEN else "roulette"
+        tch = d.get("touches")
+        self.touch = set(TOUCH_DEFAULT if tch is None else [x for x in (tch or []) if x in dict((v, k_) for k_, v in TOUCHES)])
         self.pop_fx = d.get("pop_fx") if d.get("pop_fx") in dict((v, k_) for k_, v in POP_FX) else "confetti"
         self.ar_style = d.get("ar_style") if d.get("ar_style") in AR_TIME else "brush"
         self.ex_reveal = d.get("ex_reveal") if d.get("ex_reveal") in dict((v, k) for k, v in EX_REVEALS) else "redbold"
@@ -665,7 +673,7 @@ class WordsVideo:
         top_c = bot_c = L["head"]
         size, lines = _fit_lines(lambda x, s: _adv(self.en_font, x, s, "Black"), self.title, 92, 50, 920, 2)
         self.h_lines = []
-        y = 300
+        y = 300 + (24 if "brand" in self.touch else 0)
         for ln in lines:
             im, base, adv, p = _ltext(self.en_font, ln, size, "Black", (255, 255, 255))
             m = im.getchannel("A")
@@ -688,7 +696,7 @@ class WordsVideo:
         m = _rr_mask(kw, kh, kh / 2)
         pill = _solid(m, a0)
         pill.alpha_composite(k_im, (28 - p, (kh - k_im.height) // 2 + 1))
-        self.h_kick = (pill, 215)
+        self.h_kick = (pill, 215 + (24 if "brand" in self.touch else 0))
         self.header_bottom = y + 10
         self.bar_y = self.header_bottom + 6
 
@@ -737,6 +745,40 @@ class WordsVideo:
                                                       fill=tuple(self.acc[min(self.n - 1, int(fill * self.n - 1e-6))])
                                                       + (int(235 * alpha),))
             composite(frame, lay, 540 - bw // 2, y)
+
+    def _brand(self, frame, t, alpha):
+        """A slim brand bar at the top: the logo and the handle, there all the video long."""
+        if not hasattr(self, "_brand_img"):
+            L = self.look
+            d = 66
+            parts = []
+            if os.path.isfile(LOGO):
+                lg = Image.open(LOGO).convert("RGBA").resize((d, d), Image.LANCZOS)
+                parts.append(lg)
+            txt = self.handle or ""
+            if txt:
+                ti, tb, tadv, tp = _ltext(EN_FONT, txt, 30, "Bold", L["head"])
+                parts.append(ti.crop((tp, max(0, tb - 34), int(tp + tadv), min(ti.height, tb + 12))))
+            if not parts:
+                self._brand_img = None
+                return
+            w = sum(p_.width for p_ in parts) + 16 * (len(parts) - 1) + 36
+            h = d + 16
+            bar = _solid(_rr_mask(w, h, h / 2), (255, 255, 255), 0.85 if self.light else 0.92)
+            x = 10
+            for p_ in parts:
+                bar.alpha_composite(p_, (x - (2 if p_ is parts[0] else 0), (h - p_.height) // 2))
+                x += p_.width + 16
+            sh = Image.new("RGBA", (w + 30, h + 30), (0, 0, 0, 0))
+            sm = Image.new("L", (w + 30, h + 30), 0)
+            sm.paste(_rr_mask(w, h, h / 2), (15, 19))
+            sh.alpha_composite(_solid(sm.filter(ImageFilter.GaussianBlur(7)), (20, 24, 40), 0.14))
+            sh.alpha_composite(bar, (15, 15))
+            self._brand_img = sh
+        if self._brand_img is None:
+            return
+        p_ = _smooth((t - 0.05) / 0.5)
+        _put(frame, self._brand_img, 540, 100 - 30 * (1 - p_), alpha * p_)
 
     def _progress(self, t):
         done = 0.0
@@ -1248,11 +1290,25 @@ class WordsVideo:
         L = self.look
         cw = CW
         m = _rr_mask(cw, ch, 48)
+        fold = 78
+        if "corner" in self.touch:  # cut the bottom-right corner: it is folded over (drawn below)
+            cut = Image.new("L", (cw * 3, ch * 3), 255)
+            ImageDraw.Draw(cut).polygon([(cw * 3, (ch - fold) * 3), (cw * 3, ch * 3), ((cw - fold) * 3, ch * 3)], fill=0)
+            m = Image.fromarray(np.minimum(np.array(m), np.array(cut.resize((cw, ch), Image.LANCZOS))).astype(np.uint8))
         full = (cw + 2 * MARGIN, ch + 2 * MARGIN)
         body = Image.new("RGBA", full, (0, 0, 0, 0))
         shadow = _glow(m, (20, 24, 40), 26, 0.22 if self.light else 0.45)
         body.alpha_composite(shadow, (MARGIN - 52, MARGIN - 52 + 18))
         card = _solid(m, L["card"])
+        if "tint" in self.touch:  # a light wash of the word's colour, fading down the card
+            g = (np.clip(1 - np.linspace(0, 1, ch) / 0.45, 0, 1) ** 1.5 * 0.09)[:, None] * np.array(m, float)
+            card.alpha_composite(_solid(Image.fromarray(g.astype(np.uint8)), acc))
+        if "grain" in self.touch:  # fine paper grain
+            rng = np.random.default_rng(31 + k)
+            nz = Image.fromarray(np.clip(rng.normal(128, 40, (ch // 2, cw // 2)), 0, 255).astype(np.uint8)).resize(
+                (cw, ch), Image.BILINEAR)
+            gr = np.abs(np.array(nz, float) - 128) / 128 * 0.07 * np.array(m, float)
+            card.alpha_composite(_solid(Image.fromarray(gr.astype(np.uint8)), (90, 80, 60)))
         strip = Image.new("L", (cw, ch), 0)  # accent strip along the top, clipped to the rounded corners
         strip.paste(255, (0, 0, cw, 14))
         strip = Image.fromarray(np.minimum(np.array(strip), np.array(m)).astype(np.uint8))
@@ -1262,7 +1318,27 @@ class WordsVideo:
         hair = Image.fromarray(np.clip(np.array(m, int) - np.array(inner, int), 0, 255).astype(np.uint8))
         card.alpha_composite(_solid(hair, L["ink"], 0.08))
         body.alpha_composite(card, (MARGIN, MARGIN))
-        return dict(body=body)
+        if "corner" in self.touch:  # the folded flap: the card's back in a light shade of the word's colour
+            ss = 3
+            fm = Image.new("L", (fold * ss, fold * ss), 0)
+            ImageDraw.Draw(fm).polygon([(0, 0), (fold * ss, 0), (0, fold * ss)], fill=255)
+            fm = fm.resize((fold, fold), Image.LANCZOS)
+            sh = Image.new("L", (fold + 24, fold + 24), 0)
+            sh.paste(fm, (10, 12))
+            ox, oy = MARGIN + cw - fold, MARGIN + ch - fold
+            body.alpha_composite(_solid(sh.filter(ImageFilter.GaussianBlur(6)), (20, 24, 40), 0.25), (ox - 6, oy - 6))
+            body.alpha_composite(_grad_fill(fm, _mix(acc, (255, 255, 255), 0.55), _mix(acc, (255, 255, 255), 0.75)),
+                                 (ox, oy))
+        back = None
+        if "deck" in self.touch:  # two cards of the deck peeking out behind, in light tints of the colour
+            back = []
+            for i, (ang, dy, tone) in enumerate(((-4.5, 22, 0.86), (3.5, 38, 0.92))):
+                bm = _rr_mask(cw - 30 * (i + 1), ch, 48)
+                b_ = Image.new("RGBA", full, (0, 0, 0, 0))
+                b_.alpha_composite(_glow(bm, (20, 24, 40), 18, 0.12), (MARGIN + 15 * (i + 1) - 36, MARGIN + dy - 30))
+                b_.alpha_composite(_solid(bm, _mix(acc, (255, 255, 255), tone)), (MARGIN + 15 * (i + 1), MARGIN + dy))
+                back.append((b_.rotate(ang, Image.BICUBIC, expand=True), ang))
+        return dict(body=body, back=back)
 
     def _when(self, sg, key):
         return {"ipa": sg["ipa"], "ipa+": sg["ipa"] + 0.12, "ar": sg["ar"], "df": sg["df"] or 0,
@@ -1608,6 +1684,8 @@ class WordsVideo:
             dim = 0.0
         frame = self._background(t, dim)
         self._header(frame, t, 1 - 0.75 * dim)
+        if "brand" in self.touch:
+            self._brand(frame, t, 1 - 0.5 * dim)
         # shake after the pop
         shx = shy = 0.0
         punch = 0.0
@@ -1621,10 +1699,15 @@ class WordsVideo:
                     punch += 0.03 * st * math.exp(-u * 11)
         # bubbles
         recap_fade = 1 - prog(t, self.R0 + 0.35, self.R0 + 0.35 + self.rstep * n + 0.6) if self.recap_on else 1
+        soft = dim if "focus" in self.touch and cur is not None and not in_recap else 0.0
+        layer = Image.new("RGBA", (W, H), (0, 0, 0, 0)) if soft > 0.03 else frame
         for k in range(n):
             if in_recap and t >= self.R0 + 0.35 + self.rstep * k:
                 continue
-            self._draw_bubble(frame, k, t, cur, dim, shx, shy, recap_fade if in_recap else 1)
+            self._draw_bubble(layer, k, t, cur, dim, shx, shy, recap_fade if in_recap else 1)
+        if layer is not frame:  # depth of field: the words behind the card go soft (blurred at a quarter size)
+            small = layer.resize((W // 4, H // 4), Image.BILINEAR).filter(ImageFilter.GaussianBlur(2.6 * soft))
+            frame.alpha_composite(small.resize((W, H), Image.BILINEAR))
         if cur is not None and self.seg[cur]["pick"] == "spotlight":
             self._spotlight(frame, cur, t)
         if cur is not None:
@@ -1820,6 +1903,12 @@ class WordsVideo:
                 a = 1 - prog(pc, 0.55, 1.0)
             if self.pop_fx == "rays":
                 self._rays(frame, k, t - sg["pop"], x, y)
+            if c.get("back"):  # the deck fans out from behind the card just after it pops
+                fan = _smooth((t - sg["pop"] - 0.15) / 0.4) * (1 - _smooth((t - sg["end"]) / 0.25))
+                for bimg, bang in reversed(c["back"]):
+                    if fan > 0.01:
+                        bi = bimg if abs(s - 1) < 0.004 else _rotate_scale(bimg, s, 0)  # (already turned)
+                        _put(frame, bi, x, y, a * fan)
             _put(frame, _rotate_scale(img, s, ang), x, y, a)
             # the pop effect (POP_FX)
             u = t - sg["pop"]

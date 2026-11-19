@@ -128,7 +128,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   confetti (default; `_sparks(strips=True)`: discs + spinning paper strips from outside the card's edge, falling),
   sparkles (`_twinkles`: four-point `stars4` around the card), rays (`_rays`: soft accent sunburst behind the card),
   ring (old shockwave), none; card built lazily `_card` / `_build_card` = element list, LRU of 3; `_card_body` = white card, shadow,
-  accent strip on top; `_card_frame`: letters drop in by strips, IPA pill + speaker waves, divider, the Arabic meaning
+  accent strip on top + `wordsvideo.touches` (`TOUCHES`, default all): corner (bottom-right cut + folded flap), deck
+  (two tinted cards `back`, pre-rotated, fan out behind after the pop), tint (accent wash fading down), grain; focus =
+  bubbles drawn on their own layer and blurred at 1/4 size while a card is up; brand = `_brand` bar (LOGO +
+  handle) at the top, header moved down 24 px; `_card_frame`: letters drop in by strips, IPA pill + speaker waves, divider, the Arabic meaning
   word by word RTL (`_ar_words` = one image per word on one baseline) with `wordsvideo.ar_style` (`AR_STYLES` /
   `AR_TIME` lead + step): brush (default, `_brush_mask` = textured paint stroke painted RTL, words pop), stamp (words
   slam in + ink `splat` + stamp thud), ribbon (`_ribbon`, white words), swoosh (`_swoosh` pen stroke under), plain;

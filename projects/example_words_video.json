@@ -31,6 +31,14 @@
     "kind": "auto",
     "ex_reveal": "redbold",
     "pop_fx": "confetti",
+    "touches": [
+      "corner",
+      "deck",
+      "tint",
+      "grain",
+      "focus",
+      "brand"
+    ],
     "pace": "normal",
     "pick": "roulette",
     "recap": true,
