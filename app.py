@@ -1704,21 +1704,31 @@ def words_video_ui():
         v_make = gr.Button("🎙️ Make the voices", min_width=170, scale=0)
     gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
     gr.Markdown("---\n**📥 Words from Excel** — the 📃 Word list sheet: **English | Arabic | IPA | Sample sentence | "
-                "English meaning** (Title / Subtitle columns: the first ones become the video's title).")
+                "English meaning** (any number of rows). They are cut into videos of *Words per video*; "
+                "**🎬 Render all** makes every video (voices included when 🎙️ is ticked). In the Title, **{n}** = "
+                "the video number and **{total}** = how many (Words Part {n}/{total}); empty Title = the sheet's "
+                "Title column.")
     with gr.Row():
         sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Words sheet (.xlsx or .csv)",
                         height=110)
         tab = gr.Dropdown([], label="Sheet (tab)", visible=False)
     with gr.Row():
         start = gr.Number(value=1, precision=0, minimum=1, label="Start at word #")
-        count = gr.Number(value=6, precision=0, minimum=0, label="How many words", info="0 = all of them")
+        count = gr.Number(value=0, precision=0, minimum=0, label="How many words", info="0 = all of them")
+        per = gr.Slider(1, 20, value=6, step=1, label="Words per video",
+                        info="The words are cut in order into videos of this many (the last gets what is left)")
+    info = gr.Markdown("Upload a sheet to see how many videos it makes.")
     with gr.Row(equal_height=True):
-        info = gr.Markdown("Upload a sheet to put its words in the editor.")
-        load = gr.Button("📥 Put the words in the editor", min_width=200, scale=0)
+        part = gr.Dropdown([], label="Video to put in the editor", scale=2)
+        load = gr.Button("📥 Put it in the editor", min_width=170, scale=1)
+        go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, min_width=200, scale=1)
+    zipb = gr.DownloadButton("📦 Download all (.zip)", visible=False, variant="primary")
+    files = gr.File(label="Rendered videos — each one appears here as soon as it finishes", file_count="multiple",
+                    visible=False, height=260)
     return dict(proj=proj, title=title, sub=sub, words=words, design=design, ar_font=ar_font, ar_style=ar_style, kind=kind, ex_reveal=ex_reveal, pop_fx=pop_fx, touches=touches, bubble_style=bubble_style, pace=pace, pick=pick,
                 recap=recap,
                 audio=audio, gain=gain, v_status=v_status, v_make=v_make, sheet=sheet, tab=tab, start=start, count=count, voice=voice, info=info,
-                load=load)
+                load=load, per=per, part=part, go=go, zip=zipb, files=files)
 
 
 def wv_fields(ui):
@@ -1727,7 +1737,7 @@ def wv_fields(ui):
             ui["gain"], ui["voice"], ui["ar_font"], ui["ar_style"], ui["kind"], ui["ex_reveal"], ui["pop_fx"], ui["touches"], ui["bubble_style"]]
 
 
-def wire_words_video(ui):
+def wire_words_video(ui, pv, fields):
     def picked(sheet, tab, start, count):
         if not sheet:
             raise ValueError("Upload a words sheet first.")
@@ -1741,31 +1751,87 @@ def wire_words_video(ui):
             raise ValueError(f"The sheet has {len(words)} words — 'Start at' is past the end.")
         return words, part, problems
 
-    def check(sheet, tab, start, count):
+    def groups(part, per):
+        per = max(1, int(per or 6))
+        return [part[i:i + per] for i in range(0, len(part), per)]
+
+    def check(sheet, tab, start, count, per):
+        off = gr.update(value="🎬 Render all videos", interactive=False)
         if not sheet:
-            return "Upload a sheet to put its words in the editor."
+            return "Upload a sheet to see how many videos it makes.", gr.update(choices=[], value=None), off
         try:
             words, part, problems = picked(sheet, tab, start, count)
         except Exception as e:
-            return f"⚠️ {_msg(e)}"
+            return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
+        vids = groups(part, per)
         a = max(1, int(start or 1))
-        return (f"The sheet has **{len(words)}** words — this video takes **{len(part)}** (#{a}–#{a + len(part) - 1})."
-                + (f" ⚠️ {len(problems)} row(s) left out: {problems[0]}" if problems else ""))
+        sizes = [len(g) for g in vids]
+        how = (f"{len(vids)} video{'s' if len(vids) != 1 else ''} of {sizes[0]} word{'s' if sizes[0] != 1 else ''}"
+               if len(set(sizes)) == 1 else f"{len(vids)} videos ({' + '.join(map(str, sizes))} words)")
+        msg = (f"The sheet has **{len(words)}** words — words #{a}–#{a + len(part) - 1} make **{how}**."
+               + (f" ⚠️ {len(problems)} row(s) left out: {problems[0]}" if problems else ""))
+        choices = [(f"Video {k} — {g[0]['en']} … {g[-1]['en']} ({len(g)} words)", k) for k, g in enumerate(vids, 1)]
+        n = len(vids)
+        return msg, gr.update(choices=choices, value=1), gr.update(
+            value=f"🎬 Render all {n} video{'s' if n != 1 else ''}", interactive=True)
 
-    def load(sheet, tab, start, count, voice, title, sub, progress=gr.Progress()):
+    def load(sheet, tab, start, count, per, k, voice, title, sub, progress=gr.Progress()):
         try:
             words, part, problems = picked(sheet, tab, start, count)
+            vids = groups(part, per)
+            k = int(k or 1)
+            if not 1 <= k <= len(vids):
+                raise ValueError("Pick a video first.")
+            grp = vids[k - 1]
             clips = gr.update()
             if voice:
-                clips = word_import.word_voices(part, DATA_DIR, os.path.join(MEDIA_DIR, f"words_video_voice_{_stamp()}"),
+                clips = word_import.word_voices(grp, DATA_DIR, os.path.join(MEDIA_DIR, f"words_video_voice_{_stamp()}"),
                                                 lambda x, d: progress(x, desc=d))
         except Exception as e:
             raise gr.Error(_msg(e))
-        first = part[0]
-        title = title or first.get("title") or ""
-        sub = sub or first.get("sub") or ""
-        gr.Info(f"{len(part)} words are in the editor" + (" with their voices." if voice else "."), duration=6)
-        return wvid.words_text(part), clips, title, sub
+        title = title or grp[0].get("title") or ""
+        sub = sub or grp[0].get("sub") or ""
+        gr.Info(f"Video {k} of {len(vids)} ({len(grp)} words) is in the editor"
+                + (" with its voices." if voice else ".") + (f" 🎬 Render all makes all {len(vids)}." if len(vids) > 1 else ""),
+                duration=7)
+        return wvid.words_text(grp), clips, title, sub
+
+    def start(request: gr.Request):
+        if not _claim(request):
+            raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+        return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
+                gr.update(interactive=False), "⏳ Making the voices and rendering… each video appears below when done.",
+                gr.update(value=None, visible=False), gr.update(value=None, visible=False))
+
+    def render_all(request: gr.Request, sheet, tab, start_at, count, per, *vals, progress=gr.Progress()):
+        def plan():
+            words, part, problems = picked(sheet, tab, start_at, count)
+            vids = groups(part, per)
+            base = values_to_project("wordsvideo", vals)
+            if base["wordsvideo"].get("voice_on"):
+                ok, why = word_import.voice_ready(DATA_DIR)
+                if not ok:
+                    raise ValueError("🎙️ The voices are ticked but cannot be made: " + why)
+            out_dir = os.path.join(OUT_DIR, f"words_videos_{_stamp()}")
+            os.makedirs(out_dir, exist_ok=True)
+            total = len(vids)
+
+            def jobs():
+                for k, grp in enumerate(vids, 1):
+                    proj = copy.deepcopy(base)
+                    d = proj["wordsvideo"]
+                    d["words"] = wvid.words_text(grp)
+                    d["audio"] = []  # this video's own voices
+                    title = str(d.get("title") or grp[0].get("title") or "")
+                    d["title"] = title.replace("{n}", str(k)).replace("{total}", str(total))
+                    d["subtitle"] = str(d.get("subtitle") or grp[0].get("sub") or "").replace("{n}", str(k)).replace(
+                        "{total}", str(total))
+                    _wv_voices(proj, lambda x, desc, k=k: (check_stop(), progress((k - 1 + 0.15 * x) / total,
+                                                                                  desc=f"Video {k} of {total}: {desc}")))
+                    yield f"Words video {k:02d} of {total:02d}", proj
+            return out_dir, total, jobs()
+
+        yield from _stream_batch(request, plan, progress)
 
     def voices_status(text, clips, on=True):
         """What the video will sound like: which words have a voice clip (w<k> / w<k>e), and what 🎬 Render does."""
@@ -1809,11 +1875,16 @@ def wire_words_video(ui):
           outputs=ui["v_status"], trigger_mode="always_last", show_progress="hidden")
 
     ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
-    src = [ui["sheet"], ui["tab"], ui["start"], ui["count"]]
-    gr.on(triggers=[c.change for c in src], fn=check, inputs=src, outputs=ui["info"], trigger_mode="always_last",
-          show_progress="hidden")
-    ui["load"].click(load, src + [ui["voice"], ui["title"], ui["sub"]],
+    src = [ui["sheet"], ui["tab"], ui["start"], ui["count"], ui["per"]]
+    gr.on(triggers=[c.change for c in src], fn=check, inputs=src, outputs=[ui["info"], ui["part"], ui["go"]],
+          trigger_mode="always_last", show_progress="hidden")
+    ui["load"].click(load, src + [ui["part"], ui["voice"], ui["title"], ui["sub"]],
                      [ui["words"], ui["audio"], ui["title"], ui["sub"]])
+    dep = ui["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"], pv["info"],
+                                       ui["files"], ui["zip"]], queue=False)
+    dep.success(render_all, src + fields,
+                [pv["vid"], pv["info"], ui["files"], ui["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"]],
+                **_progress_on(dep, pv["vid"]))
 
 
 # ------------------------------------------------------------------ English Texts
@@ -3249,7 +3320,7 @@ def build_ui():
             wire_posts(posts, vc_pv)
             # 🎬 Words video: its own project + preview; 🎨 Style & sound and 🔚 Ending are shared with English Words
             wire(wv["proj"], vc_pv["wv"], shared_fields(vc_st, vc_end) + wv_fields(wv))
-            wire_words_video(wv)
+            wire_words_video(wv, vc_pv["wv"], shared_fields(vc_st, vc_end) + wv_fields(wv))
 
             def right_side(evt: gr.SelectData):
                 """🖼️ Image posts open: the post preview fills the right column; 🎬 Words video: its own video

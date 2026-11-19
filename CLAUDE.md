@@ -157,7 +157,11 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   ElevenLabs: `wordsvideo.voice_on` (🎙️ box, ticked by default, next to the clips) → 🎬 Render video / ▶️ Quick
   motion call `app._wv_voices` first (makes only the missing w<k> / w<k>e clips, cached; your own clips stay; no key →
   clear error); also 📥 from a sheet with the box ticked and the 🎙️ Make the voices button (`make_voices`, to hear
-  them before rendering); `voices_status` = the line saying which words / sentences have a voice and what Render does. Looks `DESIGNS` (paper default / sky / mint / blush / slate = a little dark; the user does not want
+  them before rendering); `voices_status` = the line saying which words / sentences have a voice and what Render does.
+  Excel batch (`wire_words_video`): Start at / How many (0 = all) / Words per video → `groups` (in order, the last
+  gets what is left); `check` = "18 words make 3 videos of 6" + the video menu; 📥 puts one video in the editor;
+  🎬 Render all = `_stream_batch` (one project per group: its words, its own voices via `_wv_voices`, Title `{n}` /
+  `{total}`, empty Title = the sheet's Title column) → files + zip in OUT_DIR/words_videos_*. Looks `DESIGNS` (paper default / sky / mint / blush / slate = a little dark; the user does not want
   glass, aurora or dark looks); fonts Poppins (a 🎨 Style & sound font replaces it) + `wordsvideo.arabic_font` (any
   library family, default `AR_DEFAULT` = Noto Sans Arabic, `_arabic_font`)
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
