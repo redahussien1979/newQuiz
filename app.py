@@ -87,7 +87,7 @@ TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "
            "text_size"]
 NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", "logo", "logo_shape", "trim_start",
            "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed", "recap_style"]
-WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "arabic_font", "ar_style", "kind"]
+WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "arabic_font", "ar_style", "kind", "ex_reveal", "pop_fx", "touches", "bubble_style"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS, "wordsvideo": WV_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
                 "video"}
@@ -105,7 +105,9 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
             "para_text": "", "para_store": "{}", "para_alias": "",
             "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0, "recap_style": "flashcards",
-            "design": "paper", "pick": "roulette", "arabic_font": "", "ar_style": "brush", "kind": "auto"}  # for projects saved before these options existed
+            "design": "paper", "pick": "roulette", "arabic_font": "", "ar_style": "brush", "kind": "auto", "ex_reveal": "redbold", "pop_fx": "confetti",
+            "touches": ["corner", "deck", "tint", "grain", "focus", "brand", "stress", "number", "drift"],
+            "bubble_style": "pill"}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -664,14 +666,17 @@ def project_bar():
     return dict(ex=ex_btn, open=open_btn, save=save_btn)
 
 
-def style_tab():
+EN_HANDLE = "@logolept AR EN"  # the English tabs' channel handle (English Words, Texts, News)
+
+
+def style_tab(handle_default="@Ma3loomaFast"):
     with gr.Tab("🎨 Style & sound"):
         with gr.Column(elem_classes="pane"):
             with gr.Row():
                 theme = gr.Dropdown(THEME_NAMES, value="Night Sky", label="Theme")
                 lang = gr.Radio([("العربية", "ar"), ("English", "en")], value="ar", label="Language of auto texts")
                 fps = gr.Radio([30, 60], value=30, label="FPS")
-            handle = gr.Textbox(value="@Ma3loomaFast", label="Channel handle (ending)")
+            handle = gr.Textbox(value=handle_default, label="Channel handle (ending)")
             font = font_picker()
             font_file = font["font"]
             with gr.Row():
@@ -1647,11 +1652,20 @@ def words_video_ui():
     with gr.Row():
         ar_style = gr.Dropdown(wvid.AR_STYLES, value="brush", label="Arabic meaning effect",
                                info="How the Arabic meaning arrives on the card — word by word, right to left")
+        ex_reveal = gr.Dropdown(wvid.EX_REVEALS, value="redbold", label="Example sentence",
+                                info="Every word is timed to the voice (w1e clip): exactly when it is spoken")
+    with gr.Row():
         pace = gr.Radio([("Calm", "calm"), ("Normal", "normal"), ("Fast", "fast")], value="normal", label="Pace",
                         info="How long each card stays (with voice clips the card waits for them)")
     with gr.Row():
-        pick = gr.Radio(wvid.PICKS, value="roulette", label="Picking the next word")
+        pick = gr.Dropdown(wvid.PICKS, value="roulette", label="Picking the next word")
+        pop_fx = gr.Dropdown(wvid.POP_FX, value="confetti", label="Card pop effect",
+                             info="What happens around the card when it pops open")
         recap = gr.Checkbox(value=True, label="Recap list at the end")
+    bubble_style = gr.Radio(wvid.BUBBLES, value="pill", label="Bubble style",
+                            info="How the floating words look")
+    touches = gr.CheckboxGroup(wvid.TOUCHES, value=list(wvid.TOUCH_DEFAULT), label="Design touches",
+                               info="Small details that make it feel premium — untick any you don't want")
     audio = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=120,
                     label="Voice clips (optional: w1, w1e, w2 …)")
     gr.Markdown(WV_AUDIO_HELP)
@@ -1671,7 +1685,7 @@ def words_video_ui():
     with gr.Row(equal_height=True):
         info = gr.Markdown("Upload a sheet to put its words in the editor.")
         load = gr.Button("📥 Put the words in the editor", min_width=200, scale=0)
-    return dict(proj=proj, title=title, sub=sub, words=words, design=design, ar_font=ar_font, ar_style=ar_style, kind=kind, pace=pace, pick=pick,
+    return dict(proj=proj, title=title, sub=sub, words=words, design=design, ar_font=ar_font, ar_style=ar_style, kind=kind, ex_reveal=ex_reveal, pop_fx=pop_fx, touches=touches, bubble_style=bubble_style, pace=pace, pick=pick,
                 recap=recap,
                 audio=audio, gain=gain, sheet=sheet, tab=tab, start=start, count=count, voice=voice, info=info,
                 load=load)
@@ -1680,7 +1694,7 @@ def words_video_ui():
 def wv_fields(ui):
     """The Words video's own fields in WV_KEYS order."""
     return [ui["title"], ui["sub"], ui["words"], ui["design"], ui["pace"], ui["pick"], ui["recap"], ui["audio"],
-            ui["gain"], ui["ar_font"], ui["ar_style"], ui["kind"]]
+            ui["gain"], ui["ar_font"], ui["ar_style"], ui["kind"], ui["ex_reveal"], ui["pop_fx"], ui["touches"], ui["bubble_style"]]
 
 
 def wire_words_video(ui):
@@ -3150,7 +3164,7 @@ def build_ui():
                         with gr.Tab("📊 Excel batch"):
                             with gr.Column(elem_classes="pane"):
                                 vxl = vc_batch_tab()
-                        vc_st = style_tab()
+                        vc_st = style_tab(EN_HANDLE)
                         vc_end = ending_tab()
                     vc_fields = shared_fields(vc_st, vc_end) + [v_group, v_gname, v_title, v_sub, v_lesson, v_lesson_n,
                                                                  v_items, v_acc, v_bg, v_tstyle, v_hook, v_pace, v_secs,
@@ -3281,7 +3295,7 @@ def build_ui():
                                     t_lintro = gr.Checkbox(value=False, label="Logo opening (0.8 s before the page)")
                                     t_endon = gr.Checkbox(value=True, label="Ending card (texts in 🔚 Ending)")
                                     t_lend = gr.Checkbox(value=True, label="Logo on the ending card")
-                        tx_st = style_tab()
+                        tx_st = style_tab(EN_HANDLE)
                         tx_end = ending_tab("The card shows: your logo · the small line as — NEXT READING — · the "
                                             "question, word by word (a line starting with [gold] is in the accent "
                                             "colour) · the call to action as a button that gets tapped · your handle "
@@ -3307,7 +3321,7 @@ def build_ui():
                             with gr.Column(elem_classes="pane"):
                                 nwu = news_tab()
                         nwd = news_design_tab()
-                        nw_st = style_tab()
+                        nw_st = style_tab(EN_HANDLE)
                         nw_end = ending_tab("The recap card shows the small intro line as its title (e.g. *Words from "
                                             "the news*), every key word with its Arabic, then the call to action and "
                                             "your handle (🎨 Style & sound).", rtl=False)

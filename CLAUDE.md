@@ -111,6 +111,7 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `_OPT["recolour"]` and `_set_colors(pal)` recolours the designs with fixed colours (highlighter marker + pen,
   brush inks, tape / pencil pens, soft tints, Torn paper band / Arabic / glow, Clouds sky / words / bars / glow).
   The user's taste: clean background, clear bold type, one realistic mark per word, not busy — never propose neon looks.
+- English tabs (English Words incl. Words video, Texts, News): handle `@logolept AR EN` (`app.EN_HANDLE`, `style_tab(handle_default)`, their examples)
 - `engine/templates/words_video.py` — template `wordsvideo`, English Words sub-tab 🎬 Words video (after 🖼️ Image
   posts; `app.words_video_ui` / `wire_words_video`, own project bar, shares 🎨 Style & sound + 🔚 Ending; its preview
   = `preview_panel(..., words_video=True)` → `pv["wv"]` in `wv_col`, `right_side` shows one of post / wv / video).
@@ -120,14 +121,38 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   modals (`_ANY`) as (something) gaps; recap rows put a long item over its Arabic. White pill bubbles
   (soft shadow, accent number chip) float over a clean light background (`_background`: gradient + faint drifting dot
   pattern, cached per design in `_BG_CACHE`; a veil dims it while a card is up); per word (`_timeline` → `seg`):
-  roulette hops (`pick`), bubble flies to the centre, the white card pops (spring + shockwave ring + confetti discs
-  `_sparks`; card built lazily `_card` / `_build_card` = element list, LRU of 3; `_card_body` = white card, shadow,
-  accent strip on top; `_card_frame`: letters drop in by strips, IPA pill + speaker waves, divider, the Arabic meaning
+  picking the next word (`pick`, `PICKS` / `PICK_LEN`, `seg["pick"]` + `seg["pk"]` window): roulette hops, tap
+  (`_pointer`: arrow glides on a curve, presses, ripple + click), spotlight (`_spotlight`: dark veil with a soft hole
+  cropped from `_spot_img`, glides over `seg["spot"]` words via `_spot_xy`), shake (waiting bubbles tremble harder
+  on a drumroll), direct; too few words left → tap; then the bubble flies to the centre, the white card pops (calm spring, ~8 % overshoot) with `wordsvideo.pop_fx` (`POP_FX`):
+  confetti (default; `_sparks(strips=True)`: discs + spinning paper strips from outside the card's edge, falling),
+  sparkles (`_twinkles`: four-point `stars4` around the card), rays (`_rays`: soft accent sunburst behind the card),
+  ring (old shockwave), none; card built lazily `_card` / `_build_card` = element list, LRU of 3; `_card_body` = white card, shadow,
+  accent strip on top + `wordsvideo.touches` (`TOUCHES`, default all): corner (bottom-right cut + folded flap), deck
+  (two tinted cards `back`, pre-rotated, fan out behind after the pop), tint (accent wash fading down), grain; focus =
+  bubbles drawn on their own layer and blurred at 1/4 size while a card is up; brand = `_brand` bar (LOGO +
+  handle) at the top, header moved down 24 px; stress = `_stress_split` (IPA syllable after ˈ) tinted + dotted in the IPA pill,
+  a `stress` element beats once when the word is said; number = outlined 2-digit number at the right of the top
+  row; drift = `_cam` (slow figure-eight; bubbles full depth, dots half depth, card + header still). Bubble style
+  `wordsvideo.bubble_style` (`BUBBLES`: pill / tag = luggage tag with punched hole / sticky = tinted note with tape,
+  askew). Emoji (the user does not want them: not in the example / help, only drawn if typed): 6th words field / Excel Emoji column (`word_import` key `emoji`) → `emoji_img` (system colour emoji
+  font `EMOJI_FONTS`: Segoe UI Emoji on Windows, Noto Color Emoji 109 px) in the bubble chip + a `sticker` springing
+  onto the card's top-right corner; `_card_frame`: letters drop in by strips, IPA pill + speaker waves, divider, the Arabic meaning
   word by word RTL (`_ar_words` = one image per word on one baseline) with `wordsvideo.ar_style` (`AR_STYLES` /
   `AR_TIME` lead + step): brush (default, `_brush_mask` = textured paint stroke painted RTL, words pop), stamp (words
   slam in + ink `splat` + stamp thud), ribbon (`_ribbon`, white words), swoosh (`_swoosh` pen stroke under), plain;
-  `seg["impacts"]` = pop + slammed words → card shake + camera punch-in (whole-frame zoom in `render`), meaning, example panel word by word with the word on a pill = `_ex_chunks`), collapses back to a
-  ✓ bubble; recap list (`_layout_recap`, 2 columns from 11 words) then `_ending` (the 🔚 Ending in the design's
+  `seg["impacts"]` = pop + slammed words → card shake + camera punch-in (whole-frame zoom in `render`), meaning, example panel: justified lines (`_even_lines` = fewest
+  lines, even gaps; size picked so the extra per space stays <= `GAP_MAX` em, and capped there), each chunk in a
+  slot = its width + half of what bold adds (`_slot`; the word itself = its pill, drawn bold before it is spoken); every word
+  timed to the voice (`seg["extimes"]` from `clip_word_times`: exact ElevenLabs timings stored by
+  `word_import.word_voices` → `save_timings` in DATA_DIR/tts/timings/<sha1 of the audio>.json, else spread over the
+  voiced part by word length; no clip = a reading pace) and shown in `wordsvideo.ex_reveal` (`EX_REVEALS`: redbold
+  default = the word inks in: colour ink → red while the weight steps SemiBold → Bold → Black (`wts` white masks
+  tinted per frame, no crossfade ghosting), karaoke = `_sweep` soft-edged ink fill through the word over its spoken
+  time, marker = `_ex_marker` gliding / stretching box (slides off a line end, grows at the next), appear; `_token`;
+  every change eased with `_smooth`, words overlap gently), the word itself
+  pops onto its accent pill when spoken (`_ex_chunks` chunks carry their spoken word range); collapses back to a
+  ✓ bubble; recap list (`_layout_recap`: ONE English + ONE Arabic size for all rows, side by side or stacked; 2 columns from 11 words) then `_ending` (the 🔚 Ending in the design's
   colours). Clips `w<k>` / `w<k>e` (vocab `clip_key`) are waited for; `word_import.word_voices` makes them with
   ElevenLabs. Looks `DESIGNS` (paper default / sky / mint / blush / slate = a little dark; the user does not want
   glass, aurora or dark looks); fonts Poppins (a 🎨 Style & sound font replaces it) + `wordsvideo.arabic_font` (any
