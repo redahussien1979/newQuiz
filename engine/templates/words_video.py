@@ -1678,12 +1678,14 @@ class WordsVideo:
             if f > 0:
                 self._sweep(img, e, f)
         elif mode == "redbold":  # red + bold fades in just before the word and out after it: words overlap gently
-            lv = _smooth((t - s0 + 0.1) / 0.2) * (1 - _smooth((t - s1) / 0.32))
+            # in over 0.12 s just before the word, out over 0.12 s as it ends: the next word takes over as this one
+            # lets go, so two neighbours are never both at full weight (their space stays open)
+            lv = _smooth((t - s0 + 0.06) / 0.12) * (1 - _smooth((t - s1 + 0.06) / 0.12))
             if lv <= 0.01:
                 draw(e["n"], open_)
             else:  # colour blends ink -> red while the weight steps SemiBold -> Bold -> Black (no ghosting)
                 im, base, adv, p = e["wts"][0 if lv < 0.34 else 1 if lv < 0.67 else 2]
-                draw((_solid(im.getchannel("A"), _mix(e["ink"], e["red"], lv)), base, adv, p), 1.0, 1 + 0.03 * lv)
+                draw((_solid(im.getchannel("A"), _mix(e["ink"], e["red"], lv)), base, adv, p), 1.0)
         else:  # marker: the words stay, the marker glides under them
             draw(e["n"], open_)
 
