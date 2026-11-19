@@ -121,7 +121,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   modals (`_ANY`) as (something) gaps; recap rows put a long item over its Arabic. White pill bubbles
   (soft shadow, accent number chip) float over a clean light background (`_background`: gradient + faint drifting dot
   pattern, cached per design in `_BG_CACHE`; a veil dims it while a card is up); per word (`_timeline` → `seg`):
-  roulette hops (`pick`), bubble flies to the centre, the white card pops (spring + shockwave ring + confetti discs
+  picking the next word (`pick`, `PICKS` / `PICK_LEN`, `seg["pick"]` + `seg["pk"]` window): roulette hops, tap
+  (`_pointer`: arrow glides on a curve, presses, ripple + click), spotlight (`_spotlight`: dark veil with a soft hole
+  cropped from `_spot_img`, glides over `seg["spot"]` words via `_spot_xy`), shake (waiting bubbles tremble harder
+  on a drumroll), direct; too few words left → tap; then the bubble flies to the centre, the white card pops (spring + shockwave ring + confetti discs
   `_sparks`; card built lazily `_card` / `_build_card` = element list, LRU of 3; `_card_body` = white card, shadow,
   accent strip on top; `_card_frame`: letters drop in by strips, IPA pill + speaker waves, divider, the Arabic meaning
   word by word RTL (`_ar_words` = one image per word on one baseline) with `wordsvideo.ar_style` (`AR_STYLES` /

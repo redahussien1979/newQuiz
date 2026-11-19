@@ -17,6 +17,7 @@ from collections import OrderedDict
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
+from PIL.ImageChops import offset as _offset
 
 from ..audio import audio_length
 from ..core import (ARABIC_RE, H, ROOT, W, _state, composite, ease_io, ease_out_back, fade, get_font, global_fade,
@@ -80,7 +81,11 @@ GAP_MAX = 0.32  # a justified line adds at most this much (x the text size) to e
 AR_TIME = {"brush": (0.1, 0.13), "stamp": (0.0, 0.22), "ribbon": (0.14, 0.12), "swoosh": (0.0, 0.1),
            "plain": (0.0, 0.09)}
 PICKS = [("Roulette — a light hops over the words, then lands on the next one", "roulette"),
+         ("Tap — a pointer glides over and taps the next word", "tap"),
+         ("Spotlight — the screen darkens, a spotlight searches and stops on it", "spotlight"),
+         ("Shake — the words tremble on a drumroll, then one jumps out", "shake"),
          ("Straight to the next word", "direct")]
+PICK_LEN = {"roulette": 0.85, "tap": 0.95, "spotlight": 1.25, "shake": 0.9, "direct": 0}
 
 CW = 940            # card width
 MARGIN = 64         # room around the card for its shadow
@@ -595,7 +600,7 @@ class WordsVideo:
         self.look = L = DESIGNS.get(d.get("design") or "paper", DESIGNS["paper"])
         self.light = L["light"]
         self.pace = PACES.get(d.get("pace") or "normal", 1.0)
-        self.pick = (d.get("pick") or "roulette") == "roulette"
+        self.pick = d.get("pick") if d.get("pick") in PICK_LEN else "roulette"
         self.ar_style = d.get("ar_style") if d.get("ar_style") in AR_TIME else "brush"
         self.ex_reveal = d.get("ex_reveal") if d.get("ex_reveal") in dict((v, k) for k, v in EX_REVEALS) else "redbold"
         self.recap_on = d.get("recap", True) is not False
@@ -853,7 +858,20 @@ class WordsVideo:
             sg = {"s": t}
             waiting = list(range(k, n))
             hops = []
-            if self.pick and len(waiting) >= 3:
+            style = self.pick
+            if style == "roulette" and len(waiting) < 3 or style in ("spotlight", "shake") and len(waiting) < 2:
+                style = "tap" if style != "direct" else style  # too few words left for it: the pointer taps it
+            sg["pick"] = style
+            if style in ("tap", "spotlight", "shake"):
+                r = PICK_LEN[style] * P
+                sg["pk"] = (t, t + r)
+                if style == "spotlight":  # visits a few waiting words, then settles on this one
+                    order = [j for j in waiting if j != k]
+                    seq = [order[int(rng.integers(len(order)))] for _ in range(min(3, len(order) + 1))]
+                    seq = [j for i, j in enumerate(seq) if i == 0 or j != seq[i - 1]] + [k]
+                    sg["spot"] = seq
+                t += r
+            if style == "roulette":
                 order = [j for j in waiting if j != k]
                 seq = []
                 for i in range(5):
@@ -1557,10 +1575,11 @@ class WordsVideo:
         for k, sg in enumerate(self.seg):
             if sg["s"] - 0.05 <= t < sg["out"] + 0.12:
                 cur = k
-                if sg["hops"] and t < sg["sel"]:
-                    dim = 0.25 * prog(t, sg["s"], sg["s"] + 0.3)
+                pre = sg["pick"] in ("roulette", "tap", "shake")  # the world steps back a little while it picks
+                if sg["pick"] != "direct" and t < sg["sel"]:
+                    dim = 0.25 * prog(t, sg["s"], sg["s"] + 0.3) if pre else 0.0
                 elif t < sg["end"]:
-                    dim = 0.25 + 0.75 * ease_io(prog(t, sg["sel"], sg["pop"] + 0.25)) if sg["hops"] else \
+                    dim = 0.25 + 0.75 * ease_io(prog(t, sg["sel"], sg["pop"] + 0.25)) if pre else \
                         ease_io(prog(t, sg["sel"], sg["pop"] + 0.25))
                 else:
                     dim = 1 - ease_io(prog(t, sg["end"], sg["out"]))
@@ -1587,8 +1606,12 @@ class WordsVideo:
             if in_recap and t >= self.R0 + 0.35 + self.rstep * k:
                 continue
             self._draw_bubble(frame, k, t, cur, dim, shx, shy, recap_fade if in_recap else 1)
+        if cur is not None and self.seg[cur]["pick"] == "spotlight":
+            self._spotlight(frame, cur, t)
         if cur is not None:
             self._draw_focus(frame, cur, t, shx, shy)
+            if self.seg[cur]["pick"] == "tap":
+                self._pointer(frame, cur, t)
         if in_recap:
             self._recap(frame, t)
         if self.has_end and t >= self.E0:
@@ -1624,6 +1647,24 @@ class WordsVideo:
         x, y = fx + shx * 0.5, fy + shy * 0.5
         a = alpha * (1 - 0.6 * dim if k != cur else 1)
         s = 1 - 0.05 * dim
+        if cur is not None and not done and k >= cur and "pk" in self.seg[cur]:
+            c = self.seg[cur]
+            p0, p1 = c["pk"]
+            if c["pick"] == "shake" and p0 <= t < p1:  # tremble, harder and harder, then freeze
+                u = (t - p0) / (p1 - p0)
+                amp = (2 + 11 * u * u) * (1.4 if k == cur else 1) * (1 - _smooth((u - 0.9) / 0.1))
+                x += amp * math.sin(t * 57 + k * 1.9)
+                y += amp * 0.6 * math.cos(t * 63 + k * 2.3)
+                if k == cur:
+                    _put(frame, b["glow"], x, y, _smooth((u - 0.55) / 0.45) * 0.9)
+            elif c["pick"] == "tap" and k == cur:  # pressed by the pointer
+                tp = p1 - 0.24
+                if tp <= t < p1:
+                    q = (t - tp) / 0.24
+                    s *= 1 - 0.08 * math.sin(math.pi * q)
+                    _put(frame, b["glow"], x, y, math.sin(math.pi * min(1, q * 1.4)) * 0.8)
+            elif c["pick"] == "spotlight" and k == cur:
+                _put(frame, b["glow"], x, y, _smooth((t - (p1 - 0.35)) / 0.3) * 0.8)
         # roulette light
         if cur is not None:
             for i, (ht, j) in enumerate(self.seg[cur]["hops"]):
@@ -1648,6 +1689,79 @@ class WordsVideo:
             _put(frame, _rotate_scale(b["done"], s, 0), x, y, a)
             return
         _put(frame, _rotate_scale(b["idle"], s, 0), x, y, a)
+
+    def _spot_xy(self, k, t):
+        """Where the spotlight is: it glides between the words it visits (soft start / stop at each)."""
+        sg = self.seg[k]
+        p0, p1 = sg["pk"]
+        seq = sg["spot"]
+        u = min(1.0, max(0.0, (t - p0) / (p1 - p0 - 0.25)))
+        n = len(seq)
+        if n == 1 or u >= 1:
+            return self._float(seq[-1], t)
+        f = u * (n - 1)
+        i = min(n - 2, int(f))
+        q = _smooth(f - i)
+        ax, ay = self._float(seq[i], t)
+        bx, by = self._float(seq[i + 1], t)
+        return ax + (bx - ax) * q, ay + (by - ay) * q
+
+    def _spotlight(self, frame, k, t):
+        """The screen darkens and a soft spotlight searches the waiting words, then stops on the chosen one."""
+        sg = self.seg[k]
+        p0, p1 = sg["pk"]
+        lv = _smooth((t - p0) / 0.25) * (1 - _smooth((t - p1) / 0.35))
+        if lv <= 0.01:
+            return
+        if not hasattr(self, "_spot_img"):  # a big dark veil with a soft hole in its middle (cropped per frame)
+            hw, hh = W // 4, H // 4
+            yy, xx = np.mgrid[0:2 * hh, 0:2 * hw]
+            r = np.sqrt((xx - hw) ** 2 + (yy - hh) ** 2) * 4
+            a = np.clip((r - 150) / 120, 0, 1) * 0.62
+            arr = np.zeros((2 * hh, 2 * hw, 4), np.uint8)
+            arr[..., :3] = (14, 18, 32)
+            arr[..., 3] = (a * 255).astype(np.uint8)
+            self._spot_img = Image.fromarray(arr, "RGBA").resize((2 * W, 2 * H), Image.BILINEAR)
+        x, y = self._spot_xy(k, t)
+        veil = self._spot_img.crop((int(W - x), int(H - y), int(W - x) + W, int(H - y) + H))
+        frame.alpha_composite(fade(veil, lv))
+
+    def _pointer_img(self):
+        if not hasattr(self, "_ptr"):
+            ss, d = 4, 118
+            m = Image.new("L", (d * ss, d * ss), 0)
+            pts = [(0.18, 0.06), (0.18, 0.78), (0.36, 0.62), (0.5, 0.92), (0.62, 0.86), (0.48, 0.57), (0.72, 0.57)]
+            ImageDraw.Draw(m).polygon([(px * d * ss, py * d * ss) for px, py in pts], fill=255)
+            m = m.resize((d, d), Image.LANCZOS)
+            edge = m.filter(ImageFilter.MaxFilter(7))
+            im = _solid(edge.filter(ImageFilter.GaussianBlur(4)), (10, 14, 30), 0.35)  # soft shadow
+            im = _offset(im, 4, 6)
+            im.alpha_composite(_solid(edge, (22, 26, 44)))
+            im.alpha_composite(_solid(m, (255, 255, 255)))
+            self._ptr = im
+        return self._ptr
+
+    def _pointer(self, frame, k, t):
+        """A pointer glides in on a curve, presses the bubble (ripple), then leaves as it flies off."""
+        sg = self.seg[k]
+        p0, p1 = sg["pk"]
+        if t < p0 or t > sg["sel"] + 0.35:
+            return
+        tx, ty = self._float(k, t)
+        tx, ty = tx + 10, ty + 8  # the tip lands a little inside the bubble
+        sx, sy = min(1000, tx + 300), min(1800, ty + 520)
+        tp = p1 - 0.24
+        g = _smooth((t - p0) / (tp - p0))
+        cx, cy = (sx + tx) / 2 + 160, (sy + ty) / 2  # curve
+        x = (1 - g) ** 2 * sx + 2 * (1 - g) * g * cx + g * g * tx
+        y = (1 - g) ** 2 * sy + 2 * (1 - g) * g * cy + g * g * ty
+        press = math.sin(math.pi * min(1, max(0, (t - tp) / 0.24)))
+        im = _rotate_scale(self._pointer_img(), 1 - 0.14 * press, 0)
+        a = min(1, (t - p0) / 0.15) * (1 - _smooth((t - sg["sel"]) / 0.3))
+        if t >= tp:  # the tap ripple
+            q = min(1, (t - tp) / 0.5)
+            _put(frame, _ring(20 + 90 * _out3(q), 5 * (1 - q) + 1, self.acc[k], (1 - q) * 0.9), tx, ty)
+        composite(frame, fade(im, a), int(x - im.width * 0.18), int(y - im.height * 0.06))
 
     def _draw_focus(self, frame, k, t, shx, shy):
         sg = self.seg[k]
@@ -1760,6 +1874,19 @@ class WordsVideo:
         for k, sg in enumerate(self.seg):
             for i, (ht, j) in enumerate(sg["hops"]):
                 mx.add(ht, mx.tick(1500 + 60 * i), 0.16)
+            if "pk" in sg:
+                p0, p1 = sg["pk"]
+                if sg["pick"] == "tap":
+                    s_, pn = mx.whoosh(0.5)
+                    mx.add(p0 + 0.1, s_, 0.12, pn)
+                    mx.add(p1 - 0.2, mx.click(), 0.4)
+                elif sg["pick"] == "shake":
+                    mx.add(p0, mx.drumroll(p1 - p0), 0.3)
+                elif sg["pick"] == "spotlight":
+                    for i in range(len(sg["spot"]) - 1):
+                        s_, pn = mx.whoosh(0.35)
+                        mx.add(p0 + (p1 - p0 - 0.25) * (i + 0.3) / (len(sg["spot"]) - 1), s_, 0.1, pn)
+                    mx.add(p1 - 0.3, mx.ding(), 0.2)
             mx.add(sg["sel"], mx.click(), 0.25)
             s, pn = mx.whoosh(0.45)
             mx.add(sg["fly0"] - 0.08, s, 0.32, pn)

@@ -1656,7 +1656,7 @@ def words_video_ui():
         pace = gr.Radio([("Calm", "calm"), ("Normal", "normal"), ("Fast", "fast")], value="normal", label="Pace",
                         info="How long each card stays (with voice clips the card waits for them)")
     with gr.Row():
-        pick = gr.Radio(wvid.PICKS, value="roulette", label="Picking the next word")
+        pick = gr.Dropdown(wvid.PICKS, value="roulette", label="Picking the next word")
         recap = gr.Checkbox(value=True, label="Recap list at the end")
     audio = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=120,
                     label="Voice clips (optional: w1, w1e, w2 …)")
