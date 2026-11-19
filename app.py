@@ -1623,7 +1623,7 @@ WV_HELP = ("**🎬 Words video** — any number of words float on screen as glas
            "(the word on a highlight). The card folds back into its bubble (✓), then a recap list and the 🔚 Ending. "
            "The preview on the right is this video's own.")
 WV_WORDS_HELP = ("One word, idiom or expression per line: `English | Arabic | IPA | English meaning | example "
-                 "sentence | emoji` — all but the English optional. The highlight in the sentence is found by itself, in any "
+                 "sentence` — all but the English optional. The highlight in the sentence is found by itself, in any "
                  "form and person (bite off more than you can chew ≈ I bit off more than I could chew); `*stars*` "
                  "choose it yourself.")
 WV_AUDIO_HELP = ("Optional voice: clips named **w1** (word 1), **w1e** (its sentence), **w2**, **w2e** … — the card "

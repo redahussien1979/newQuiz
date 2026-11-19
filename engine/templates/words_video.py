@@ -633,17 +633,17 @@ EXAMPLE = {
         "title": "{count} Words to Sound Smarter",
         "subtitle": "كلمات إنجليزية ستبهر بها الجميع",
         "words": ("Resilient | مَرِن، سريع التعافي | /rɪˈzɪliənt/ | able to recover quickly from difficulties | "
-                  "Kids are often more resilient than we think. | 💪\n"
+                  "Kids are often more resilient than we think.\n"
                   "Overwhelmed | مُنهَك، غارق في المهام | /ˌəʊvəˈwelmd/ | having too much to deal with at once | "
-                  "I felt overwhelmed by all the emails. | 😵\n"
+                  "I felt overwhelmed by all the emails.\n"
                   "Grateful | مُمتنّ | /ˈɡreɪtfl/ | feeling thankful for something | "
-                  "I'm so grateful for your help. | 🙏\n"
+                  "I'm so grateful for your help.\n"
                   "Reluctant | متردّد، غير راغب | /rɪˈlʌktənt/ | not willing to do something | "
-                  "He was reluctant to ask for help. | 😬\n"
+                  "He was reluctant to ask for help.\n"
                   "Thrive | يزدهر، ينمو بقوة | /θraɪv/ | to grow or develop very well | "
-                  "Plants thrive in warm sunlight. | 🌱\n"
+                  "Plants thrive in warm sunlight.\n"
                   "Genuine | حقيقي، صادق | /ˈdʒenjuɪn/ | real and sincere, not fake | "
-                  "She has a genuine smile. | 💯"),
+                  "She has a genuine smile."),
         "design": "paper",
         "arabic_font": "",
         "ar_style": "brush",
