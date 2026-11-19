@@ -133,7 +133,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   timed to the voice (`seg["extimes"]` from `clip_word_times`: exact ElevenLabs timings stored by
   `word_import.word_voices` → `save_timings` in DATA_DIR/tts/timings/<sha1 of the audio>.json, else spread over the
   voiced part by word length; no clip = a reading pace) and shown in `wordsvideo.ex_reveal` (`EX_REVEALS`: redbold
-  default = spoken word red + bold, karaoke, marker = `_ex_marker` gliding box, appear; `_token`), the word itself
+  default = the word inks in: colour ink → red while the weight steps SemiBold → Bold → Black (`wts` white masks
+  tinted per frame, no crossfade ghosting), karaoke = `_sweep` soft-edged ink fill through the word over its spoken
+  time, marker = `_ex_marker` gliding / stretching box (slides off a line end, grows at the next), appear; `_token`;
+  every change eased with `_smooth`, words overlap gently), the word itself
   pops onto its accent pill when spoken (`_ex_chunks` chunks carry their spoken word range); collapses back to a
   ✓ bubble; recap list (`_layout_recap`: ONE English + ONE Arabic size for all rows, side by side or stacked; 2 columns from 11 words) then `_ending` (the 🔚 Ending in the design's
   colours). Clips `w<k>` / `w<k>e` (vocab `clip_key`) are waited for; `word_import.word_voices` makes them with

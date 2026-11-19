@@ -525,6 +525,12 @@ def _swoosh(w, h, col):
     return _solid(m.resize((w, h), Image.LANCZOS), col)
 
 
+def _smooth(x):
+    """0 -> 1 smoothstep (soft start and end)."""
+    x = min(1.0, max(0.0, x))
+    return x * x * (3 - 2 * x)
+
+
 def _rotate_scale(im, scale, angle):
     if abs(scale - 1) > 0.004:
         im = im.resize((max(1, int(im.width * scale)), max(1, int(im.height * scale))), Image.BILINEAR)
@@ -1176,6 +1182,10 @@ class WordsVideo:
                     sw = adv + max(0.0, badv - adv) * 0.5
                     e = dict(kind="tok", x=x, y=ly, sw=sw, w0=w0, w1=w1, hl=hl, n=(n_im, base, adv, p),
                              b=(b_im, bb, badv, bp))
+                    if self.ex_reveal == "redbold":  # the word thickens step by step (white masks, tinted per frame)
+                        e["wts"] = [_ltext(self.en_font, tx, esz, wt, (255, 255, 255))
+                                    for wt in ("SemiBold", "Bold", "Black")]
+                        e["ink"], e["red"] = ink, red
                     if hl:  # the word itself: on an accent pill once it is spoken
                         h_im, hb, hadv, hp = _ltext(self.en_font, tx, esz, "Black", _on(acc))
                         pwid, pht = int(hadv) + 20, int(esz * 1.32)
@@ -1329,7 +1339,8 @@ class WordsVideo:
         return a, b
 
     def _token(self, img, e, t, sg):
-        """One chunk of the example sentence in the chosen reveal (EX_REVEALS), timed to its spoken word."""
+        """One chunk of the example sentence in the chosen reveal (EX_REVEALS), timed to its spoken word. Every change
+        eases in and out (no snapping): the reading flows from word to word."""
         mode = self.ex_reveal
         s0, s1 = self._spoken(sg, e)
         open_ = prog(t, sg["ex"] + 0.15, sg["ex"] + 0.45)  # the panel is open: the sentence is there
@@ -1338,60 +1349,85 @@ class WordsVideo:
         bx, by = MARGIN + e["x"], MARGIN + e["y"]
 
         def draw(spec, alpha=1.0, scale=1.0, dy=0.0):
+            if alpha <= 0.01:
+                return
             im, base, adv, p = spec
-            if scale != 1.0:
+            if abs(scale - 1.0) > 0.003:
                 si = _rotate_scale(im, scale, 0)
                 cx = bx + e["sw"] / 2
                 cy = by - base + im.height / 2 + dy
-                composite(img, fade(si, alpha), int(cx - si.width / 2), int(cy - si.height / 2))
+                composite(img, fade(si, alpha), int(round(cx - si.width / 2)), int(round(cy - si.height / 2)))
             else:
-                composite(img, fade(im, alpha), int(bx + (e["sw"] - adv) / 2 - p), int(by - base + dy))
-        if e["hl"] and t >= s0:  # the word itself pops onto its pill when it is spoken, and stays
-            q = min(1, (t - s0) / 0.3)
-            draw(e["pill"], min(1, q * 3), 0.6 + 0.4 * ease_out_back(q))
+                composite(img, fade(im, alpha), int(round(bx + (e["sw"] - adv) / 2 - p)), int(round(by - base + dy)))
+        if e["hl"] and t >= s0 - 0.05:  # the word itself: its pill grows in smoothly when it is spoken, and stays
+            q = _smooth((t - s0 + 0.05) / 0.32)
+            draw(e["n"], (1 - q) * open_)
+            draw(e["pill"], q, 0.86 + 0.14 * _out3((t - s0 + 0.05) / 0.32))
             return
         if mode == "appear":
-            if t < s0:
-                return
-            q = _out3((t - s0) / 0.22)
-            draw(e["n"], q, 1.0, 18 * (1 - q))
-        elif mode == "karaoke":
-            q = prog(t, s0, s0 + 0.12)
-            if q < 1:
+            q = _smooth((t - s0 + 0.04) / 0.3)
+            draw(e["n"], q, 1.0, 14 * (1 - q))
+        elif mode == "karaoke":  # the ink sweeps through the word while it is spoken
+            f = _smooth((t - s0) / max(0.12, s1 - s0)) if t > s0 else 0.0
+            if f < 1:
                 draw(e["n"], 0.28 * open_)
-            if q > 0:
-                draw(e["n"], q)
-        elif mode == "redbold":
-            if s0 <= t < s1 + 0.06:  # the spoken word: red, bold, a little pop
-                u = t - s0
-                draw(e["b"], 1.0, 1 + 0.12 * math.exp(-u * 9) * math.cos(u * 14))
-            else:
+            if f > 0:
+                self._sweep(img, e, f)
+        elif mode == "redbold":  # red + bold fades in just before the word and out after it: words overlap gently
+            lv = _smooth((t - s0 + 0.1) / 0.2) * (1 - _smooth((t - s1) / 0.32))
+            if lv <= 0.01:
                 draw(e["n"], open_)
-        else:  # marker: the words stay, the marker moves under them
+            else:  # colour blends ink -> red while the weight steps SemiBold -> Bold -> Black (no ghosting)
+                im, base, adv, p = e["wts"][0 if lv < 0.34 else 1 if lv < 0.67 else 2]
+                draw((_solid(im.getchannel("A"), _mix(e["ink"], e["red"], lv)), base, adv, p), 1.0, 1 + 0.03 * lv)
+        else:  # marker: the words stay, the marker glides under them
             draw(e["n"], open_)
 
+    def _sweep(self, img, e, f):
+        """Karaoke fill: the ink of a word shown up to fraction f of its width, with a soft edge."""
+        im, base, adv, p = e["n"]
+        edge = 18
+        cut = p + adv * f
+        a = np.array(im.getchannel("A"), float)
+        ramp = np.clip((cut + edge / 2 - np.arange(im.width)) / edge, 0, 1)[None, :]
+        part = im.copy()
+        part.putalpha(Image.fromarray((a * ramp).astype(np.uint8)))
+        composite(img, part, int(round(MARGIN + e["x"] + (e["sw"] - adv) / 2 - p)), int(round(MARGIN + e["y"] - base)))
+
     def _ex_marker(self, img, e, t, sg):
+        """A highlighter that glides from word to word (stretching to each one's width); at a line end it slides off
+        the line and grows in at the start of the next."""
         rects = e["rects"]
         if not rects or not sg["extimes"]:
             return
         times = [self._spoken(sg, dict(w0=r[0], w1=r[1])) for r in rects]
-        cur = None
-        for i, (a, b) in enumerate(times):
-            if t >= a:
-                cur = i
-        if cur is None:
+        if t < times[0][0] - 0.1:
             return
-        fade_out = 1 - prog(t, times[-1][1] + 0.4, times[-1][1] + 0.8)
+        fade_out = 1 - _smooth((t - times[-1][1] - 0.3) / 0.4)
         if fade_out <= 0:
             return
+        cur = 0
+        for i, (a_, _) in enumerate(times):
+            if t >= a_ - 0.1:
+                cur = i
         x0, y0, x1, y1 = rects[cur][2:]
-        q = _out3((t - times[cur][0]) / 0.14)
-        if cur > 0 and q < 1 and abs(rects[cur - 1][3] - y0) < 1:  # glide along the line
-            px0, _, px1, _ = rects[cur - 1][2:]
-            x0, x1 = px0 + (x0 - px0) * q, px1 + (x1 - px1) * q
-        w_, h_ = max(4, int(x1 - x0)), int(y1 - y0)
-        box = _solid(_rr_mask(w_, h_, 12), e["col"], 0.3 * fade_out)
-        composite(img, box, int(MARGIN + x0), int(MARGIN + y0))
+        nxt = cur + 1
+        if nxt < len(rects):  # the move to the next word starts a little before it is spoken
+            g = _smooth((t - (times[nxt][0] - 0.1)) / 0.2)
+            if g > 0:
+                nx0, ny0, nx1, _ = rects[nxt][2:]
+                if abs(ny0 - y0) < 1:
+                    x0, x1 = x0 + (nx0 - x0) * g, x1 + (nx1 - x1) * g
+                else:  # next line: shrink into the end of this line
+                    x0 = x0 + (x1 - x0) * g
+        grow = _smooth((t - (times[cur][0] - 0.1)) / 0.2)
+        if cur == 0 or abs(rects[cur - 1][3] - y0) >= 1:  # first word of a line: grows from its left edge
+            x1 = x0 + (x1 - x0) * grow
+        w_, h_ = int(x1 - x0), int(y1 - y0)
+        if w_ < 6:
+            return
+        box = _solid(_rr_mask(w_, h_, min(12, w_ / 2)), e["col"], 0.3 * fade_out)
+        composite(img, box, int(round(MARGIN + x0)), int(round(MARGIN + y0)))
 
     def _letters(self, img, e, x, y, t, sg):
         im = e["img"]
