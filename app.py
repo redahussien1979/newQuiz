@@ -88,7 +88,7 @@ TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "
            "text_size"]
 NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", "logo", "logo_shape", "trim_start",
            "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed", "recap_style"]
-WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "arabic_font", "ar_style", "kind", "ex_reveal", "pop_fx", "touches", "bubble_style"]
+WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "voice_on", "arabic_font", "ar_style", "kind", "ex_reveal", "pop_fx", "touches", "bubble_style"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS, "wordsvideo": WV_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
                 "video"}
@@ -106,7 +106,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
             "para_text": "", "para_store": "{}", "para_alias": "",
             "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0, "recap_style": "flashcards",
-            "design": "paper", "pick": "roulette", "arabic_font": "", "ar_style": "brush", "kind": "auto", "ex_reveal": "redbold", "pop_fx": "confetti",
+            "design": "paper", "pick": "roulette", "voice_on": True, "arabic_font": "", "ar_style": "brush", "kind": "auto", "ex_reveal": "redbold", "pop_fx": "confetti",
             "touches": ["corner", "deck", "tint", "grain", "focus", "brand", "stress", "number", "drift"],
             "bubble_style": "pill"}  # for projects saved before these options existed
 
@@ -528,6 +528,26 @@ def _progress_on(dep, comp):
 
 
 # ------------------------------------------------------------------ actions
+def _wv_voices(project, progress=None):
+    """🎬 Words video with 🎙️ ticked: make the voice clips (word w<k> + sentence w<k>e) that the uploaded / earlier
+    clips do not cover, with the user's ElevenLabs voice (cached: a clip costs credits only once), and add them."""
+    d = project.get("wordsvideo", {})
+    if not d.get("voice_on"):
+        return
+    from engine.templates.vocab import clip_key
+    words = wvid.parse_words(d.get("words"))
+    have = {clip_key(c) for c in d.get("audio") or []} - {None}
+    if not words or all((i + 1, "w") in have and (not w["ex"] or (i + 1, "e") in have) for i, w in enumerate(words)):
+        return
+    ok, why = word_import.voice_ready(DATA_DIR)
+    if not ok:
+        raise ValueError("🎙️ The voices are ticked but cannot be made: " + why + " — or untick 🎙️ to render "
+                         "without voices.")
+    made = word_import.word_voices(words, DATA_DIR, os.path.join(MEDIA_DIR, f"words_video_voice_{_stamp()}"), progress)
+    # your own clips stay; the new ones fill only what is missing
+    d["audio"] = [c for c in d.get("audio") or [] if clip_key(c)] + [m for m in made if clip_key(m) not in have]
+
+
 def make_actions(tpl):
     def preview(t, safe, *vals):
         try:
@@ -542,7 +562,10 @@ def make_actions(tpl):
     def clip(t, *vals):
         try:
             out = os.path.join(OUT_DIR, "_preview.mp4")
-            _, dur = render_clip(values_to_project(tpl, vals), out, t, 6.0)
+            project = values_to_project(tpl, vals)
+            if tpl == "wordsvideo":
+                _wv_voices(project)
+            _, dur = render_clip(project, out, t, 6.0)
         except Exception as e:
             raise gr.Error(str(e))
         return out, f"Motion preview from {float(t):.1f} s (video length **{dur:.1f} s**)"
@@ -550,6 +573,8 @@ def make_actions(tpl):
     def render(*vals, progress=gr.Progress()):
         try:
             project = values_to_project(tpl, vals)
+            if tpl == "wordsvideo":  # 🎙️ ticked: the missing voices are made first (ElevenLabs, cached)
+                _wv_voices(project, lambda x, d: progress(x * 0.1, desc=d))
             out = os.path.join(OUT_DIR, f"{tpl}_{_stamp()}.mp4")
             progress(0, desc="Preparing sound…")
 
@@ -1667,8 +1692,12 @@ def words_video_ui():
                             info="How the floating words look")
     touches = gr.CheckboxGroup(wvid.TOUCHES, value=list(wvid.TOUCH_DEFAULT), label="Design touches",
                                info="Small details that make it feel premium — untick any you don't want")
+    voice = gr.Checkbox(value=True, label="🎙️ Make the voice of every word and sentence with my ElevenLabs voice",
+                        info="Ticked: 🎬 Render video (and ▶️ Quick motion) first makes the voices that are missing. "
+                             "Uses 🔑 ElevenLabs voice in 📖 English Texts → ✍️ Paragraphs; each clip costs credits "
+                             "only once")
     audio = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=120,
-                    label="Voice clips (optional: w1, w1e, w2 …)")
+                    label="Voice clips (made for you when the box is ticked — or your own: w1, w1e, w2 …)")
     gr.Markdown(WV_AUDIO_HELP)
     with gr.Row(equal_height=True):
         v_status = gr.Markdown("")
@@ -1683,10 +1712,6 @@ def words_video_ui():
     with gr.Row():
         start = gr.Number(value=1, precision=0, minimum=1, label="Start at word #")
         count = gr.Number(value=6, precision=0, minimum=0, label="How many words", info="0 = all of them")
-    voice = gr.Checkbox(value=False, label="🎙️ Make the voice of every word and sentence with my ElevenLabs voice",
-                        info="Ticking it voices the words in the editor right away (and every sheet you put in the "
-                             "editor). Uses 🔑 ElevenLabs voice in 📖 English Texts → ✍️ Paragraphs; each clip costs "
-                             "credits only once")
     with gr.Row(equal_height=True):
         info = gr.Markdown("Upload a sheet to put its words in the editor.")
         load = gr.Button("📥 Put the words in the editor", min_width=200, scale=0)
@@ -1699,7 +1724,7 @@ def words_video_ui():
 def wv_fields(ui):
     """The Words video's own fields in WV_KEYS order."""
     return [ui["title"], ui["sub"], ui["words"], ui["design"], ui["pace"], ui["pick"], ui["recap"], ui["audio"],
-            ui["gain"], ui["ar_font"], ui["ar_style"], ui["kind"], ui["ex_reveal"], ui["pop_fx"], ui["touches"], ui["bubble_style"]]
+            ui["gain"], ui["voice"], ui["ar_font"], ui["ar_style"], ui["kind"], ui["ex_reveal"], ui["pop_fx"], ui["touches"], ui["bubble_style"]]
 
 
 def wire_words_video(ui):
@@ -1742,26 +1767,26 @@ def wire_words_video(ui):
         gr.Info(f"{len(part)} words are in the editor" + (" with their voices." if voice else "."), duration=6)
         return wvid.words_text(part), clips, title, sub
 
-    def voices_status(text, clips):
-        """What the video will sound like: which words have a voice clip (w<k> / w<k>e)."""
+    def voices_status(text, clips, on=True):
+        """What the video will sound like: which words have a voice clip (w<k> / w<k>e), and what 🎬 Render does."""
         words = wvid.parse_words(text)
         if not words:
             return ""
-        have = set()
-        for c in clips or []:
-            k = vocab_clip_key(c)
-            if k:
-                have.add(k)
+        have = {vocab_clip_key(c) for c in clips or []} - {None}
         nw = sum(1 for i in range(len(words)) if (i + 1, "w") in have)
-        ne = sum(1 for i, w in enumerate(words) if w["ex"] and (i + 1, "e") in have)
         nx = sum(1 for w in words if w["ex"])
-        if not have:
-            ok, why = word_import.voice_ready(DATA_DIR)
-            return ("⚠️ **No voice clips** — the video will only have the music and the sound effects. "
-                    + ("Press 🎙️ Make the voices (or tick the box below)." if ok else why))
+        ne = sum(1 for i, w in enumerate(words) if w["ex"] and (i + 1, "e") in have)
         miss = len(words) - nw + nx - ne
-        return (f"🎙️ **{nw} of {len(words)} words** and **{ne} of {nx} sentences** have a voice"
-                + (f" — ⚠️ {miss} missing: press 🎙️ Make the voices" if miss else " ✅"))
+        if not miss:
+            return f"🎙️ ✅ All **{len(words)} words** and **{nx} sentences** have a voice"
+        if on:
+            ok, why = word_import.voice_ready(DATA_DIR)
+            if not ok:
+                return "⚠️ " + why
+            return (f"🎙️ **Voices on** — 🎬 Render video first makes the {miss} missing voice clip"
+                    f"{'s' if miss != 1 else ''} (each costs credits only once). {why}")
+        return (f"⚠️ **{miss} voice clip{'s' if miss != 1 else ''} missing** and the 🎙️ box is unticked — those "
+                "words will have no voice (only music and sound effects).")
 
     def make_voices(text, progress=gr.Progress()):
         words = wvid.parse_words(text)
@@ -1778,14 +1803,9 @@ def wire_words_video(ui):
         gr.Info(f"🎙️ {len(clips)} voice clips are ready.", duration=5)
         return clips
 
-    def ticked(on, text, progress=gr.Progress()):
-        if not on or not wvid.parse_words(text):
-            return gr.update()
-        return make_voices(text, progress)
-
     ui["v_make"].click(make_voices, ui["words"], ui["audio"])
-    ui["voice"].input(ticked, [ui["voice"], ui["words"]], ui["audio"])
-    gr.on(triggers=[ui["words"].change, ui["audio"].change], fn=voices_status, inputs=[ui["words"], ui["audio"]],
+    gr.on(triggers=[ui["words"].change, ui["audio"].change, ui["voice"].change], fn=voices_status,
+          inputs=[ui["words"], ui["audio"], ui["voice"]],
           outputs=ui["v_status"], trigger_mode="always_last", show_progress="hidden")
 
     ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
