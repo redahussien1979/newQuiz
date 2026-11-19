@@ -115,7 +115,7 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
 - `engine/templates/words_video.py` — template `wordsvideo`, English Words sub-tab 🎬 Words video (after 🖼️ Image
   posts; `app.words_video_ui` / `wire_words_video`, own project bar, shares 🎨 Style & sound + 🔚 Ending; its preview
   = `preview_panel(..., words_video=True)` → `pv["wv"]` in `wv_col`, `right_side` shows one of post / wv / video).
-  `wordsvideo.words` = lines `English | Arabic | IPA | English meaning | example` (any number). Idioms / expressions:
+  `wordsvideo.words` = lines `English | Arabic | IPA | English meaning | example | emoji` (any number). Idioms / expressions:
   `wordsvideo.kind` (`KINDS`: auto = WORD / EXPRESSION by word count, or word / idiom / expression / phrasal / proverb)
   sets the card label, header kicker and the automatic title; `_ex_chunks` retries the highlight with pronouns and
   modals (`_ANY`) as (something) gaps; recap rows put a long item over its Arabic. White pill bubbles
@@ -131,7 +131,13 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   accent strip on top + `wordsvideo.touches` (`TOUCHES`, default all): corner (bottom-right cut + folded flap), deck
   (two tinted cards `back`, pre-rotated, fan out behind after the pop), tint (accent wash fading down), grain; focus =
   bubbles drawn on their own layer and blurred at 1/4 size while a card is up; brand = `_brand` bar (LOGO +
-  handle) at the top, header moved down 24 px; `_card_frame`: letters drop in by strips, IPA pill + speaker waves, divider, the Arabic meaning
+  handle) at the top, header moved down 24 px; stress = `_stress_split` (IPA syllable after ˈ) tinted + dotted in the IPA pill,
+  a `stress` element beats once when the word is said; number = outlined 2-digit number at the right of the top
+  row; drift = `_cam` (slow figure-eight; bubbles full depth, dots half depth, card + header still). Bubble style
+  `wordsvideo.bubble_style` (`BUBBLES`: pill / tag = luggage tag with punched hole / sticky = tinted note with tape,
+  askew). Emoji: 6th words field / Excel Emoji column (`word_import` key `emoji`) → `emoji_img` (system colour emoji
+  font `EMOJI_FONTS`: Segoe UI Emoji on Windows, Noto Color Emoji 109 px) in the bubble chip + a `sticker` springing
+  onto the card's top-right corner; `_card_frame`: letters drop in by strips, IPA pill + speaker waves, divider, the Arabic meaning
   word by word RTL (`_ar_words` = one image per word on one baseline) with `wordsvideo.ar_style` (`AR_STYLES` /
   `AR_TIME` lead + step): brush (default, `_brush_mask` = textured paint stroke painted RTL, words pop), stamp (words
   slam in + ink `splat` + stamp thud), ribbon (`_ribbon`, white words), swoosh (`_swoosh` pen stroke under), plain;

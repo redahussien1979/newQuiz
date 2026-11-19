@@ -26,6 +26,7 @@ _HEAD = {  # "def" first: "English meaning" must not be taken for the English wo
                 "التعبير", "المصطلح", "الكلمة", "الانجليزية", "الإنجليزية", "انجليزي", "إنجليزي", "كلمة"),
          "ar": ("arabic", "meaning", "translation", "arabicmeaning", "المعنى", "العربية", "الترجمة", "عربي", "معنى"),
          "ipa": ("ipa", "pronunciation", "phonetic", "phonetics", "النطق"),
+         "emoji": ("emoji", "icon", "ايموجي", "إيموجي", "رمز"),
          "ex": ("samplesentence", "sentence", "example", "examplesentence", "sample", "usage", "مثال", "جملة",
                 "الجملة", "المثال"),
          # page title / subtitle (subtitle first: "العنوان الفرعي" also starts like "العنوان")
@@ -71,6 +72,7 @@ def read_words(path, sheet=None):
         cell = lambda k: _clean(row[cols[k]]) if k in cols and cols[k] < len(row) else ""  # noqa: E731
         en, ar, ipa, ex = cell("en"), cell("ar"), cell("ipa"), cell("ex")
         dfn = cell("def")
+        emo = cell("emoji")
         if cell("title"):
             title, sub = cell("title"), cell("sub")  # a new title starts with its own subtitle (or none)
         elif cell("sub"):
@@ -87,7 +89,7 @@ def read_words(path, sheet=None):
         if len(alts) > 1:
             ar = "، ".join(alts)
         words.append(dict(en=en, ar=ar, ipa=clean_ipa(ipa) if ipa else "", ex=ex, row=r, title=title, sub=sub,
-                          **({"def": dfn} if dfn else {}), **({"alts": alts} if len(alts) > 1 else {})))
+                          **({"def": dfn} if dfn else {}), **({"emoji": emo} if emo else {}), **({"alts": alts} if len(alts) > 1 else {})))
     return words, problems
 
 

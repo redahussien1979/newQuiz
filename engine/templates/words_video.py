@@ -92,8 +92,45 @@ POP_FX = [("Confetti — dots and paper strips burst out and fall", "confetti"),
           ("None — a clean pop", "none")]
 TOUCHES = [("Folded corner on the card", "corner"), ("Deck of cards behind it", "deck"),
            ("Soft colour tint at the top of the card", "tint"), ("Paper grain on the card", "grain"),
-           ("Depth of field — the words behind go soft", "focus"), ("Brand bar — logo + handle at the top", "brand")]
-TOUCH_DEFAULT = ["corner", "deck", "tint", "grain", "focus", "brand"]
+           ("Depth of field — the words behind go soft", "focus"), ("Brand bar — logo + handle at the top", "brand"),
+           ("Stress mark — the stressed syllable of the IPA, pulsing when spoken", "stress"),
+           ("Big outlined number on the card", "number"),
+           ("Slow camera drift — the scene behind the card floats gently", "drift")]
+TOUCH_DEFAULT = ["corner", "deck", "tint", "grain", "focus", "brand", "stress", "number", "drift"]
+BUBBLES = [("Pills", "pill"), ("Luggage tags", "tag"), ("Sticky notes", "sticky")]
+EMOJI_FONTS = [(r"C:\Windows\Fonts\seguiemj.ttf", 96), ("/System/Library/Fonts/Apple Color Emoji.ttc", 96),
+               ("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", 109),
+               ("/usr/share/fonts/noto-color-emoji/NotoColorEmoji.ttf", 109)]  # CBDT emoji only come in 109 px
+_EMOJI = {}
+
+
+def emoji_img(ch, d):
+    """An emoji drawn in colour at d x d px with the system's emoji font (Windows: Segoe UI Emoji), or None."""
+    from PIL import ImageFont
+    key = (ch, d)
+    if key in _EMOJI:
+        return _EMOJI[key]
+    out = None
+    for path, size in EMOJI_FONTS:
+        if not os.path.isfile(path):
+            continue
+        try:
+            f = ImageFont.truetype(path, size)
+            im = Image.new("RGBA", (size * 3, size * 2), (0, 0, 0, 0))
+            ImageDraw.Draw(im).text((size // 2, size // 3), ch, font=f, embedded_color=True)
+            box = im.getbbox()
+            if box:
+                im = im.crop(box)
+                sc_ = d / max(im.size)
+                out = im.resize((max(1, int(im.width * sc_)), max(1, int(im.height * sc_))), Image.LANCZOS)
+                break
+        except Exception:
+            continue
+    _EMOJI[key] = out
+    return out
+
+
+_IPA_V = set("aeiouæɑɒɔəɛɜɪʊʌyøœɐɘɵɤɯɝɚ")
 LOGO = os.path.join(ROOT, "projects", "brand", "logolept_logo.png")
 PICK_LEN = {"roulette": 0.85, "tap": 0.95, "spotlight": 1.25, "shake": 0.9, "direct": 0}
 
@@ -116,13 +153,13 @@ def parse_words(text):
         if not line or line.startswith("#"):
             continue
         parts = [" ".join(p.split()) for p in line.split("|")]
-        parts += [""] * (5 - len(parts))
-        en, ar, ipa, df, ex = parts[:5]
+        parts += [""] * (6 - len(parts))
+        en, ar, ipa, df, ex, emo = parts[:6]
         if not en:
             continue
         if ipa and not ipa.startswith("/") and not ipa.startswith("["):
             ipa = f"/{ipa.strip('/')}/"
-        out.append(dict(en=en, ar=ar, ipa=ipa, df=df, ex=ex))
+        out.append(dict(en=en, ar=ar, ipa=ipa, df=df, ex=ex, emoji=emo.strip()))
     return out
 
 
@@ -130,7 +167,8 @@ def words_text(words):
     """The editor's text from word dicts (word_import.read_words: en, ar, ipa, def, ex)."""
     lines = []
     for w in words:
-        cells = [w.get("en", ""), w.get("ar", ""), w.get("ipa", ""), w.get("def", w.get("df", "")), w.get("ex", "")]
+        cells = [w.get("en", ""), w.get("ar", ""), w.get("ipa", ""), w.get("def", w.get("df", "")), w.get("ex", ""),
+                 w.get("emoji", "")]
         cells = [" ".join(str(c or "").replace("|", "/").split()) for c in cells]
         while len(cells) > 2 and not cells[-1]:
             cells.pop()
@@ -546,6 +584,28 @@ def _smooth(x):
     return x * x * (3 - 2 * x)
 
 
+def _stress_split(ipa):
+    """(before, stressed syllable, after) of an IPA string: the syllable after the primary stress mark ˈ (onset,
+    vowel, and the coda up to the next syllable's onset). None when there is no stress mark."""
+    i = ipa.find("ˈ")
+    if i < 0:
+        return None
+    j = i + 1
+    n = len(ipa)
+    while j < n and ipa[j] not in _IPA_V and ipa[j] not in "ˌ./":  # onset
+        j += 1
+    while j < n and (ipa[j] in _IPA_V or ipa[j] in "ː\u0303\u0329\u032f"):  # vowel (long, diphthong)
+        j += 1
+    k = j
+    while k < n and ipa[k] not in _IPA_V and ipa[k] not in "ˌˈ./":
+        k += 1
+    if k < n and ipa[k] in _IPA_V and k - j >= 1:  # leave one consonant to start the next syllable
+        k -= 1
+    if ipa[k - 1:k] == "ʃ" and ipa[k - 2:k - 1] == "t" or ipa[k - 1:k] == "ʒ" and ipa[k - 2:k - 1] == "d":
+        pass
+    return ipa[:i], ipa[i:k], ipa[k:]
+
+
 def _rotate_scale(im, scale, angle):
     if abs(scale - 1) > 0.004:
         im = im.resize((max(1, int(im.width * scale)), max(1, int(im.height * scale))), Image.BILINEAR)
@@ -573,24 +633,25 @@ EXAMPLE = {
         "title": "{count} Words to Sound Smarter",
         "subtitle": "كلمات إنجليزية ستبهر بها الجميع",
         "words": ("Resilient | مَرِن، سريع التعافي | /rɪˈzɪliənt/ | able to recover quickly from difficulties | "
-                  "Kids are often more resilient than we think.\n"
+                  "Kids are often more resilient than we think. | 💪\n"
                   "Overwhelmed | مُنهَك، غارق في المهام | /ˌəʊvəˈwelmd/ | having too much to deal with at once | "
-                  "I felt overwhelmed by all the emails.\n"
+                  "I felt overwhelmed by all the emails. | 😵\n"
                   "Grateful | مُمتنّ | /ˈɡreɪtfl/ | feeling thankful for something | "
-                  "I'm so grateful for your help.\n"
+                  "I'm so grateful for your help. | 🙏\n"
                   "Reluctant | متردّد، غير راغب | /rɪˈlʌktənt/ | not willing to do something | "
-                  "He was reluctant to ask for help.\n"
+                  "He was reluctant to ask for help. | 😬\n"
                   "Thrive | يزدهر، ينمو بقوة | /θraɪv/ | to grow or develop very well | "
-                  "Plants thrive in warm sunlight.\n"
+                  "Plants thrive in warm sunlight. | 🌱\n"
                   "Genuine | حقيقي، صادق | /ˈdʒenjuɪn/ | real and sincere, not fake | "
-                  "She has a genuine smile."),
+                  "She has a genuine smile. | 💯"),
         "design": "paper",
         "arabic_font": "",
         "ar_style": "brush",
         "kind": "auto",
         "ex_reveal": "redbold",
         "pop_fx": "confetti",
-        "touches": ["corner", "deck", "tint", "grain", "focus", "brand"],
+        "touches": ["corner", "deck", "tint", "grain", "focus", "brand", "stress", "number", "drift"],
+        "bubble_style": "pill",
         "pace": "normal",
         "pick": "roulette",
         "recap": True,
@@ -615,6 +676,7 @@ class WordsVideo:
         self.pick = d.get("pick") if d.get("pick") in PICK_LEN else "roulette"
         tch = d.get("touches")
         self.touch = set(TOUCH_DEFAULT if tch is None else [x for x in (tch or []) if x in dict((v, k_) for k_, v in TOUCHES)])
+        self.bubble_style = d.get("bubble_style") if d.get("bubble_style") in ("pill", "tag", "sticky") else "pill"
         self.pop_fx = d.get("pop_fx") if d.get("pop_fx") in dict((v, k_) for k_, v in POP_FX) else "confetti"
         self.ar_style = d.get("ar_style") if d.get("ar_style") in AR_TIME else "brush"
         self.ex_reveal = d.get("ex_reveal") if d.get("ex_reveal") in dict((v, k) for k, v in EX_REVEALS) else "redbold"
@@ -798,9 +860,27 @@ class WordsVideo:
         bh = int(size * 1.95)
         dot = int(bh * 0.62)
         bw = int(adv) + dot + int(size * 1.25) + 16
-        m = _rr_mask(bw, bh, bh / 2)
-        inner = Image.new("L", (bw, bh), 0)
-        inner.paste(_rr_mask(bw - 5, bh - 5, bh / 2 - 2.5), (2, 2))
+        st = self.bubble_style
+        if st == "tag":  # a luggage tag: pointed right end with a punched hole
+            bw += int(bh * 0.45)
+            ss = 3
+            tm = Image.new("L", (bw * ss, bh * ss), 0)
+            r_, pt = bh * 0.22 * ss, bh * 0.45 * ss
+            d_ = ImageDraw.Draw(tm)
+            d_.rounded_rectangle([0, 0, bw * ss - pt + r_, bh * ss - 1], int(r_), fill=255)
+            d_.polygon([(bw * ss - pt, 0), (bw * ss - 1, bh * ss * 0.5), (bw * ss - pt, bh * ss - 1)], fill=255)
+            hx, hy, hr = bw * ss - pt * 0.62, bh * ss / 2, bh * 0.1 * ss
+            d_.ellipse([hx - hr, hy - hr, hx + hr, hy + hr], fill=0)
+            m = tm.resize((bw, bh), Image.LANCZOS)
+            inner = m.filter(ImageFilter.MinFilter(5))
+        elif st == "sticky":  # a sticky note: small corner radius
+            m = _rr_mask(bw, bh, 8)
+            inner = Image.new("L", (bw, bh), 0)
+            inner.paste(_rr_mask(bw - 5, bh - 5, 6), (2, 2))
+        else:
+            m = _rr_mask(bw, bh, bh / 2)
+            inner = Image.new("L", (bw, bh), 0)
+            inner.paste(_rr_mask(bw - 5, bh - 5, bh / 2 - 2.5), (2, 2))
         edge = Image.fromarray(np.clip(np.array(m, int) - np.array(inner, int), 0, 255).astype(np.uint8))
         tx = dot + int(size * 0.55) + 8
         ty = (bh - txt_im.height) // 2 + int(size * 0.04)
@@ -832,9 +912,31 @@ class WordsVideo:
             out.alpha_composite(im, (SH, SH))
             return out
 
+        emo = emoji_img(w["emoji"], int(dot * 0.78)) if w.get("emoji") else None
+        if emo is not None:  # the word's emoji on a white chip instead of the number
+            _chip = chip
+
+            def chip(col, ink, check=False):
+                if check:
+                    return _chip(col, ink, True)
+                c_ = Image.new("RGBA", (dot, dot), (0, 0, 0, 0))
+                cm_ = Image.new("L", (dot * 3, dot * 3), 0)
+                ImageDraw.Draw(cm_).ellipse([0, 0, dot * 3 - 1, dot * 3 - 1], fill=255)
+                c_.alpha_composite(_solid(cm_.resize((dot, dot), Image.LANCZOS), _mix(acc, (255, 255, 255), 0.82)))
+                c_.alpha_composite(emo, ((dot - emo.width) // 2, (dot - emo.height) // 2))
+                return c_
         # idle: white pill, hairline edge, the number in an accent chip
-        idle = _solid(m, L["card"])
+        idle = _solid(m, L["card"] if st != "sticky" else _mix(acc, (255, 255, 255), 0.8))
         idle.alpha_composite(_solid(edge, L["ink"], 0.08))
+        if st == "tag":  # a ring around the hole
+            hx, hy, hr = bw - bh * 0.45 * 0.62, bh / 2, bh * 0.1
+            rg = Image.new("L", (bw * 3, bh * 3), 0)
+            ImageDraw.Draw(rg).ellipse([(hx - hr - 4) * 3, (hy - hr - 4) * 3, (hx + hr + 4) * 3, (hy + hr + 4) * 3],
+                                       outline=255, width=9)
+            idle.alpha_composite(_solid(rg.resize((bw, bh), Image.LANCZOS), acc, 0.7))
+        if st == "sticky":  # a strip of tape on top
+            tp = _solid(_rr_mask(int(bh * 0.9), int(bh * 0.28), 3), (255, 255, 255), 0.55)
+            idle.alpha_composite(tp.rotate(-4, Image.BICUBIC, expand=True), (bw // 2 - int(bh * 0.45), -2))
         idle.alpha_composite(chip(acc, _on(acc)), (dx, (bh - dot) // 2))
         idle.alpha_composite(txt_im, (tx - p, ty))
         # done: filled with the accent, a check in the chip
@@ -844,7 +946,12 @@ class WordsVideo:
         dt, _, _, dp = _ltext(self.en_font, w["en"], size, "Bold", ink)
         done.alpha_composite(dt, (tx - dp, ty))
         glow = _glow(m, acc, 18, 0.45, grow=3)
-        return dict(idle=on_shadow(idle), done=on_shadow(done), glow=glow, w=bw, h=bh)
+        idle, done = on_shadow(idle), on_shadow(done)
+        if st == "sticky":  # each note sits a little askew
+            ang = ((k * 37) % 7 - 3) * 0.9
+            idle = idle.rotate(ang, Image.BICUBIC, expand=True)
+            done = done.rotate(ang, Image.BICUBIC, expand=True)
+        return dict(idle=idle, done=done, glow=glow, w=bw, h=bh)
 
     def _layout_bubbles(self):
         """Bubbles in staggered rows filling the float zone, at the biggest size that fits."""
@@ -887,10 +994,17 @@ class WordsVideo:
         self.phase = [(rng.uniform(0, 6.3), rng.uniform(0, 6.3), rng.uniform(0.7, 1.1), rng.uniform(0.9, 1.4))
                       for _ in range(self.n)]
 
+    def _cam(self, t, depth=1.0):
+        """Slow camera drift (a lazy figure-eight, a few px): deeper layers move less (parallax)."""
+        if "drift" not in self.touch:
+            return 0.0, 0.0
+        return depth * 16 * math.sin(t * 0.19), depth * 12 * math.sin(t * 0.27 + 1.3)
+
     def _float(self, k, t):
         a, b, f1, f2 = self.phase[k]
         x, y = self.pos[k]
-        return x + 9 * math.sin(t * f1 + a), y + 13 * math.sin(t * f2 + b)
+        cx, cy = self._cam(t)
+        return x + 9 * math.sin(t * f1 + a) + cx, y + 13 * math.sin(t * f2 + b) + cy
 
     # ============================================================ timeline
     def _timeline(self):
@@ -1011,10 +1125,10 @@ class WordsVideo:
             c0, c1 = (np.array(c, float) for c in L["bg"])
             arr = np.repeat(c0 * (1 - y) + c1 * y, W, axis=1)
             base = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB").convert("RGBA")
-            dots = Image.new("L", (W, H + DOT_GAP), 0)
+            dots = Image.new("L", (W + DOT_GAP, H + DOT_GAP), 0)
             dd = ImageDraw.Draw(dots)
             for gy in range(DOT_GAP // 2, H + DOT_GAP, DOT_GAP):
-                for gx in range(DOT_GAP // 2, W, DOT_GAP):
+                for gx in range(DOT_GAP // 2, W + DOT_GAP, DOT_GAP):
                     dd.ellipse([gx - 2.2, gy - 2.2, gx + 2.2, gy + 2.2], fill=255)
             _BG_CACHE[key] = (base, _solid(dots, L["dots"], 0.16 if self.light else 0.12))
         self.bg_base, self.bg_dots = _BG_CACHE[key]
@@ -1040,8 +1154,14 @@ class WordsVideo:
 
     def _background(self, t, dim):
         frame = self.bg_base.copy()
-        off = int(t * 6) % DOT_GAP
-        frame.alpha_composite(self.bg_dots.crop((0, off, W, off + H)))
+        if "drift" in self.touch:  # the far layer: the camera's drift at half depth, and a slow climb
+            cx, cy = self._cam(t, 0.5)
+            ox = int(DOT_GAP - cx) % DOT_GAP
+            oy = int(t * 4 - cy) % DOT_GAP
+            frame.alpha_composite(self.bg_dots.crop((ox, oy, ox + W, oy + H)))
+        else:
+            off = int(t * 6) % DOT_GAP
+            frame.alpha_composite(self.bg_dots.crop((0, off, W, off + H)))
         if dim > 0:  # the world steps back while a card is up
             veil = (24, 28, 44) if self.light else (16, 20, 30)
             frame.alpha_composite(Image.new("RGBA", (W, H), veil + (int(255 * dim * (0.15 if self.light else 0.35)),)))
@@ -1085,7 +1205,25 @@ class WordsVideo:
         els.append(dict(kind="pop", img=chip, x=PAD, y=y, t=0.22))
         lab, lb, ladv, lp = _ltext(EN_FONT, f"{self.labels[k]} {k + 1} OF {self.n}", 27, "Bold", soft)
         els.append(dict(kind="slide", img=lab, x=PAD + chip_d + 20 - lp, y=y + chip_d / 2 - lb + 10, t=0.3))
-        for j, c in enumerate((acc, acc2, acc3)):
+        if w.get("emoji"):  # the emoji pops onto the card's top-right corner like a sticker
+            em = emoji_img(w["emoji"], 104)
+            if em is not None:
+                st_ = Image.new("RGBA", (em.width + 40, em.height + 40), (0, 0, 0, 0))
+                sh_ = Image.new("L", st_.size, 0)
+                sh_.paste(em.getchannel("A"), (20, 26))
+                st_.alpha_composite(_solid(sh_.filter(ImageFilter.GaussianBlur(6)), (20, 24, 40), 0.25))
+                st_.alpha_composite(em, (20, 20))
+                st_ = st_.rotate(-12, Image.BICUBIC, expand=True)
+                els.append(dict(kind="sticker", img=st_, x=CW - st_.width + 46, y=-st_.height // 2 + 10, t=0.55))
+        if "number" in self.touch:  # a big outlined number in the top-right corner, cut by the card's edge
+            nf = get_font(150, "Black", EN_FONT)
+            ntxt = f"{k + 1:02d}"
+            nb = nf.getbbox(ntxt)
+            nim = Image.new("L", (nb[2] - nb[0] + 20, nb[3] - nb[1] + 20), 0)
+            ImageDraw.Draw(nim).text((10 - nb[0], 10 - nb[1]), ntxt, font=nf, fill=0, stroke_width=3, stroke_fill=255)
+            right = CW - PAD - (70 if w.get("emoji") else 0)  # room for the sticker on the corner
+            els.insert(0, dict(kind="number", img=_solid(nim, acc, 0.4), x=right - nim.width + 10, y=24, t=0.25))
+        for j, c in enumerate((acc, acc2, acc3) if "number" not in self.touch else ()):
             dm = Image.new("L", (54, 54), 0)
             ImageDraw.Draw(dm).ellipse([0, 0, 53, 53], fill=255)
             dm = dm.resize((18, 18), Image.LANCZOS)
@@ -1116,6 +1254,7 @@ class WordsVideo:
         if w["ipa"]:
             isz = int(40 * sc)
             it, ib, iadv, ip = _ltext(IPA_FONT, w["ipa"], isz, "Bold", acc_txt)
+            parts = _stress_split(w["ipa"]) if "stress" in self.touch else None
             ph = int(isz * 1.75)
             spk = int(ph * 0.62)
             pw = int(iadv) + spk + int(isz * 1.6)
@@ -1135,8 +1274,32 @@ class WordsVideo:
             dd.arc([0.5 * u, 0.3 * u, 0.82 * u, 0.7 * u], -50, 50, fill=tuple(acc_txt) + (255,), width=int(0.07 * u))
             sp = sp.resize((spk, spk), Image.LANCZOS)
             pill.alpha_composite(sp, (sx, sy))
-            pill.alpha_composite(it, (sx + spk + int(isz * 0.3) - ip, int(ph / 2 + isz * 0.36) - ib))
+            tx0 = sx + spk + int(isz * 0.3)
+            if parts:  # the stressed syllable: deeper colour on a soft tint with a dot under it (pulses when spoken)
+                a_, b_, c_ = parts
+                xa = _adv(IPA_FONT, a_, isz, "Bold")
+                xb = _adv(IPA_FONT, b_, isz, "Bold")
+                soft_c = _mix(acc_txt, (255, 255, 255), 0.25)
+                for txt_, x_, col_ in ((a_, 0, soft_c), (c_, xa + xb, soft_c)):
+                    if txt_:
+                        im_, b0, _, p0 = _ltext(IPA_FONT, txt_, isz, "Bold", col_)
+                        pill.alpha_composite(im_, (int(tx0 + x_) - p0, int(ph / 2 + isz * 0.36) - b0))
+                hi, hb, hadv, hp = _ltext(IPA_FONT, b_, isz, "Bold", _mix(acc, (0, 0, 0), 0.3))
+                bw2, bh2 = int(hadv) + 14, int(isz * 1.18)
+                syl = Image.new("RGBA", (bw2 + 2 * hp, hi.height + 16), (0, 0, 0, 0))
+                syl.alpha_composite(_solid(_rr_mask(bw2, bh2, 10), acc, 0.18), (hp - 7, int(hb - isz * 0.92)))
+                syl.alpha_composite(hi, (0, 0))
+                dm = Image.new("L", (36, 36), 0)
+                ImageDraw.Draw(dm).ellipse([0, 0, 35, 35], fill=255)
+                syl.alpha_composite(_solid(dm.resize((9, 9), Image.LANCZOS), acc), (int(hp + hadv / 2 - 4), int(hb + isz * 0.32)))
+                ox = int(tx0 + xa) - hp
+                oy = int(ph / 2 + isz * 0.36) - hb
+                pill.alpha_composite(syl, (ox, oy))  # in the pill from the start; the beat is drawn on top
+            else:
+                pill.alpha_composite(it, (tx0 - ip, int(ph / 2 + isz * 0.36) - ib))
             els.append(dict(kind="pop", img=pill, x=(CW - pw) / 2, y=y, t="ipa"))
+            if parts:
+                els.append(dict(kind="stress", img=syl, x=(CW - pw) / 2 + ox, y=y + oy, t="ipa"))
             self_wave = dict(kind="wave", x=(CW - pw) / 2 + sx + spk * 0.62, y=y + ph / 2, r=spk * 0.42, col=acc_txt)
             els.append(self_wave)
             y += ph + int(30 * sc)
@@ -1284,6 +1447,7 @@ class WordsVideo:
             y += ph
         y += 54
         ch = int(y)
+        els.sort(key=lambda e: e["kind"] == "sticker")  # the sticker sits on top of everything
         return self._card_body(k, ch, els, acc, acc2, acc3) | dict(ch=ch, els=els, ntok=sum(1 for e in els if e["kind"] == "tok"))
 
     def _card_body(self, k, ch, els, acc, acc2, acc3):
@@ -1338,7 +1502,7 @@ class WordsVideo:
                 b_.alpha_composite(_glow(bm, (20, 24, 40), 18, 0.12), (MARGIN + 15 * (i + 1) - 36, MARGIN + dy - 30))
                 b_.alpha_composite(_solid(bm, _mix(acc, (255, 255, 255), tone)), (MARGIN + 15 * (i + 1), MARGIN + dy))
                 back.append((b_.rotate(ang, Image.BICUBIC, expand=True), ang))
-        return dict(body=body, back=back)
+        return dict(body=body, back=back, mask=m)
 
     def _when(self, sg, key):
         return {"ipa": sg["ipa"], "ipa+": sg["ipa"] + 0.12, "ar": sg["ar"], "df": sg["df"] or 0,
@@ -1365,8 +1529,35 @@ class WordsVideo:
             if kind == "tok":
                 self._token(img, e, t, sg)
                 continue
+            if kind == "stress":  # the stressed syllable beats once as the word is said
+                say0, say1 = sg["say"]
+                bt = max(say0, self._when(sg, "ipa") + 0.35) + 0.12
+                beat = math.exp(-((t - bt) / 0.13) ** 2) if abs(t - bt) < 0.4 else 0.0
+                if beat > 0.02:
+                    si = _rotate_scale(e["img"], 1 + 0.22 * beat, 0)
+                    cx_, cy_ = MARGIN + e["x"] + e["img"].width / 2, MARGIN + e["y"] + e["img"].height / 2
+                    composite(img, si, int(round(cx_ - si.width / 2)), int(round(cy_ - si.height / 2)))
+                continue
             if kind == "exmark":
                 self._ex_marker(img, e, t, sg)
+                continue
+            if kind == "sticker":  # springs in with a twist
+                q = (t - sg["pop"] - e["t"]) / 0.55
+                if q > 0:
+                    sc_ = 0.2 + 0.8 * _spring(q * 1.1, 6.5, 12)
+                    si = _rotate_scale(e["img"], sc_, (1 - _out3(q)) * 25)
+                    cx_, cy_ = MARGIN + e["x"] + e["img"].width / 2, MARGIN + e["y"] + e["img"].height / 2
+                    composite(img, fade(si, min(1, q * 4)), int(round(cx_ - si.width / 2)), int(round(cy_ - si.height / 2)))
+                continue
+            if kind == "number":  # slides in from the right edge, clipped to the card
+                q = _smooth((t - sg["pop"] - e["t"]) / 0.5)
+                if q > 0:
+                    lay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                    composite(lay, fade(e["img"], q), int(MARGIN + e["x"] + 60 * (1 - q)), int(MARGIN + e["y"]))
+                    mm = Image.new("L", img.size, 0)
+                    mm.paste(c["mask"], (MARGIN, MARGIN))
+                    lay.putalpha(Image.fromarray(np.minimum(np.array(lay.getchannel("A")), np.array(mm)).astype(np.uint8)))
+                    img.alpha_composite(lay)
                 continue
             if kind == "wave":
                 if say0 <= t <= say1 + 0.2:
