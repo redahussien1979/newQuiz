@@ -124,8 +124,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   picking the next word (`pick`, `PICKS` / `PICK_LEN`, `seg["pick"]` + `seg["pk"]` window): roulette hops, tap
   (`_pointer`: arrow glides on a curve, presses, ripple + click), spotlight (`_spotlight`: dark veil with a soft hole
   cropped from `_spot_img`, glides over `seg["spot"]` words via `_spot_xy`), shake (waiting bubbles tremble harder
-  on a drumroll), direct; too few words left → tap; then the bubble flies to the centre, the white card pops (spring + shockwave ring + confetti discs
-  `_sparks`; card built lazily `_card` / `_build_card` = element list, LRU of 3; `_card_body` = white card, shadow,
+  on a drumroll), direct; too few words left → tap; then the bubble flies to the centre, the white card pops (calm spring, ~8 % overshoot) with `wordsvideo.pop_fx` (`POP_FX`):
+  confetti (default; `_sparks(strips=True)`: discs + spinning paper strips from outside the card's edge, falling),
+  sparkles (`_twinkles`: four-point `stars4` around the card), rays (`_rays`: soft accent sunburst behind the card),
+  ring (old shockwave), none; card built lazily `_card` / `_build_card` = element list, LRU of 3; `_card_body` = white card, shadow,
   accent strip on top; `_card_frame`: letters drop in by strips, IPA pill + speaker waves, divider, the Arabic meaning
   word by word RTL (`_ar_words` = one image per word on one baseline) with `wordsvideo.ar_style` (`AR_STYLES` /
   `AR_TIME` lead + step): brush (default, `_brush_mask` = textured paint stroke painted RTL, words pop), stamp (words

@@ -85,6 +85,11 @@ PICKS = [("Roulette — a light hops over the words, then lands on the next one"
          ("Spotlight — the screen darkens, a spotlight searches and stops on it", "spotlight"),
          ("Shake — the words tremble on a drumroll, then one jumps out", "shake"),
          ("Straight to the next word", "direct")]
+POP_FX = [("Confetti — dots and paper strips burst out and fall", "confetti"),
+          ("Sparkles — stars twinkle around the card", "sparkles"),
+          ("Light rays — soft rays fan out behind the card", "rays"),
+          ("Ring — a thin ring sweeps out", "ring"),
+          ("None — a clean pop", "none")]
 PICK_LEN = {"roulette": 0.85, "tap": 0.95, "spotlight": 1.25, "shake": 0.9, "direct": 0}
 
 CW = 940            # card width
@@ -579,6 +584,7 @@ EXAMPLE = {
         "ar_style": "brush",
         "kind": "auto",
         "ex_reveal": "redbold",
+        "pop_fx": "confetti",
         "pace": "normal",
         "pick": "roulette",
         "recap": True,
@@ -601,6 +607,7 @@ class WordsVideo:
         self.light = L["light"]
         self.pace = PACES.get(d.get("pace") or "normal", 1.0)
         self.pick = d.get("pick") if d.get("pick") in PICK_LEN else "roulette"
+        self.pop_fx = d.get("pop_fx") if d.get("pop_fx") in dict((v, k_) for k_, v in POP_FX) else "confetti"
         self.ar_style = d.get("ar_style") if d.get("ar_style") in AR_TIME else "brush"
         self.ex_reveal = d.get("ex_reveal") if d.get("ex_reveal") in dict((v, k) for k, v in EX_REVEALS) else "redbold"
         self.recap_on = d.get("recap", True) is not False
@@ -976,6 +983,18 @@ class WordsVideo:
             m = Image.new("L", (24 * ss, 24 * ss), 0)
             ImageDraw.Draw(m).ellipse([0, 0, 24 * ss - 1, 24 * ss - 1], fill=255)
             self.confetti[tuple(c)] = _solid(m.resize((24, 24), Image.LANCZOS), c)
+        self.strips = {tuple(c): _solid(_rr_mask(12, 30, 3), c) for c in set(self.acc)}  # paper confetti
+        self.stars4 = {}
+        for c in set(self.acc):  # a crisp four-point star
+            ss, d = 4, 100
+            m = Image.new("L", (d * ss, d * ss), 0)
+            pts = []
+            for i in range(8):
+                ang = math.pi / 4 * i - math.pi / 2
+                r = (0.5 if i % 2 == 0 else 0.13) * d * ss
+                pts.append((d * ss / 2 + r * math.cos(ang), d * ss / 2 + r * math.sin(ang)))
+            ImageDraw.Draw(m).polygon(pts, fill=255)
+            self.stars4[tuple(c)] = _solid(m.resize((d, d), Image.LANCZOS), c)
 
     def _background(self, t, dim):
         frame = self.bg_base.copy()
@@ -1787,8 +1806,8 @@ class WordsVideo:
         if sg["pop"] <= t < sg["out"]:
             img = self._card_frame(k, t)
             pp = prog(t, sg["pop"], sg["pop"] + 0.75)
-            s = 0.3 + 0.7 * _spring(pp * 1.25, 6.0, 11.0)
-            ang = -7 * (1 - _out3(pp * 1.3))
+            s = 0.3 + 0.7 * _spring(pp * 1.25, 8.0, 11.0)  # a calm overshoot (about 8 %)
+            ang = -4 * (1 - _out3(pp * 1.3))
             x, y, a = 540 + shx, ccy + shy, min(1, pp * 6)
             if t >= sg["end"]:  # collapse back into its bubble
                 pc = prog(t, sg["end"], sg["out"])
@@ -1799,14 +1818,19 @@ class WordsVideo:
                 y = ccy + (fy - ccy) * e
                 ang = 6 * math.sin(math.pi * pc)
                 a = 1 - prog(pc, 0.55, 1.0)
+            if self.pop_fx == "rays":
+                self._rays(frame, k, t - sg["pop"], x, y)
             _put(frame, _rotate_scale(img, s, ang), x, y, a)
-            # shockwave + confetti
+            # the pop effect (POP_FX)
             u = t - sg["pop"]
-            if 0 <= u < 0.7:
+            fx = self.pop_fx
+            if fx == "ring" and 0 <= u < 0.7:
                 pr = u / 0.7
                 _put(frame, _ring(120 + _out3(pr) * 620, 6 * (1 - pr) + 1, acc, (1 - pr) * 0.75), 540, ccy)
-            if 0.05 <= u < 1.1:
-                self._sparks(frame, k, u - 0.05, ccy, c["ch"])
+            if fx in ("ring", "confetti") and 0.05 <= u < 1.5:
+                self._sparks(frame, k, u - 0.05, ccy, c["ch"], strips=fx == "confetti")
+            if fx == "sparkles" and 0.05 <= u < 1.3:
+                self._twinkles(frame, k, u - 0.05, ccy, c["ch"])
 
     def _ending(self, frame, t):
         """The 🔚 Ending card in the video's own colours (intro line, question lines, arrow, call to action, handle)."""
@@ -1848,20 +1872,71 @@ class WordsVideo:
             d.polygon([(22, 85), (98, 85), (60, 132)], fill=c)
             composite(frame, lay, 480, int(ay - 70))
 
-    def _sparks(self, frame, k, u, cy, ch):
+    def _rays(self, frame, k, u, cx, cy):
+        """Soft light rays in the word's colour fanning out behind the card, turning slowly as they fade."""
+        if not 0 <= u < 1.6:
+            return
+        key = tuple(self.acc[k])
+        if not hasattr(self, "_ray_cache"):
+            self._ray_cache = {}
+        if key not in self._ray_cache:
+            n = 640
+            yy, xx = np.mgrid[0:n, 0:n] - n / 2
+            th = np.arctan2(yy, xx)
+            r = np.sqrt(xx ** 2 + yy ** 2) / (n / 2)
+            a = np.clip(np.sin(th * 9), 0, 1) ** 1.5 * np.clip(1 - r, 0, 1) ** 0.9 * np.clip(r * 4, 0, 1)
+            arr = np.zeros((n, n, 4), np.uint8)
+            arr[..., :3] = key
+            arr[..., 3] = (a * 255 * 0.6).astype(np.uint8)
+            self._ray_cache[key] = Image.fromarray(arr, "RGBA")
+        im = self._ray_cache[key].rotate(u * 22, Image.BILINEAR)
+        size = int(640 * (1.3 + 1.6 * _out3(u / 0.6)))
+        im = im.resize((size, size), Image.BILINEAR)
+        lv = _smooth(u / 0.15) * (1 - _smooth((u - 0.6) / 1.0))
+        _put(frame, im, cx, cy, lv)
+
+    def _twinkles(self, frame, k, u, cy, ch):
+        """Stars twinkling one after another around the card's edge."""
+        rng = np.random.default_rng(200 + k)
+        for i in range(16):
+            t0 = 0.055 * i
+            q = (u - t0) / 0.6
+            if not 0 < q < 1:
+                continue
+            side = rng.uniform(0, 2 * math.pi)
+            ex, ey = math.cos(side), math.sin(side)
+            m_ = max(abs(ex) / (CW / 2 + 30), abs(ey) / (ch / 2 + 30))  # on a rounded box just outside the card
+            x = 540 + ex / m_ + rng.uniform(-14, 14)
+            y = cy + ey / m_ + rng.uniform(-14, 14)
+            col = self.acc[(k + i) % self.n] if i % 2 else self.acc[k]
+            sc = math.sin(math.pi * q) * rng.uniform(0.5, 1.0)
+            _put(frame, _rotate_scale(self.stars4[tuple(col)], max(0.05, sc), q * 90), x, y, 1.0)
+
+    def _sparks(self, frame, k, u, cy, ch, strips=False):
+        """Confetti: discs (and paper strips that spin) burst out of the card's edges and fall."""
         rng = np.random.default_rng(100 + k)
-        pr = u / 1.05
-        for i in range(22):
+        pr = u / (1.45 if strips else 1.05)
+        if pr >= 1:
+            return
+        for i in range(30 if strips else 22):
             ang = rng.uniform(0, 2 * math.pi)
             sp = rng.uniform(380, 900)
             dist = sp * (1 - math.exp(-3.2 * u)) / 3.2 * 2.2
-            x = 540 + math.cos(ang) * (CW * 0.36 + dist)
-            y = cy + math.sin(ang) * (ch * 0.36 + dist) + 140 * u * u
+            x = 540 + math.cos(ang) * (CW * 0.54 + dist)  # bursts from outside the card's edge
+            y = cy + math.sin(ang) * (ch * 0.54 + dist) + 140 * u * u
             col = self.acc[(k + i) % self.n] if i % 3 else self.acc[k]
-            st = self.confetti[tuple(col)]
-            sc = rng.uniform(0.4, 1.0) * (1 - pr * 0.5)
-            a = (1 - pr) ** 1.3
-            _put(frame, _rotate_scale(st, sc, 0), x, y, a)
+            spin = rng.uniform(-1, 1) * 720
+            if strips:
+                y += 260 * u * u  # paper falls further
+            if strips and i % 2:
+                st = self.strips[tuple(col)]
+                sc = rng.uniform(0.7, 1.1)
+                _put(frame, _rotate_scale(st, sc * (0.55 + 0.45 * abs(math.cos(u * 9 + i))), spin * u), x, y,
+                     (1 - pr) ** 1.2)
+            else:
+                st = self.confetti[tuple(col)]
+                sc = rng.uniform(0.4, 1.0) * (1 - pr * 0.5)
+                _put(frame, _rotate_scale(st, sc, 0), x, y, (1 - pr) ** 1.3)
 
     # ============================================================ sound
     def sound(self, mx):

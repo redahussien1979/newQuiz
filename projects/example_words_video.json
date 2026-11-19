@@ -30,6 +30,7 @@
     "ar_style": "brush",
     "kind": "auto",
     "ex_reveal": "redbold",
+    "pop_fx": "confetti",
     "pace": "normal",
     "pick": "roulette",
     "recap": true,
