@@ -76,6 +76,7 @@ EX_REVEALS = [("Red + bold — the spoken word turns red and bold", "redbold"),
               ("Marker — a highlighter glides under the spoken word", "marker"),
               ("Appear — each word pops in when it is spoken", "appear")]
 RED = (214, 36, 36)
+GAP_MAX = 0.32  # a justified line adds at most this much (x the text size) to each space: tight, even word spacing
 AR_TIME = {"brush": (0.1, 0.13), "stamp": (0.0, 0.22), "ribbon": (0.14, 0.12), "swoosh": (0.0, 0.1),
            "plain": (0.0, 0.09)}
 PICKS = [("Roulette — a light hops over the words, then lands on the next one", "roulette"),
@@ -348,6 +349,15 @@ def _ex_chunks(text, phrase):
     return chunks
 
 
+def _slot(f, fb, c):
+    """Room a sentence chunk takes on its line: its own width, plus half of what its bold form adds (the spoken word
+    turns bold), or its pill for the word itself."""
+    if c[1]:
+        return fb.getlength(c[0]) + 20
+    a = f.getlength(c[0])
+    return a + max(0.0, fb.getlength(c[0]) - a) * 0.5
+
+
 def _even_lines(chunks, widths, space, avail):
     """[(chunks, width)] lines of similar width (least squared free space, the last line free) — justified lines
     then get small, even gaps. Glued chunks (punctuation) never start a line."""
@@ -534,7 +544,7 @@ EXAMPLE = {
     "template": "wordsvideo",
     "settings": {"theme": "Royal Blue", "language": "ar", "fps": 30, "music": "Lo-fi Chill", "music_gain": 0.9,
                  "music_file": "", "voice_file": "", "voice_offset": 0.5, "voice_gain": 1.0,
-                 "handle": "@logolep AR EN", "font_file": "", "intro_sound": "Swoosh + impact",
+                 "handle": "@logolept AR EN", "font_file": "", "intro_sound": "Swoosh + impact",
                  "tick_sound": "Classic", "tick_gain": 1.0},
     "ending": {"intro": "الحلقة القادمة:", "question": "{count} more words\n[gold]for daily conversations",
                "cta": "كم كلمة كنت تعرف؟ اكتب الرقم في التعليقات"},
@@ -1119,15 +1129,14 @@ class WordsVideo:
             pw = inner
             chunks = _ex_chunks(w["ex"], w["en"])
             best = None  # the biggest size whose justified lines keep their gaps small (<= ~0.9 em), at most 4 lines
-            for esz in range(int(46 * sc), max(28, int(34 * sc)) - 1, -2):
+            for esz in range(int(46 * sc), max(28, int(36 * sc)) - 1, -1):
                 f = get_font(esz, "SemiBold", self.en_font)
                 fb = get_font(esz, "Black", self.en_font)
                 sp_w = f.getlength(" ")
-                lines = _even_lines(chunks, [max(f.getlength(c[0]), fb.getlength(c[0]) + (24 if c[1] else 0))
-                                             for c in chunks], sp_w, pw - 100)
+                lines = _even_lines(chunks, [_slot(f, fb, c) for c in chunks], sp_w, pw - 100)
                 worst = max([(pw - 100 - wd) / max(1, sum(1 for i, c in enumerate(cur) if i and not c[2])) / esz
                              for cur, wd in lines[:-1]] or [0])
-                score = (len(lines) > 4, worst > 0.9, worst if worst > 0.9 else -esz)
+                score = (len(lines) > 4, worst > GAP_MAX, worst if worst > GAP_MAX else -esz)
                 if best is None or score < best[0]:
                     best = (score, esz, lines, sp_w)
             _, esz, lines, sp_w = best
@@ -1157,25 +1166,26 @@ class WordsVideo:
             for li, (cur, width) in enumerate(lines):
                 gaps = sum(1 for i, c in enumerate(cur) if i and not c[2])
                 last = li == len(lines) - 1
-                extra = (avail - width) / gaps if gaps and not last else 0
+                extra = min((avail - width) / gaps, esz * GAP_MAX) if gaps and not last else 0
                 x = left
                 for i, (tx, hl, glued, w0, w1) in enumerate(cur):
                     if i and not glued:
                         x += sp_w + extra
                     n_im, base, adv, p = _ltext(self.en_font, tx, esz, "SemiBold", ink)
                     b_im, bb, badv, bp = _ltext(self.en_font, tx, esz, "Black", red)
-                    sw = max(adv, badv)
+                    sw = adv + max(0.0, badv - adv) * 0.5
                     e = dict(kind="tok", x=x, y=ly, sw=sw, w0=w0, w1=w1, hl=hl, n=(n_im, base, adv, p),
                              b=(b_im, bb, badv, bp))
                     if hl:  # the word itself: on an accent pill once it is spoken
                         h_im, hb, hadv, hp = _ltext(self.en_font, tx, esz, "Black", _on(acc))
-                        pwid, pht = int(hadv) + 24, int(esz * 1.32)
+                        pwid, pht = int(hadv) + 20, int(esz * 1.32)
                         pl = Image.new("RGBA", (pwid + 2 * hp, h_im.height), (0, 0, 0, 0))
                         pl.alpha_composite(_grad_fill(_rr_mask(pwid, pht, 14), _mix(acc, (255, 255, 255), 0.12), acc),
                                            (hp, int(hb - esz * 0.98)))
-                        pl.alpha_composite(h_im, (12, 0))
+                        pl.alpha_composite(h_im, (10, 0))
                         e["pill"] = (pl, hb, pwid, hp)
-                        sw = max(sw, pwid)
+                        e["n"] = _ltext(self.en_font, tx, esz, "Black", ink)  # bold before it is spoken: fills its room
+                        sw = pwid
                         e["sw"] = sw
                     if self.ex_reveal == "marker":
                         mark["rects"].append((w0, w1, x - 8, ly - esz * 0.95, x + sw + 8, ly + esz * 0.3))

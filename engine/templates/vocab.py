@@ -412,7 +412,7 @@ EXAMPLE = {
     "template": "vocab",
     "settings": {"theme": "Royal Blue", "language": "ar", "fps": 30, "music": "Lo-fi Chill", "music_gain": 1.0,
                  "music_file": "", "voice_file": "", "voice_offset": 0.5, "voice_gain": 1.0,
-                 "handle": "@logolep AR EN", "font_file": "", "intro_sound": "Swoosh + impact",
+                 "handle": "@logolept AR EN", "font_file": "", "intro_sound": "Swoosh + impact",
                  "tick_sound": "Classic", "tick_gain": 1.0},
     "ending": {"intro": "الدرس القادم:", "question": "5 English idioms\n[gold]عن المال والعمل",
                "cta": "أي كلمة كانت جديدة عليك؟ اكتبها في التعليقات"},

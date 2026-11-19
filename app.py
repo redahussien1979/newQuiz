@@ -664,7 +664,7 @@ def project_bar():
     return dict(ex=ex_btn, open=open_btn, save=save_btn)
 
 
-EN_HANDLE = "@logolep AR EN"  # the English tabs' channel handle (English Words, Texts, News)
+EN_HANDLE = "@logolept AR EN"  # the English tabs' channel handle (English Words, Texts, News)
 
 
 def style_tab(handle_default="@Ma3loomaFast"):

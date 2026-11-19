@@ -111,7 +111,7 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `_OPT["recolour"]` and `_set_colors(pal)` recolours the designs with fixed colours (highlighter marker + pen,
   brush inks, tape / pencil pens, soft tints, Torn paper band / Arabic / glow, Clouds sky / words / bars / glow).
   The user's taste: clean background, clear bold type, one realistic mark per word, not busy — never propose neon looks.
-- English tabs (English Words incl. Words video, Texts, News): handle `@logolep AR EN` (`app.EN_HANDLE`, `style_tab(handle_default)`, their examples)
+- English tabs (English Words incl. Words video, Texts, News): handle `@logolept AR EN` (`app.EN_HANDLE`, `style_tab(handle_default)`, their examples)
 - `engine/templates/words_video.py` — template `wordsvideo`, English Words sub-tab 🎬 Words video (after 🖼️ Image
   posts; `app.words_video_ui` / `wire_words_video`, own project bar, shares 🎨 Style & sound + 🔚 Ending; its preview
   = `preview_panel(..., words_video=True)` → `pv["wv"]` in `wv_col`, `right_side` shows one of post / wv / video).
@@ -128,7 +128,8 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `AR_TIME` lead + step): brush (default, `_brush_mask` = textured paint stroke painted RTL, words pop), stamp (words
   slam in + ink `splat` + stamp thud), ribbon (`_ribbon`, white words), swoosh (`_swoosh` pen stroke under), plain;
   `seg["impacts"]` = pop + slammed words → card shake + camera punch-in (whole-frame zoom in `render`), meaning, example panel: justified lines (`_even_lines` = fewest
-  lines, even gaps; size picked so a gap stays <= ~0.9 em), each chunk in a slot as wide as its bold form; every word
+  lines, even gaps; size picked so the extra per space stays <= `GAP_MAX` em, and capped there), each chunk in a
+  slot = its width + half of what bold adds (`_slot`; the word itself = its pill, drawn bold before it is spoken); every word
   timed to the voice (`seg["extimes"]` from `clip_word_times`: exact ElevenLabs timings stored by
   `word_import.word_voices` → `save_timings` in DATA_DIR/tts/timings/<sha1 of the audio>.json, else spread over the
   voiced part by word length; no clip = a reading pace) and shown in `wordsvideo.ex_reveal` (`EX_REVEALS`: redbold
