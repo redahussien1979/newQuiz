@@ -493,8 +493,13 @@ def _check(d, col, width):
 
 def _arabic_font(name):
     """The file of the Arabic font family `name` (a library family; empty / unknown = AR_DEFAULT)."""
+    from ..core import _family_file
     from ..fonts import find, resolve
     name = str(name or "").strip() or AR_DEFAULT
+    if name == AR_DEFAULT:  # the bundled default: straight from the app folder, no font index involved
+        path = _family_file("NotoSansArabic")
+        if path and os.path.isfile(path):
+            return path
     fam = find(name)
     if fam is None:
         path = resolve(name)
