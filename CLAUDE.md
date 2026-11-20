@@ -34,6 +34,9 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
 - `engine/globe.py` — real-Earth globe intro from `data/earth.jpg` (NASA Blue Marble, public domain); in
   `timeline.py` the globe intro lasts `GLOBE_LEN` and the rest of the video is shifted by `self.off` (frames + sounds)
 - `engine/render.py` renders frames on several processes (`frame_stream`); templates' `render(t)` must depend only on t
+  (the workers get the main process's `fonts.families()` list via `_init_worker(project, families)`: a worker that
+  resolved fonts itself could read the index while another rewrites it and fall back to Cairo — the card then
+  flickered between two layouts; `fonts._save_index` writes atomically)
 - ⏹ Stop (preview panel + Know a Country): `app.stop_job` marks the browser session (`_stop_asked`); the thread
   running its job (`_bind`, set in `_claim` / `run` / `_stream_batch`) sees it via `core.check_stop()` (in `encode`,
   `frame_stream` while waiting, `render_clip`, between batch videos, ElevenLabs voices; know_country `should_stop`)

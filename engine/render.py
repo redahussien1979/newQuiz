@@ -75,8 +75,14 @@ def render_still(project, t, safe_zone=False, cached=False):
 _worker_video = None
 
 
-def _init_worker(project):
+def _init_worker(project, families=None):
+    """A render worker: it uses the main process's font list (so every worker resolves the same font files — a
+    worker reading the font index while another one rewrites it could otherwise fall back to Cairo) and builds the
+    video."""
     global _worker_video
+    if families is not None:
+        from . import fonts
+        fonts._state["families"] = families
     _worker_video = build(project)
 
 
@@ -98,7 +104,12 @@ def frame_stream(project, video, n_frames, fps, workers=None, chunk=6):
     import multiprocessing as mp
     jobs = [(a, min(n_frames, a + chunk), fps) for a in range(0, n_frames, chunk)]
     try:
-        pool = mp.get_context("spawn").Pool(workers, initializer=_init_worker, initargs=(project,))
+        try:
+            from .fonts import families
+            fams = families()  # resolved once, here
+        except Exception:
+            fams = None
+        pool = mp.get_context("spawn").Pool(workers, initializer=_init_worker, initargs=(project, fams))
     except Exception:  # no multiprocessing available here: render one by one
         for i in range(n_frames):
             yield video.render(i / fps).tobytes()

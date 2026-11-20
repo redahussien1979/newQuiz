@@ -140,11 +140,18 @@ def _index():
 
 
 def _save_index():
+    """Written to a temporary file and swapped in at once: another process never reads a half-written index."""
+    path = os.path.join(data_dir(), "fonts_index.json")
+    tmp = f"{path}.{os.getpid()}.tmp"
     try:
-        with open(os.path.join(data_dir(), "fonts_index.json"), "w", encoding="utf-8") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(_state["index"], f, ensure_ascii=False)
+        os.replace(tmp, path)
     except OSError:
-        pass
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 def _files(folder):
