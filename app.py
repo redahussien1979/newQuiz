@@ -222,8 +222,8 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 ### English in News tips
 - **📰 English in News**: upload one or many short news clips — ElevenLabs writes each transcript with the time of
   every word (your API key needs the *Speech to Text* permission; each clip is transcribed once and kept, so adding it
-  again costs nothing). Pick a clip in 🎞️ Clip to edit, click words in its transcript to make them key words (click
-  the next word to make a phrase, click again to remove; ✨ Suggest marks the less common words), type their Arabic in
+  again costs nothing). Pick a clip in 🎞️ Clip to edit, click words in its transcript to make them key words (drag
+  across words to make a phrase, click again to remove; ✨ Suggest marks the less common words), type their Arabic in
   the meanings table and give it a headline. 🎬 Render video makes the clip in the editor; 🎬 Render all clips makes
   every clip (one MP4 each + a .zip). Save project keeps all the clips.
 - The video: big subtitles that follow the speech word by word, each key word marked when it is said, a card with the
@@ -679,7 +679,123 @@ button {user-select: none; -webkit-user-select: none;}
 .font-gal .grid-wrap {height: auto !important; max-height: 640px;}
 .nw-meanings span, .nw-meanings input, .nw-meanings textarea {font-family: "Segoe UI", Tahoma, Arial, sans-serif !important;
   font-size: 1rem !important;}  /* Arabic reads badly in the table's monospace font */
+.nw-hide {display: none !important;}
+.nw-hint p {margin: 0 !important; font-size: .9rem;}
+.nw-tx {border: 1px solid var(--border-color-primary); border-radius: var(--radius-lg); padding: 8px 12px !important;}
+#nw-tx-box {line-height: 2.4; font-size: 1rem; user-select: none; -webkit-user-select: none;}
+#nw-tx-box.nw-empty {opacity: .6; line-height: 1.6;}
+#nw-tx-box .nw-w {cursor: pointer; border-radius: 5px; padding: 3px 2px; touch-action: none;}
+#nw-tx-box .nw-w:hover {background: rgba(127, 127, 127, .2);}
+#nw-tx-box .nw-k {border-radius: 6px; padding: 4px 3px 4px 4px; box-decoration-break: clone;
+  -webkit-box-decoration-break: clone; background: color-mix(in srgb, var(--c) 20%, transparent);}
+#nw-tx-box .nw-k .nw-w:hover {background: color-mix(in srgb, var(--c) 25%, transparent);}
+#nw-tx-box .nw-end {white-space: nowrap;}
+#nw-tx-box .nw-n {display: inline-block; min-width: 1.3em; margin-left: 5px; padding: 0 4px; border-radius: 4px;
+  background: var(--c); color: #fff; font-size: .75rem; line-height: 1.5; text-align: center; cursor: pointer;}
+#nw-tx-box .nw-drag, #nw-tx-box .nw-drag:hover {background: rgba(249, 115, 22, .3); outline: 2px dashed #f97316;}
+#nw-tx-box .nw-c0 {--c: #e5484d;} #nw-tx-box .nw-c1 {--c: #30a46c;} #nw-tx-box .nw-c2 {--c: #3e63dd;}
+#nw-tx-box .nw-c3 {--c: #d4a20b;} #nw-tx-box .nw-c4 {--c: #8e4ec6;} #nw-tx-box .nw-c5 {--c: #f76b15;}
+#nw-tx-box .nw-c6 {--c: #0797b9;} #nw-tx-box .nw-c7 {--c: #d6409f;}
 """
+
+# 📰 English in News transcript (`news_words.view_html`): marks change in the page at once — click = key word, drag =
+# phrase, click a key word = remove — and are sent to the server (hidden box #nw-ops) once the clicks pause, or at the
+# next press anywhere else (so 🧹 Clear / ✨ Suggest / another clip see them). When the server's transcript comes back
+# while newer clicks wait, those are drawn again on it (data-s = the server's marks, data-cur = what the page shows).
+NW_PICK_JS = """<script>
+(() => {
+  if (window.__nwPick) return;
+  window.__nwPick = true;
+  const S = {want: null, flying: null, timer: 0, fly: 0, drag: null, seq: 0};
+  const box = () => document.getElementById('nw-tx-box');
+  const parse = s => (s || '').split(',').filter(Boolean).map(p => p.split('-').map(Number));
+  const spec = r => r.map(x => x[0] + '-' + x[1]).join(',');
+  const cur = b => parse(b.dataset.cur !== undefined ? b.dataset.cur : b.dataset.s);
+  function draw(b, rng) {
+    const ws = [...b.querySelectorAll('.nw-w')].sort((x, y) => x.dataset.i - y.dataset.i).map(e => e.textContent);
+    const ends = new Map(rng.map(r => [r[0], r[1]]));
+    const word = k => { const e = document.createElement('span'); e.className = 'nw-w'; e.dataset.i = k;
+                        e.textContent = ws[k]; return e; };
+    const out = document.createDocumentFragment();
+    let i = 0, n = 0;
+    while (i < ws.length) {
+      if (i) out.append(' ');
+      if (ends.has(i)) {
+        const j = ends.get(i), k = document.createElement('span');
+        k.className = 'nw-k nw-c' + (n++ % 8); k.dataset.a = i; k.dataset.b = j;
+        for (let m = i; m < j; m++) k.append(word(m), ' ');
+        const end = document.createElement('span'), num = document.createElement('b');
+        end.className = 'nw-end'; num.className = 'nw-n'; num.textContent = n;
+        end.append(word(j), num); k.append(end);
+        out.append(k); i = j + 1;
+      } else { out.append(word(i)); i++; }
+    }
+    b.replaceChildren(out);
+    b.dataset.cur = spec(rng);
+  }
+  function send() {
+    S.timer = 0;
+    const b = box(), t = document.querySelector('#nw-ops textarea, #nw-ops input');
+    if (!b || !t || S.want === null) return;
+    S.flying = S.want;
+    clearTimeout(S.fly); S.fly = setTimeout(() => { S.flying = null; }, 4000);
+    t.value = b.dataset.n + '|' + S.want + '|' + (++S.seq);
+    t.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+  const flush = () => { if (S.timer) { clearTimeout(S.timer); send(); } };
+  function change(b, rng) {
+    rng.sort((x, y) => x[0] - y[0]);
+    draw(b, rng);
+    S.want = spec(rng);
+    clearTimeout(S.timer); S.timer = setTimeout(send, 450);
+  }
+  function arrived(b) {               // a new transcript from the server
+    if (S.want === null) return;
+    if (b.dataset.s === S.want && !S.timer) { S.want = null; return; }
+    if (S.timer || S.flying !== null) { draw(b, parse(S.want)); return; }
+    S.want = null;                     // Clear / Suggest / another clip: the server's marks win
+  }
+  new MutationObserver(() => { const b = box(); if (b && !b.__seen) { b.__seen = true; arrived(b); } })
+    .observe(document.documentElement, {childList: true, subtree: true});
+  const at = (x, y) => { const e = document.elementFromPoint(x, y); return e && e.closest('#nw-tx-box .nw-w'); };
+  function paint(d) {
+    const lo = Math.min(d.a, d.z), hi = Math.max(d.a, d.z);
+    d.b.querySelectorAll('.nw-w').forEach(e => e.classList.toggle('nw-drag', d.z !== d.a && e.dataset.i >= lo
+                                                                        && e.dataset.i <= hi));
+  }
+  document.addEventListener('pointerdown', e => {
+    const t = e.target.closest ? e.target.closest('#nw-tx-box .nw-w, #nw-tx-box .nw-n') : null;
+    if (!t) { flush(); return; }
+    if (e.button) return;
+    e.preventDefault();
+    const b = box(), i = t.classList.contains('nw-n') ? +t.closest('.nw-k').dataset.a : +t.dataset.i;
+    S.drag = {b, a: i, z: i, badge: t.classList.contains('nw-n')};
+  }, true);
+  document.addEventListener('pointermove', e => {
+    const d = S.drag;
+    if (!d || d.badge) return;
+    const w = at(e.clientX, e.clientY);
+    if (w && +w.dataset.i !== d.z) { d.z = +w.dataset.i; paint(d); }
+  });
+  document.addEventListener('pointerup', () => {
+    const d = S.drag;
+    S.drag = null;
+    if (!d || !d.b.isConnected) return;
+    const lo = Math.min(d.a, d.z), hi = Math.max(d.a, d.z);
+    let rng = cur(d.b);
+    if (lo === hi) {                   // click: remove the key word under it, or make the word one
+      const had = rng.some(r => r[0] <= lo && lo <= r[1]);
+      rng = had ? rng.filter(r => !(r[0] <= lo && lo <= r[1])) : rng.concat([[lo, lo]]);
+    } else {                           // drag: one phrase over the words, replacing the marks it covers
+      rng = rng.filter(r => r[1] < lo || r[0] > hi).concat([[lo, hi]]);
+    }
+    change(d.b, rng);
+  });
+  document.addEventListener('pointercancel', () => {
+    if (S.drag) { S.drag.b.querySelectorAll('.nw-drag').forEach(e => e.classList.remove('nw-drag')); S.drag = null; }
+  });
+})();
+</script>"""
 PREVIEW_H = "calc(100vh - 404px)"
 POST_H = "calc(100vh - 150px)"  # the square post preview takes the whole right column
 
@@ -2386,9 +2502,10 @@ def news_tab():
         n_sug = gr.Slider(1, 10, value=5, step=1, label="How many", scale=2)
         clr = gr.Button("🧹 Clear", min_width=90)
     status = gr.Markdown()
-    join = gr.Checkbox(value=True, label="Click the next word to make a phrase (e.g. cooling → centres)")
-    ht = gr.HighlightedText([], label="👆 Transcript — click words to make them key words (click again to remove)",
-                            combine_adjacent=False, show_legend=False, interactive=False)
+    gr.Markdown("👆 **Click** a word to make it a key word · **drag** across words for a phrase (e.g. *cooling "
+                "centres*) · click a key word again to remove it", elem_classes="nw-hint")
+    ht = gr.HTML(nw.view_html([]), elem_classes="nw-tx")
+    picked = gr.Textbox(elem_id="nw-ops", elem_classes="nw-hide", show_label=False, container=False)
     ts = tr.load_settings(DATA_DIR)
     with gr.Accordion("🤖 Automatic Arabic meanings (Claude) — the key is saved on this computer only",
                       open=not ts["api_key"]):
@@ -2445,7 +2562,7 @@ def news_tab():
     clips._no_preview = cur._no_preview = True
     return dict(key=key, model=model, lang=lang, save_k=save_k, uploads=uploads, pick=pick, remove=remove,
                 headline=headline, trim0=trim0, trim1=trim1, again=again, sug=sug, n_sug=n_sug, clr=clr,
-                status=status, join=join, ht=ht, meanings=meanings, words=words, go=go, info=info, zip=zipb,
+                status=status, picked=picked, ht=ht, meanings=meanings, words=words, go=go, info=info, zip=zipb,
                 files=files, video=video, clips=clips, cur=cur, speed=speed, mk_xl=mk_xl, up_xl=up_xl,
                 xl_file=xl_file, ak=ak, am=am, aauto=aauto, asave=asave, afill=afill, aredo=aredo,
                 pending=gr.State({}), aspent=aspent, acost=acost, asel=asel, ahint=ahint, aalt=aalt,
@@ -2640,13 +2757,16 @@ def wire_news(ui, pv, fields):
                 rep += f" · ⚠️ the start ({float(t0):.1f} s) is past the end of the video — the whole clip is used"
             elif float(t1 or 0) and float(t1) <= float(t0 or 0) + 0.5:
                 rep += " · ⚠️ the end is before the start — the clip runs to the end of the video"
-        return nw.view(words), nw.table(words), rep
+        return nw.view_html(words), nw.table(words), rep
 
-    def click(text, join, evt: gr.SelectData):
-        words = nw.load(text)
-        if not words:
+    def pick_words(text, msg):
+        """The browser's marks (`NW_PICK_JS`: "<word count>|<ranges>|<n>") -> the Words box."""
+        try:
+            n, spec, _ = (msg or "").split("|")
+            words = nw.apply_ranges(nw.load(text), spec, int(n))
+        except ValueError:
             return gr.update()
-        return nw.dump(nw.toggle(words, int(evt.index), bool(join)))
+        return gr.update() if words is None else nw.dump(words)
 
     def do_suggest(text, n):
         words = nw.load(text)
@@ -2866,7 +2986,7 @@ def wire_news(ui, pv, fields):
           inputs=[ui["words"], ui["video"], ui["trim0"], ui["trim1"], ui["speed"], ui["recap"]],
           outputs=[ui["ht"], ui["meanings"], ui["status"]], trigger_mode="always_last", show_progress="hidden")
     ui["again"].click(retranscribe, [ui["video"], ui["words"]] + keys, ui["words"])
-    ui["ht"].select(click, [ui["words"], ui["join"]], ui["words"], queue=False, show_progress="hidden")
+    ui["picked"].change(pick_words, [ui["words"], ui["picked"]], ui["words"], queue=False, show_progress="hidden")
     ui["sug"].click(do_suggest, [ui["words"], ui["n_sug"]], ui["words"])
     ui["clr"].click(do_clear, ui["words"], ui["words"])
     ui["meanings"].input(meanings_in, [ui["words"], ui["meanings"]], ui["words"], show_progress="hidden")
@@ -2990,6 +3110,8 @@ def know_country_tab():
 
 def build_ui():
     kw = {"css": CSS} if "css" in inspect.signature(gr.Blocks.__init__).parameters else {}
+    if "head" in inspect.signature(gr.Blocks.__init__).parameters:
+        kw["head"] = NW_PICK_JS
     with gr.Blocks(title="Video Studio", **kw) as demo:
         gr.Markdown("## 🎬 Video Studio <small>— the preview on the right updates live as you edit · "
                     f"💾 your projects and videos are saved in <code>{DATA_DIR}</code></small>",
@@ -3492,9 +3614,11 @@ def build_ui():
 
 
 def launch_kwargs():
-    """Gradio 6 takes css in launch(); Gradio 5 takes it in Blocks(). The data folder is outside the app folder,
+    """Gradio 6 takes css and head in launch(); Gradio 5 takes it in Blocks(). The data folder is outside the app folder,
     so the browser must be allowed to show the videos and pictures in it."""
     kw = {"css": CSS} if "css" in inspect.signature(gr.Blocks.launch).parameters else {}
+    if "head" in inspect.signature(gr.Blocks.launch).parameters:
+        kw["head"] = NW_PICK_JS
     kw["allowed_paths"] = [DATA_DIR]
     return kw
 
