@@ -164,7 +164,8 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   Excel batch (`wire_words_video`): Start at / How many (0 = all) / Words per video → `groups` (in order, the last
   gets what is left); `check` = "18 words make 3 videos of 6" + the video menu; 📥 puts one video in the editor;
   🎬 Render all = `_stream_batch` (one project per group: its words, its own voices via `_wv_voices`, Title `{n}` /
-  `{total}`, empty Title = the sheet's Title column) → files + zip in OUT_DIR/words_videos_*. Looks `DESIGNS` (paper default / sky / mint / blush / slate = a little dark; the user does not want
+  `{total}`; titles by `app._batch_titles`: an empty Title / Subtitle box — or one holding a sheet title, as 📥 leaves it —
+  = each video's own sheet Title / Subtitle, typed text = every video) → files + zip in OUT_DIR/words_videos_*. Looks `DESIGNS` (paper default / sky / mint / blush / slate = a little dark; the user does not want
   glass, aurora or dark looks); fonts Poppins (a 🎨 Style & sound font replaces it) + `wordsvideo.arabic_font` (any
   library family, default `AR_DEFAULT` = Noto Sans Arabic, `_arabic_font`)
 - `engine/templates/idiom_cards.py` — template `idiomcards`, English Words sub-tab 🃏 Idiom cards (after 🎬 Words video;
@@ -182,6 +183,7 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   shown once the English is said; `app._ic_voices` / `_ic_voice_items` via `word_import.word_voices`); Excel
   `read_sheet` (English | Arabic name | English meaning | Arabic meaning | Title | Subtitle; cells sorted by language),
   template `projects/idioms_template.xlsx` (`write_template`), Render all = `_stream_batch` → OUT_DIR/idiom_cards_*
+  (titles per video by `app._batch_titles`, as Words video)
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
   (ElevenLabs word timings); words ink in as spoken (`vs`/`ve` per word), highlighted words get a marker swipe, fly
   into the Word Bank, Arabic writes in right-to-left. `text.words` = lines `word | start | end | highlighted | arabic`

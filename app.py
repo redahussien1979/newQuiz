@@ -527,6 +527,21 @@ def _save_cover(project, video_path):
         return None
 
 
+def _batch_titles(d, grp, rows, k, total):
+    """Title + subtitle of video k of a 🎬 Render all from a sheet. A title typed in the editor is used for every
+    video; an empty one — or one the sheet put there (📥 Put it in the editor copies the first video's) — gives
+    each video its own sheet Title / Subtitle. {n} = the video number, {total} = how many."""
+    sheet_t = {str(r.get("title") or "") for r in rows} - {""}
+    sheet_s = {str(r.get("sub") or "") for r in rows} - {""}
+    typed_t = str(d.get("title") or "")
+    typed_s = str(d.get("subtitle") or "")
+    # typed by hand: the same for all videos; empty or from the sheet: this video's own sheet title / subtitle
+    title = typed_t if typed_t and typed_t not in sheet_t else str(grp[0].get("title") or typed_t)
+    sub = typed_s if typed_s and typed_s not in sheet_s else str(grp[0].get("sub") or "")
+    fill = lambda x: x.replace("{n}", str(k)).replace("{total}", str(total))  # noqa: E731
+    return fill(title), fill(sub)
+
+
 def _progress_on(dep, comp):
     """Show the batch progress bar only on `comp` (not over the list of finished videos) when Gradio allows it."""
     try:
@@ -1871,9 +1886,10 @@ def words_video_ui():
     gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
     gr.Markdown("---\n**📥 Words from Excel** — the 📃 Word list sheet: **English | Arabic | IPA | Sample sentence | "
                 "English meaning** (any number of rows). They are cut into videos of *Words per video*; "
-                "**🎬 Render all** makes every video (voices included when 🎙️ is ticked). In the Title, **{n}** = "
-                "the video number and **{total}** = how many (Words Part {n}/{total}); empty Title = the sheet's "
-                "Title column.")
+                "**🎬 Render all** makes every video (voices included when 🎙️ is ticked). **Titles:** with the Title / "
+                "Subtitle boxes empty (or holding what 📥 copied from the sheet) each video takes its own sheet Title / "
+                "Subtitle; text you type yourself is used for every video — **{n}** = the video number, **{total}** = "
+                "how many (Words Part {n}/{total}).")
     with gr.Row():
         sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Words sheet (.xlsx or .csv)",
                         height=110)
@@ -1988,10 +2004,7 @@ def wire_words_video(ui, pv, fields):
                     d = proj["wordsvideo"]
                     d["words"] = wvid.words_text(grp)
                     d["audio"] = []  # this video's own voices
-                    title = str(d.get("title") or grp[0].get("title") or "")
-                    d["title"] = title.replace("{n}", str(k)).replace("{total}", str(total))
-                    d["subtitle"] = str(d.get("subtitle") or grp[0].get("sub") or "").replace("{n}", str(k)).replace(
-                        "{total}", str(total))
+                    d["title"], d["subtitle"] = _batch_titles(d, grp, part, k, total)
                     _wv_voices(proj, lambda x, desc, k=k: (check_stop(), progress((k - 1 + 0.15 * x) / total,
                                                                                   desc=f"Video {k} of {total}: {desc}")))
                     yield f"Words video {k:02d} of {total:02d}", proj
@@ -2083,7 +2096,9 @@ def idiom_cards_ui():
     proj = project_bar()
     with gr.Row():
         title = gr.Textbox(label="Hook title (empty = no title, the first card opens the video)",
-                           placeholder="{count} Idioms from Greek Myths", info="{count} = the number of cards")
+                           placeholder="{count} Idioms from Greek Myths",
+                           info="{count} = the number of cards. 🎬 Render all from Excel: empty = each video's own sheet "
+                                "Title; typed here = the same for every video")
         sub = gr.Textbox(label="Subtitle (optional)", rtl=True, placeholder="تعابير إنجليزية أصلها أساطير يونانية")
     items = gr.Textbox(lines=10, max_lines=60, label="Cards", info=IC_ITEMS_HELP)
     with gr.Row():
@@ -2114,8 +2129,10 @@ def idiom_cards_ui():
         gr.Markdown("---\n**📥 Idioms from Excel** — columns **English idiom / word | Arabic name | English meaning | "
                     "Arabic meaning** (the name or the English meaning may be empty; + optional **Title | Subtitle**: a "
                     "title goes on until the next one). They are cut into videos "
-                    "of *Cards per video*; **🎬 Render all** makes every video. In the Title **{n}** = the video "
-                    "number, **{total}** = how many; empty Title = the sheet's Title column.")
+                    "of *Cards per video*; **🎬 Render all** makes every video. **Titles:** with the Title / Subtitle "
+                    "boxes empty (or holding what 📥 copied from the sheet) each video takes its own Title / Subtitle "
+                    "from the sheet; text you type yourself is used for every video — **{n}** = the video number, "
+                    "**{total}** = how many (Idioms Part {n}/{total}). ▶️ Preview and 🎬 Render video use the boxes.")
         tpl = _ic_template_path()
         gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), size="sm", min_width=130, scale=0)
     with gr.Row():
@@ -2228,10 +2245,7 @@ def wire_idiom_cards(ui, pv, fields):
                     d = proj["idiomcards"]
                     d["items"] = icards.items_text(grp)
                     d["audio"] = []  # this video's own voices
-                    title = str(d.get("title") or grp[0].get("title") or "")
-                    d["title"] = title.replace("{n}", str(k)).replace("{total}", str(total))
-                    d["subtitle"] = str(d.get("subtitle") or grp[0].get("sub") or "").replace("{n}", str(k)).replace(
-                        "{total}", str(total))
+                    d["title"], d["subtitle"] = _batch_titles(d, grp, part, k, total)
                     _ic_voices(proj, lambda x, desc, k=k: (check_stop(), progress((k - 1 + 0.15 * x) / total,
                                                                                   desc=f"Video {k} of {total}: {desc}")))
                     yield f"Idiom cards {k:02d} of {total:02d}", proj
