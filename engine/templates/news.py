@@ -63,7 +63,6 @@ LEAD = 0.7                  # the header comes in over the first frame before th
 SPEED_MIN, SPEED_MAX = 0.5, 1.5
 REP_MAX = 10                # a key word is replayed at most this many extra times
 REP_PRE, REP_POST = 0.18, 0.15   # a replay starts this much before the key word and ends this much after it
-REP_GAP = 0.45              # the held frame (with REPEAT k/n) before each replay
 ENDING_LEN = 5.0            # the table recap
 RECAP_CHOICES = [("🃏 Flashcards — new colours for every video", "flashcards"), ("📋 Table", "table")]
 DEFAULT_RECAP = "flashcards"
@@ -236,8 +235,9 @@ def timing(n, sdur):
     dict(o0, o1, c0, c1, kind, gi, k, n): its time o0..o1 shows the clip from c0 to c1 —
       lead    the first frame held while the header comes in
       play    the clip at `speed` (0.5-1: slower, the voice keeps its pitch)
-      freeze  a held frame before a replay ("REPEAT k/n")
-      replay  a key word said again: from just before it to just after it, as many times as its `rep`."""
+      replay  a key word said again, straight after it (no pause: seamless): from just before it to just after it,
+              as many times as its `rep` ("REPEAT k/n")
+      hold    the clip's last frame held for the last key word's card (see `_card_queue`)"""
     trim0 = max(0.0, float(n.get("trim_start") or 0.0))
     if trim0 > sdur - 0.5:  # a start past the end of the video: use the whole video
         trim0 = 0.0
@@ -278,7 +278,6 @@ def timing(n, sdur):
             a = min(g["c0"], max(a, words[g["i0"] - 1]["e"] + 0.06))
         b = cut
         for k in range(1, g["rep"] + 1):
-            add("freeze", a, a, REP_GAP, gi, k, g["rep"])
             add("replay", a, b, (b - a) / speed, gi, k, g["rep"])
     add("play", pos, clip, (clip - pos) / speed)
     starts = [_seg_out(segs, g["c0"], speed) for g in groups]
@@ -329,7 +328,7 @@ def length_report(n, sdur):
     """One line for the editor: how long the clip part of the video is, with the speed and the repeats."""
     trim0, clip, speed, words, groups, segs = timing(n, sdur)
     played = sum(sg["o1"] - sg["o0"] for sg in segs if sg["kind"] == "play")
-    rep = sum(sg["o1"] - sg["o0"] for sg in segs if sg["kind"] in ("freeze", "replay"))
+    rep = sum(sg["o1"] - sg["o0"] for sg in segs if sg["kind"] == "replay")
     n_rep = sum(g["rep"] for g in groups)
     txt = f"⏱️ clip {clip:.1f} s"
     if abs(speed - 1) > 1e-3:
@@ -1893,9 +1892,9 @@ class NewsVideo:
         return _seg_out(self.segs, c, self.speed)
 
     def _draw_repeat(self, frame, t, a):
-        """REPEAT k/n badge while a key word is replayed (with the held frame before it)."""
+        """REPEAT k/n badge while a key word is replayed."""
         sg = self._seg(t)
-        if sg["kind"] not in ("freeze", "replay") or t >= self.E:
+        if sg["kind"] != "replay" or t >= self.E:
             return
         same = [x for x in self.segs if x["gi"] == sg["gi"]]
         t0, t1 = same[0]["o0"], same[-1]["o1"]
@@ -1906,8 +1905,9 @@ class NewsVideo:
         if key not in self._rep_ims:
             self._rep_ims[key] = self._repeat_badge(*key)
         im = _scaled(self._rep_ims[key], 0.6 + 0.4 * min(1.0, k))
-        if sg["kind"] == "freeze":   # a soft pulse while the frame is held
-            im = _scaled(im, 1.0 + 0.05 * math.sin(math.pi * (t - sg["o0"]) / max(1e-6, sg["o1"] - sg["o0"])))
+        u = (t - sg["o0"]) / 0.25
+        if sg["k"] > 1 and u < 1:   # a soft beat as the count goes up
+            im = _scaled(im, 1.0 + 0.08 * math.sin(math.pi * u))
         if self.vertical:
             x, y = (W - im.width) // 2, int(self.cap_y + self.cap_box[0]) - im.height - 24
         else:
@@ -2121,10 +2121,10 @@ class NewsVideo:
                 if n > 0:
                     mx.voice[at:at + n] += seg[:n]
                     mx.has_voice = True
-        for sg in self.segs:   # a soft rewind swish as each replay begins
-            if sg["kind"] == "freeze":
-                sig, pan = mx.whoosh(0.35)
-                mx.add(sg["o0"], sig[::-1].copy(), 0.07, pan)
+        for sg in self.segs:   # a soft rewind swish leading into each replay (under the voice)
+            if sg["kind"] == "replay":
+                sig, pan = mx.whoosh(0.3)
+                mx.add(max(0.0, sg["o0"] - 0.26), sig[::-1].copy(), 0.045, pan)
         sig, pan = mx.whoosh(0.5)
         mx.add(0.02, sig, 0.08, pan)
         for c in self.cards:   # the notification banner comes with a soft chime, the other cards with a pop

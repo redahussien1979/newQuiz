@@ -226,7 +226,7 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   no key word is left out (`_card_queue`, shared by `timing` and `_layout_cards`): when the last card would have less
   than `CARD_TAIL` s before the clip ends, `timing` adds a `hold` segment (the clip's last frame held, no sound;
   `_Decoder.frame` reads a fresh last frame from 1 s earlier).
-  Time: `timing(n, sdur)` -> words / key words in CLIP time + `segs` (lead / play / freeze / replay; `o0..o1` video
+  Time: `timing(n, sdur)` -> words / key words in CLIP time + `segs` (lead / play / replay = seamless, straight after the word / hold; `o0..o1` video
   time shows clip `c0..c1`); `news.speed` (0.5-1.5, audio via FFmpeg `atempo` = same pitch, `_clip_sound`) and a 6th
   words column `repeat` (extra replays of a key word, `REP_MAX`) build them; render maps t -> clip time with `_c(t)`
   (captions / video frame), cards + header + ending stay in video time (`g["t0"]` = `_out(c0)`, a repeated word's card
