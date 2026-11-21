@@ -36,6 +36,7 @@ from engine.templates.text import DEFAULT_LOGO as TX_LOGO, LOGO_SHAPES as TX_LOG
 from engine.templates.news import ACCENT_CHOICES as NW_ACCENTS, LOOK_CHOICES as NW_LOOKS, probe as nw_probe
 from engine.templates.news import length_report as nw_length, PAUSE_CHOICES as NW_PAUSES, RECAP_CHOICES as NW_RECAPS
 from engine.templates import words_video as wvid
+from engine.templates import idiom_cards as icards
 from engine.templates.vocab import clip_key as vocab_clip_key
 from engine import batch
 from engine import countries
@@ -90,7 +91,10 @@ NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", 
            "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed", "recap_style",
            "pause"]
 WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "voice_on", "arabic_font", "ar_style", "kind", "ex_reveal", "pop_fx", "touches", "bubble_style"]
-KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS, "wordsvideo": WV_KEYS}
+IC_KEYS = ["title", "subtitle", "items", "look", "marker", "transition", "pace", "touches", "arabic_font", "audio",
+           "audio_gain", "voice_on"]
+KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS, "wordsvideo": WV_KEYS,
+        "idiomcards": IC_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
                 "video"}
 MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
@@ -553,6 +557,30 @@ def _wv_voices(project, progress=None):
     d["audio"] = [c for c in d.get("audio") or [] if clip_key(c)] + [m for m in made if clip_key(m) not in have]
 
 
+def _ic_voices(project, progress=None):
+    """🃏 Idiom cards with 🎙️ ticked: make the missing voice clips w<k> (the English of card k) with the user's
+    ElevenLabs voice (cached: a clip costs credits only once); the uploaded / earlier clips stay."""
+    d = project.get("idiomcards", {})
+    if not d.get("voice_on"):
+        return
+    from engine.templates.vocab import clip_key
+    items = icards.parse_items(d.get("items"))
+    have = {clip_key(c) for c in d.get("audio") or []} - {None}
+    missing = [i for i in range(len(items)) if (i + 1, "w") not in have]
+    if not missing:
+        return
+    ok, why = word_import.voice_ready(DATA_DIR)
+    if not ok:
+        raise ValueError("🎙️ The voices are ticked but cannot be made: " + why + " — or untick 🎙️ to render "
+                         "without voices.")
+    made = word_import.word_voices([{"en": it["en"]} for it in items], DATA_DIR,
+                                   os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"), progress)
+    d["audio"] = [c for c in d.get("audio") or [] if clip_key(c)] + [m for m in made if clip_key(m) not in have]
+
+
+_VOICES = {"wordsvideo": _wv_voices, "idiomcards": _ic_voices}
+
+
 def make_actions(tpl):
     def preview(t, safe, *vals):
         try:
@@ -560,7 +588,7 @@ def make_actions(tpl):
         except Exception as e:
             raise gr.Error(str(e))
         msg = f"Video length: **{dur:.1f} s**"
-        if tpl in ("vocab", "text", "news", "wordsvideo") and dur > 60:
+        if tpl in ("vocab", "text", "news", "wordsvideo", "idiomcards") and dur > 60:
             msg += " — ⚠️ over 60 s: fine for YouTube Shorts and Instagram Reels, but keep Facebook Reels under 60 s"
         return img, msg, gr.update(maximum=max(1.0, round(dur, 1)))
 
@@ -568,8 +596,8 @@ def make_actions(tpl):
         try:
             out = os.path.join(OUT_DIR, "_preview.mp4")
             project = values_to_project(tpl, vals)
-            if tpl == "wordsvideo":
-                _wv_voices(project)
+            if tpl in _VOICES:
+                _VOICES[tpl](project)
             _, dur = render_clip(project, out, t, 6.0)
         except Exception as e:
             raise gr.Error(str(e))
@@ -578,8 +606,8 @@ def make_actions(tpl):
     def render(*vals, progress=gr.Progress()):
         try:
             project = values_to_project(tpl, vals)
-            if tpl == "wordsvideo":  # 🎙️ ticked: the missing voices are made first (ElevenLabs, cached)
-                _wv_voices(project, lambda x, d: progress(x * 0.1, desc=d))
+            if tpl in _VOICES:  # 🎙️ ticked: the missing voices are made first (ElevenLabs, cached)
+                _VOICES[tpl](project, lambda x, d: progress(x * 0.1, desc=d))
             out = os.path.join(OUT_DIR, f"{tpl}_{_stamp()}.mp4")
             progress(0, desc="Preparing sound…")
 
@@ -628,6 +656,9 @@ def make_actions(tpl):
         if tpl == "wordsvideo":
             p["wordsvideo"]["audio"] = _keep_media_list(p["wordsvideo"].get("audio"),
                                                         os.path.join(MEDIA_DIR, f"words_video_audio_{stamp}"))
+        if tpl == "idiomcards":
+            p["idiomcards"]["audio"] = _keep_media_list(p["idiomcards"].get("audio"),
+                                                        os.path.join(MEDIA_DIR, f"idiom_cards_audio_{stamp}"))
         if tpl == "vocab":
             p["vocab"]["audio"] = _keep_media_list(p["vocab"].get("audio"), os.path.join(MEDIA_DIR, f"words_audio_{stamp}"))
         if tpl == "mcq":
@@ -944,11 +975,11 @@ def shared_fields(st, ending):
             st["intro_sound"], st["tick_sound"], st["tick_gain"]]
 
 
-def preview_panel(tpl, posts=False, words_video=False):
+def preview_panel(tpl, posts=False, words_video=False, idiom_cards=False):
     """Right column: live picture / video, time slider and all render buttons — always visible. posts=True adds
     the 🖼️ Image posts preview, shown there instead while that sub-tab is open (post_col / video_col);
     words_video=True adds a second full preview for the 🎬 Words video sub-tab (`wv` = its own panel dict, in
-    `wv_col`)."""
+    `wv_col`); idiom_cards=True one for the 🃏 Idiom cards sub-tab (`ic`, in `ic_col`)."""
     extra = {}
     with gr.Column(scale=2, min_width=340, elem_classes="preview-col"):
         if posts:
@@ -961,6 +992,10 @@ def preview_panel(tpl, posts=False, words_video=False):
             with gr.Column(visible=False) as wv_col:
                 extra["wv"] = _preview_widgets("wordsvideo")
             extra["wv_col"] = wv_col
+        if idiom_cards:
+            with gr.Column(visible=False) as ic_col:
+                extra["ic"] = _preview_widgets("idiomcards")
+            extra["ic_col"] = ic_col
         with gr.Column(visible=True) as video_col:
             main = _preview_widgets(tpl)
     return dict(main, video_col=video_col, **extra)
@@ -2007,6 +2042,238 @@ def wire_words_video(ui, pv, fields):
                 [pv["vid"], pv["info"], ui["files"], ui["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"]],
                 **_progress_on(dep, pv["vid"]))
 
+
+
+# ------------------------------------------------------------------ English Words: 🃏 Idiom cards
+IC_HELP = ("**🃏 Idiom cards** — a felt board with a white band: each idiom lands on a yellow highlighter, its Arabic "
+           "name pops in under it and the meaning writes in from the right in red. A punchy hook opens the video "
+           "(the band snaps open, the title words slam in), every card arrives with a cinematic move (whip pan, "
+           "slice, 3D flip, zoom punch) and the 🔚 Ending closes it on the band. Made for Facebook / Reels: keep it "
+           "under 60 s (about 12 cards). The preview on the right is this video's own.")
+IC_ITEMS_HELP = ("One card per line: `English idiom | Arabic name | Arabic meaning` — e.g. `Achilles' heel | كعب أخيل | "
+                 "نقطة الضعف القاتلة`. Two parts = `English | Arabic meaning` (no [name] line).")
+
+
+def _ic_template_path():
+    path = os.path.join(APP_PROJ_DIR, "idioms_template.xlsx")
+    if not os.path.isfile(path):
+        try:
+            icards.write_template(path)
+        except Exception:  # openpyxl missing: no template button
+            return None
+    return path
+
+
+def idiom_cards_ui():
+    """🃏 Idiom cards sub-tab (English Words): its own project, cards, design and sheet import."""
+    with gr.Row(equal_height=True):
+        gr.Markdown(IC_HELP)
+    proj = project_bar()
+    with gr.Row():
+        title = gr.Textbox(label="Hook title (empty = no title, the first card opens the video)",
+                           placeholder="{count} Idioms from Greek Myths", info="{count} = the number of cards")
+        sub = gr.Textbox(label="Subtitle (optional)", rtl=True, placeholder="تعابير إنجليزية أصلها أساطير يونانية")
+    items = gr.Textbox(lines=10, max_lines=60, label="Cards", info=IC_ITEMS_HELP)
+    with gr.Row():
+        transition = gr.Dropdown(icards.TRANSITIONS, value="mix", label="Transition between cards",
+                                 info="Mix = whip pan, slice, 3D flip and zoom punch in turn")
+        pace = gr.Radio([("Calm", "calm"), ("Normal", "normal"), ("Fast", "fast")], value="normal", label="Pace",
+                        info="How long a card stays (with a voice clip it waits for it)")
+    with gr.Row():
+        look = gr.Dropdown(icards.LOOK_CHOICES, value="green", label="Board")
+        marker = gr.Dropdown(icards.MARKER_CHOICES, value="yellow", label="Highlighter")
+        ar_menu = [(f"{icards.AR_DEFAULT} (default)", "")] + [c for c in word_posts.font_menus()[1][1:]
+                                                             if c[1] != icards.AR_DEFAULT]
+        ar_font = gr.Dropdown(ar_menu, value="", label="Arabic font", info="Any font of your library that writes "
+                                                                            "Arabic")
+    touches = gr.CheckboxGroup(icards.TOUCHES, value=list(icards.TOUCH_DEFAULT), label="Touches",
+                               info="Small details that keep eyes on the screen — untick any you don't want")
+    voice = gr.Checkbox(value=False, label="🎙️ Read every idiom aloud with my ElevenLabs voice",
+                        info="Ticked: 🎬 Render video (and ▶️ Quick motion) first makes the missing clips. Uses 🔑 "
+                             "ElevenLabs voice in 📖 English Texts → ✍️ Paragraphs; each clip costs credits only once")
+    audio = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=110,
+                    label="Voice clips (made for you when the box is ticked — or your own: w1, w2 … = card 1, 2 …)")
+    with gr.Row(equal_height=True):
+        v_status = gr.Markdown("")
+        v_make = gr.Button("🎙️ Make the voices", min_width=170, scale=0)
+    gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
+    with gr.Row(equal_height=True):
+        gr.Markdown("---\n**📥 Idioms from Excel** — columns **English idiom | Arabic name | Arabic meaning** "
+                    "(+ optional **Title | Subtitle**: a title goes on until the next one). They are cut into videos "
+                    "of *Cards per video*; **🎬 Render all** makes every video. In the Title **{n}** = the video "
+                    "number, **{total}** = how many; empty Title = the sheet's Title column.")
+        tpl = _ic_template_path()
+        gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), size="sm", min_width=130, scale=0)
+    with gr.Row():
+        sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Idioms sheet (.xlsx or .csv)",
+                        height=110)
+        tab = gr.Dropdown([], label="Sheet (tab)", visible=False)
+    with gr.Row():
+        start = gr.Number(value=1, precision=0, minimum=1, label="Start at idiom #")
+        count = gr.Number(value=0, precision=0, minimum=0, label="How many idioms", info="0 = all of them")
+        per = gr.Slider(1, 15, value=7, step=1, label="Cards per video",
+                        info="Cut in order into videos of this many (the last gets what is left)")
+    info = gr.Markdown("Upload a sheet to see how many videos it makes.")
+    with gr.Row(equal_height=True):
+        part = gr.Dropdown([], label="Video to put in the editor", scale=2)
+        load = gr.Button("📥 Put it in the editor", min_width=170, scale=1)
+        go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, min_width=200, scale=1)
+    zipb = gr.DownloadButton("📦 Download all (.zip)", visible=False, variant="primary")
+    files = gr.File(label="Rendered videos — each one appears here as soon as it finishes", file_count="multiple",
+                    visible=False, height=260)
+    return dict(proj=proj, title=title, sub=sub, items=items, look=look, marker=marker, transition=transition,
+                pace=pace, touches=touches, ar_font=ar_font, audio=audio, gain=gain, voice=voice, v_status=v_status,
+                v_make=v_make, sheet=sheet, tab=tab, start=start, count=count, per=per, info=info, part=part,
+                load=load, go=go, zip=zipb, files=files)
+
+
+def ic_fields(ui):
+    """The Idiom cards' own fields in IC_KEYS order."""
+    return [ui["title"], ui["sub"], ui["items"], ui["look"], ui["marker"], ui["transition"], ui["pace"],
+            ui["touches"], ui["ar_font"], ui["audio"], ui["gain"], ui["voice"]]
+
+
+def wire_idiom_cards(ui, pv, fields):
+    def picked(sheet, tab, start, count):
+        if not sheet:
+            raise ValueError("Upload an idioms sheet first.")
+        rows, problems = icards.read_sheet(sheet, tab or None)
+        if not rows:
+            raise ValueError("The sheet has no usable rows." + (f" First problem: {problems[0]}" if problems else ""))
+        a = max(1, int(start or 1)) - 1
+        n = int(count or 0)
+        part = rows[a:a + n] if n > 0 else rows[a:]
+        if not part:
+            raise ValueError(f"The sheet has {len(rows)} idioms — 'Start at' is past the end.")
+        return rows, part, problems
+
+    def groups(part, per):
+        per = max(1, int(per or 7))
+        return [part[i:i + per] for i in range(0, len(part), per)]
+
+    def check(sheet, tab, start, count, per):
+        off = gr.update(value="🎬 Render all videos", interactive=False)
+        if not sheet:
+            return "Upload a sheet to see how many videos it makes.", gr.update(choices=[], value=None), off
+        try:
+            rows, part, problems = picked(sheet, tab, start, count)
+        except Exception as e:
+            return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
+        vids = groups(part, per)
+        a = max(1, int(start or 1))
+        sizes = [len(g) for g in vids]
+        how = (f"{len(vids)} video{'s' if len(vids) != 1 else ''} of {sizes[0]} card{'s' if sizes[0] != 1 else ''}"
+               if len(set(sizes)) == 1 else f"{len(vids)} videos ({' + '.join(map(str, sizes))} cards)")
+        msg = (f"The sheet has **{len(rows)}** idioms — #{a}–#{a + len(part) - 1} make **{how}**."
+               + (f" ⚠️ {len(problems)} row(s) left out: {problems[0]}" if problems else ""))
+        choices = [(f"Video {k} — {g[0]['en']} … {g[-1]['en']} ({len(g)} cards)", k) for k, g in enumerate(vids, 1)]
+        n = len(vids)
+        return msg, gr.update(choices=choices, value=1), gr.update(
+            value=f"🎬 Render all {n} video{'s' if n != 1 else ''}", interactive=True)
+
+    def load(sheet, tab, start, count, per, k, title, sub):
+        try:
+            rows, part, problems = picked(sheet, tab, start, count)
+            vids = groups(part, per)
+            k = int(k or 1)
+            if not 1 <= k <= len(vids):
+                raise ValueError("Pick a video first.")
+            grp = vids[k - 1]
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        title = title or grp[0].get("title") or ""
+        sub = sub or grp[0].get("sub") or ""
+        gr.Info(f"Video {k} of {len(vids)} ({len(grp)} cards) is in the editor."
+                + (f" 🎬 Render all makes all {len(vids)}." if len(vids) > 1 else ""), duration=7)
+        # this video's own clips: the old ones belong to other cards
+        return icards.items_text(grp), None, title, sub
+
+    def start(request: gr.Request):
+        if not _claim(request):
+            raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+        return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
+                gr.update(interactive=False), "⏳ Rendering… each video appears below when it is done.",
+                gr.update(value=None, visible=False), gr.update(value=None, visible=False))
+
+    def render_all(request: gr.Request, sheet, tab, start_at, count, per, *vals, progress=gr.Progress()):
+        def plan():
+            rows, part, problems = picked(sheet, tab, start_at, count)
+            vids = groups(part, per)
+            base = values_to_project("idiomcards", vals)
+            if base["idiomcards"].get("voice_on"):
+                ok, why = word_import.voice_ready(DATA_DIR)
+                if not ok:
+                    raise ValueError("🎙️ The voices are ticked but cannot be made: " + why)
+            out_dir = os.path.join(OUT_DIR, f"idiom_cards_{_stamp()}")
+            os.makedirs(out_dir, exist_ok=True)
+            total = len(vids)
+
+            def jobs():
+                for k, grp in enumerate(vids, 1):
+                    proj = copy.deepcopy(base)
+                    d = proj["idiomcards"]
+                    d["items"] = icards.items_text(grp)
+                    d["audio"] = []  # this video's own voices
+                    title = str(d.get("title") or grp[0].get("title") or "")
+                    d["title"] = title.replace("{n}", str(k)).replace("{total}", str(total))
+                    d["subtitle"] = str(d.get("subtitle") or grp[0].get("sub") or "").replace("{n}", str(k)).replace(
+                        "{total}", str(total))
+                    _ic_voices(proj, lambda x, desc, k=k: (check_stop(), progress((k - 1 + 0.15 * x) / total,
+                                                                                  desc=f"Video {k} of {total}: {desc}")))
+                    yield f"Idiom cards {k:02d} of {total:02d}", proj
+            return out_dir, total, jobs()
+
+        yield from _stream_batch(request, plan, progress)
+
+    def voices_status(text, clips, on):
+        items = icards.parse_items(text)
+        if not items:
+            return ""
+        have = {vocab_clip_key(c) for c in clips or []} - {None}
+        miss = sum(1 for i in range(len(items)) if (i + 1, "w") not in have)
+        if not miss:
+            return f"🎙️ ✅ All **{len(items)} idioms** have a voice"
+        if on:
+            ok, why = word_import.voice_ready(DATA_DIR)
+            if not ok:
+                return "⚠️ " + why
+            return (f"🎙️ **Voices on** — 🎬 Render video first makes the {miss} missing clip{'s' if miss != 1 else ''} "
+                    f"(each costs credits only once). {why}")
+        if miss == len(items):
+            return "No voice: music and sound effects only (tick 🎙️ or add clips w1, w2 … to read the idioms aloud)."
+        return f"⚠️ **{miss} card{'s' if miss != 1 else ''} without a voice clip** (the 🎙️ box is unticked)."
+
+    def make_voices(text, clips, progress=gr.Progress()):
+        items = icards.parse_items(text)
+        if not items:
+            raise gr.Error("Write or import the idioms first.")
+        ok, why = word_import.voice_ready(DATA_DIR)
+        if not ok:
+            raise gr.Error(why)
+        try:
+            made = word_import.word_voices([{"en": it["en"]} for it in items], DATA_DIR,
+                                           os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"),
+                                           lambda x, d: progress(x, desc=d))
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        gr.Info(f"🎙️ {len(made)} voice clips are ready.", duration=5)
+        return made
+
+    ui["v_make"].click(make_voices, [ui["items"], ui["audio"]], ui["audio"])
+    gr.on(triggers=[ui["items"].change, ui["audio"].change, ui["voice"].change], fn=voices_status,
+          inputs=[ui["items"], ui["audio"], ui["voice"]], outputs=ui["v_status"], trigger_mode="always_last",
+          show_progress="hidden")
+    ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
+    src = [ui["sheet"], ui["tab"], ui["start"], ui["count"], ui["per"]]
+    gr.on(triggers=[c.change for c in src], fn=check, inputs=src, outputs=[ui["info"], ui["part"], ui["go"]],
+          trigger_mode="always_last", show_progress="hidden")
+    ui["load"].click(load, src + [ui["part"], ui["title"], ui["sub"]],
+                     [ui["items"], ui["audio"], ui["title"], ui["sub"]])
+    dep = ui["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"], pv["info"],
+                                       ui["files"], ui["zip"]], queue=False)
+    dep.success(render_all, src + fields,
+                [pv["vid"], pv["info"], ui["files"], ui["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"]],
+                **_progress_on(dep, pv["vid"]))
 
 # ------------------------------------------------------------------ English Texts
 TX_WORDS_HELP = ("One spoken word per line, like columns B–F of the sheet: `word | start | end | highlighted | arabic` "
@@ -3434,6 +3701,9 @@ def build_ui():
                         with gr.Tab("🎬 Words video"):
                             with gr.Column(elem_classes="pane"):
                                 wv = words_video_ui()
+                        with gr.Tab("🃏 Idiom cards"):
+                            with gr.Column(elem_classes="pane"):
+                                ic = idiom_cards_ui()
                         with gr.Tab("🎙️ Audio"):
                             with gr.Column(elem_classes="pane"):
                                 gr.Markdown(VC_AUDIO_HELP)
@@ -3451,7 +3721,7 @@ def build_ui():
                                                                  v_timer, v_tfx, v_recap, v_audio, v_again,
                                                                  v_lstyle, v_lhl, v_cboard, v_cmark, v_ccol, v_lpal,
                                                                  v_lfont, v_lex, v_lkar, v_lhide, v_lwait]
-                vc_pv = preview_panel("vocab", posts=True, words_video=True)
+                vc_pv = preview_panel("vocab", posts=True, words_video=True, idiom_cards=True)
             wire(vc_proj, vc_pv, vc_fields)
             wire_vc_batch(vxl, vc_pv, vc_fields)
             wire_wl_import(wl, vc_pv, vc_fields, v_items, v_audio)
@@ -3459,15 +3729,19 @@ def build_ui():
             # 🎬 Words video: its own project + preview; 🎨 Style & sound and 🔚 Ending are shared with English Words
             wire(wv["proj"], vc_pv["wv"], shared_fields(vc_st, vc_end) + wv_fields(wv))
             wire_words_video(wv, vc_pv["wv"], shared_fields(vc_st, vc_end) + wv_fields(wv))
+            # 🃏 Idiom cards: the same — its own project + preview, shared 🎨 Style & sound and 🔚 Ending
+            wire(ic["proj"], vc_pv["ic"], shared_fields(vc_st, vc_end) + ic_fields(ic))
+            wire_idiom_cards(ic, vc_pv["ic"], shared_fields(vc_st, vc_end) + ic_fields(ic))
 
             def right_side(evt: gr.SelectData):
-                """🖼️ Image posts open: the post preview fills the right column; 🎬 Words video: its own video
-                preview; else the English Words video preview."""
+                """🖼️ Image posts open: the post preview fills the right column; 🎬 Words video / 🃏 Idiom cards:
+                their own video preview; else the English Words video preview."""
                 tab = str(evt.value)
-                on, wv_on = "Image posts" in tab, "Words video" in tab
-                return gr.update(visible=on), gr.update(visible=wv_on), gr.update(visible=not (on or wv_on))
-            vc_tabs.select(right_side, None, [vc_pv["post_col"], vc_pv["wv_col"], vc_pv["video_col"]],
-                           show_progress="hidden", queue=False)
+                on, wv_on, ic_on = "Image posts" in tab, "Words video" in tab, "Idiom cards" in tab
+                return (gr.update(visible=on), gr.update(visible=wv_on), gr.update(visible=ic_on),
+                        gr.update(visible=not (on or wv_on or ic_on)))
+            vc_tabs.select(right_side, None, [vc_pv["post_col"], vc_pv["wv_col"], vc_pv["ic_col"],
+                                              vc_pv["video_col"]], show_progress="hidden", queue=False)
             gr.on(triggers=[v_audio.change, v_items.change], fn=clips_report, inputs=[v_audio, v_items],
                   outputs=v_ainfo, trigger_mode="always_last", show_progress="hidden")
             v_add.click(add_item, [v_items, v_type], v_items)
@@ -3624,6 +3898,8 @@ def build_ui():
         for tpl, fields in (("timeline", tl_fields), ("quiz", qz_fields), ("mcq", mq_fields), ("vocab", vc_fields),
                             ("text", tx_fields), ("news", nw_fields)):
             preset(fields, project_to_values(copy.deepcopy(TEMPLATES[tpl][2]), tpl))
+        # 🃏 Idiom cards: only its own fields (🎨 Style & sound and 🔚 Ending are English Words')
+        preset(ic_fields(ic), project_to_values(copy.deepcopy(TEMPLATES["idiomcards"][2]), "idiomcards")[len(SHARED_KEYS):])
     return demo
 
 

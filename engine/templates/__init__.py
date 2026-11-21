@@ -1,7 +1,7 @@
 """Template registry. To add a template: create a module with NAME, EXAMPLE and a class
 that has .base_duration, .dur, .fps, .silences, .render(t) -> PIL RGB image and .sound(mixer),
 then register it below."""
-from . import mcq, news, quiz, text, timeline, vocab, words_video
+from . import idiom_cards, mcq, news, quiz, text, timeline, vocab, words_video
 
 TEMPLATES = {
     "timeline": (timeline.NAME, timeline.TimelineVideo, timeline.EXAMPLE),
@@ -11,4 +11,5 @@ TEMPLATES = {
     "text": (text.NAME, text.make_video, text.EXAMPLE),
     "news": (news.NAME, news.NewsVideo, news.EXAMPLE),
     "wordsvideo": (words_video.NAME, words_video.WordsVideo, words_video.EXAMPLE),
+    "idiomcards": (idiom_cards.NAME, idiom_cards.IdiomCards, idiom_cards.EXAMPLE),
 }
