@@ -34,7 +34,7 @@ from engine.templates.text import BAND_CHOICES as TX_BANDS, MARKER_CHOICES as TX
 from engine.templates.text import LEVEL_CHOICES as TX_LEVELS, STYLE_CHOICES as TX_STYLES
 from engine.templates.text import DEFAULT_LOGO as TX_LOGO, LOGO_SHAPES as TX_LOGO_SHAPES
 from engine.templates.news import ACCENT_CHOICES as NW_ACCENTS, LOOK_CHOICES as NW_LOOKS, probe as nw_probe
-from engine.templates.news import length_report as nw_length, RECAP_CHOICES as NW_RECAPS
+from engine.templates.news import length_report as nw_length, PAUSE_CHOICES as NW_PAUSES, RECAP_CHOICES as NW_RECAPS
 from engine.templates import words_video as wvid
 from engine.templates.vocab import clip_key as vocab_clip_key
 from engine import batch
@@ -87,7 +87,8 @@ TX_KEYS = ["title", "subtitle", "tag", "words", "reading_audio", "audio_gain", "
            "para_text", "para_store", "para_alias", "read_style",
            "text_size"]
 NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", "logo", "logo_shape", "trim_start",
-           "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed", "recap_style"]
+           "trim_end", "video_gain", "ending_on", "words", "clips", "clip_index", "speed", "recap_style",
+           "pause"]
 WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "voice_on", "arabic_font", "ar_style", "kind", "ex_reveal", "pop_fx", "touches", "bubble_style"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS, "wordsvideo": WV_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
@@ -105,7 +106,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "style": "textbook", "level": "", "translation": "", "logo": TX_LOGO, "brand_name": "LOGOLEPT",
             "logo_shape": "circle", "logo_intro": False, "logo_end": True, "ending_on": True,
             "para_text": "", "para_store": "{}", "para_alias": "",
-            "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0, "recap_style": "flashcards",
+            "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0, "recap_style": "flashcards", "pause": "off",
             "design": "paper", "pick": "roulette", "voice_on": True, "arabic_font": "", "ar_style": "brush", "kind": "auto", "ex_reveal": "redbold", "pop_fx": "confetti",
             "touches": ["corner", "deck", "tint", "grain", "focus", "brand", "stress", "number", "drift"],
             "bubble_style": "pill"}  # for projects saved before these options existed
@@ -239,8 +240,12 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
 - **⬇️ Key words → Excel (all clips)**: one row per key word of every clip, with its sentence for context. Fill the
   yellow columns (Arabic meaning, and Repeat if you like) in Excel, save, **⬆️ Upload the filled sheet**: the meanings
   go back onto their words in every clip.
-- **🐢 Speed of this clip** (0.5–1): plays the clip slower — the voice keeps its pitch — and the line under the
-  buttons shows the length it gives (with the repeats), e.g. *clip 8.0 s → 10.7 s at 0.75× + 2.7 s of repeats*.
+- **🐢 Speed of this clip** (0.5–1): plays the clip slower — the voice keeps its pitch and tone (studio-quality
+  stretching) — and the line under the buttons shows the length it gives (with the repeats), e.g. *clip 8.0 s →
+  10.7 s at 0.75× + 2.7 s of repeats*.
+- **⏸️ Pause after each sentence** (Off / Short / Long): the picture holds in silence after every sentence (a shorter
+  pause after a comma), so learners can take it in without the voice being stretched. 0.9 speed + Short sounds the
+  most natural.
 - **🔁 Repeat** (meanings table / Excel, 0–10): right after that key word the video plays it again at once,
   with no pause (**REPEAT 1/2** badge) — as many extra times as you set — then carries on.
 - **Recap design** (⏱️ Design): **🃏 Flashcards** — one card per key word, dealt from a deck: each flips in, lands
@@ -2493,9 +2498,13 @@ def news_tab():
     with gr.Row():
         trim0 = gr.Number(value=0, label="Start the clip at (s)", minimum=0)
         trim1 = gr.Number(value=0, label="End the clip at (s)", minimum=0, info="0 = the end of the video")
-    speed = gr.Slider(0.5, 1.0, value=1.0, step=0.05, label="🐢 Speed of this clip",
-                      info="1 = normal · 0.75 = slower, easier to follow (the voice keeps its pitch) — the length "
-                           "it gives is shown under the buttons")
+    with gr.Row(equal_height=True):
+        speed = gr.Slider(0.5, 1.0, value=1.0, step=0.05, label="🐢 Speed of this clip", scale=3,
+                          info="1 = normal · 0.75 = slower (the voice keeps its pitch and tone) — the length it "
+                               "gives is shown under the buttons")
+        pause = gr.Radio(NW_PAUSES, value="off", label="⏸️ Pause after each sentence", scale=2,
+                         info="The picture holds in silence after every sentence (shorter after a comma): time to "
+                              "take it in, the voice is never stretched. Try 0.9 speed + Short")
     with gr.Row(equal_height=True):
         again = gr.Button("📝 Transcribe again", min_width=150)
         sug = gr.Button("✨ Suggest key words", min_width=160)
@@ -2563,7 +2572,7 @@ def news_tab():
     return dict(key=key, model=model, lang=lang, save_k=save_k, uploads=uploads, pick=pick, remove=remove,
                 headline=headline, trim0=trim0, trim1=trim1, again=again, sug=sug, n_sug=n_sug, clr=clr,
                 status=status, picked=picked, ht=ht, meanings=meanings, words=words, go=go, info=info, zip=zipb,
-                files=files, video=video, clips=clips, cur=cur, speed=speed, mk_xl=mk_xl, up_xl=up_xl,
+                files=files, video=video, clips=clips, cur=cur, speed=speed, pause=pause, mk_xl=mk_xl, up_xl=up_xl,
                 xl_file=xl_file, ak=ak, am=am, aauto=aauto, asave=asave, afill=afill, aredo=aredo,
                 pending=gr.State({}), aspent=aspent, acost=acost, asel=asel, ahint=ahint, aalt=aalt,
                 apick=apick, arow=gr.State(-1), aseen=gr.State(None), atimer=gr.Timer(1.5))
@@ -2604,9 +2613,14 @@ def _clips(js):
     return [c for c in v if isinstance(c, dict)] if isinstance(v, list) else []
 
 
-def _clip(video, headline, t0, t1, words, speed=1.0):
+def _clip(video, headline, t0, t1, words, speed=1.0, pause="off"):
     return {"video": video or "", "headline": headline or "", "trim_start": float(t0 or 0),
-            "trim_end": float(t1 or 0), "words": words or "", "speed": float(speed or 1.0)}
+            "trim_end": float(t1 or 0), "words": words or "", "speed": float(speed or 1.0),
+            "pause": _pause(pause)}
+
+
+def _pause(v):
+    return v if v in {k for _, k in NW_PAUSES} else "off"
 
 
 def _clip_label(i, c):
@@ -2640,12 +2654,13 @@ def news_project(base, c):
     p = copy.deepcopy(base)
     p["news"].update(video=c.get("video") or "", headline=c.get("headline") or "",
                      trim_start=float(c.get("trim_start") or 0), trim_end=float(c.get("trim_end") or 0),
-                     words=c.get("words") or "", speed=float(c.get("speed") or 1.0), clips="[]", clip_index=0)
+                     words=c.get("words") or "", speed=float(c.get("speed") or 1.0),
+                     pause=_pause(c.get("pause")), clips="[]", clip_index=0)
     return p
 
 
 def wire_news(ui, pv, fields):
-    clip_in = [ui["video"], ui["headline"], ui["trim0"], ui["trim1"], ui["words"], ui["speed"]]
+    clip_in = [ui["video"], ui["headline"], ui["trim0"], ui["trim1"], ui["words"], ui["speed"], ui["pause"]]
     clip_out = list(clip_in)
 
     def stt(path, key, model, lang):
@@ -2676,8 +2691,9 @@ def wire_news(ui, pv, fields):
         if 0 <= i < len(clips):
             c = clips[i]
             return (_media_path(c.get("video")), c.get("headline") or "", c.get("trim_start") or 0,
-                    c.get("trim_end") or 0, c.get("words") or "", float(c.get("speed") or 1.0))
-        return "", "", 0, 0, "", 1.0
+                    c.get("trim_end") or 0, c.get("words") or "", float(c.get("speed") or 1.0),
+                    _pause(c.get("pause")))
+        return "", "", 0, 0, "", 1.0, "off"
 
     def switch(pick, js, cur, *vals):
         clips = commit(_clips(js), int(cur or 0), *vals)
@@ -2685,7 +2701,7 @@ def wire_news(ui, pv, fields):
         return (json.dumps(clips, ensure_ascii=False), i, *load_clip(clips, i))
 
     def add(files, js, cur, *rest, progress=gr.Progress()):
-        vals, (key, model, lang) = rest[:6], rest[6:]
+        vals, (key, model, lang) = rest[:len(clip_in)], rest[len(clip_in):]
         clips = commit(_clips(js), int(cur or 0), *vals)
         paths = [f if isinstance(f, str) else getattr(f, "name", None) for f in (files or [])]
         have = {(os.path.basename(c["video"]), os.path.getsize(c["video"]) if os.path.isfile(c["video"]) else -1)
@@ -2706,7 +2722,7 @@ def wire_news(ui, pv, fields):
             except Exception as e:  # the clip is added; 📝 Transcribe again once the problem is fixed
                 errors.append(f"{os.path.basename(path)}: {_msg(e)}")
                 words = ""
-            clips.append(_clip(path, "", 0, 0, words, 1.0))
+            clips.append(_clip(path, "", 0, 0, words, 1.0, "off"))
             first = len(clips) - 1 if first is None else first
         msg = []
         if first is not None:
@@ -2741,14 +2757,14 @@ def wire_news(ui, pv, fields):
             gr.Info("New transcript: the key words of this clip were cleared — click them again.", duration=8)
         return new
 
-    def refresh(text, path, t0, t1, speed, recap):
+    def refresh(text, path, t0, t1, speed, recap, pause):
         words = nw.load(text)
         rep = nw.report(words, _clip_len(path))
         ln = _clip_len(path)
         if ln:
             try:
                 rep += "  \n" + nw_length({"trim_start": t0, "trim_end": t1, "speed": speed, "words": text,
-                                           "recap_style": recap}, ln)
+                                           "pause": pause, "recap_style": recap}, ln)
             except Exception:
                 pass
         if path and words:
@@ -2934,7 +2950,7 @@ def wire_news(ui, pv, fields):
             base = values_to_project("news", vals)
             n = base["news"]
             clips = commit(_clips(n.get("clips")), int(n.get("clip_index") or 0), n.get("video"), n.get("headline"),
-                           n.get("trim_start"), n.get("trim_end"), n.get("words"), n.get("speed"))
+                           n.get("trim_start"), n.get("trim_end"), n.get("words"), n.get("speed"), n.get("pause"))
             st = ai(key, model)
             if auto and st["api_key"] and any(nw.missing(nw.load(c.get("words"))) for c in clips):
                 progress(0, desc="Filling the missing Arabic meanings…")
@@ -2982,8 +2998,8 @@ def wire_news(ui, pv, fields):
     gr.on(triggers=[ui["clips"].change, ui["cur"].change], fn=show, inputs=[ui["clips"], ui["cur"]],
           outputs=ui["pick"], trigger_mode="always_last", show_progress="hidden")
     gr.on(triggers=[ui["words"].change, ui["video"].change, ui["trim0"].change, ui["trim1"].change,
-                    ui["speed"].change, ui["recap"].change], fn=refresh,
-          inputs=[ui["words"], ui["video"], ui["trim0"], ui["trim1"], ui["speed"], ui["recap"]],
+                    ui["speed"].change, ui["recap"].change, ui["pause"].change], fn=refresh,
+          inputs=[ui["words"], ui["video"], ui["trim0"], ui["trim1"], ui["speed"], ui["recap"], ui["pause"]],
           outputs=[ui["ht"], ui["meanings"], ui["status"]], trigger_mode="always_last", show_progress="hidden")
     ui["again"].click(retranscribe, [ui["video"], ui["words"]] + keys, ui["words"])
     ui["picked"].change(pick_words, [ui["words"], ui["picked"]], ui["words"], queue=False, show_progress="hidden")
@@ -3593,7 +3609,8 @@ def build_ui():
                     nw_fields = shared_fields(nw_st, nw_end) + [
                         nwu["video"], nwd["look"], nwd["accent"], nwu["headline"], nwd["tag"], nwd["label"],
                         nwd["bname"], nwd["logo"], nwd["lshape"], nwu["trim0"], nwu["trim1"], nwd["gain"],
-                        nwd["ending_on"], nwu["words"], nwu["clips"], nwu["cur"], nwu["speed"], nwd["recap"]]
+                        nwd["ending_on"], nwu["words"], nwu["clips"], nwu["cur"], nwu["speed"], nwd["recap"],
+                        nwu["pause"]]
                 nw_pv = preview_panel("news")
             wire(nw_proj, nw_pv, nw_fields)
             wire_news(nwu, nw_pv, nw_fields)

@@ -226,8 +226,11 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   no key word is left out (`_card_queue`, shared by `timing` and `_layout_cards`): when the last card would have less
   than `CARD_TAIL` s before the clip ends, `timing` adds a `hold` segment (the clip's last frame held, no sound;
   `_Decoder.frame` reads a fresh last frame from 1 s earlier).
-  Time: `timing(n, sdur)` -> words / key words in CLIP time + `segs` (lead / play / replay = seamless, straight after the word / hold; `o0..o1` video
-  time shows clip `c0..c1`); `news.speed` (0.5-1.5, audio via FFmpeg `atempo` = same pitch, `_clip_sound`) and a 6th
+  Time: `timing(n, sdur)` -> words / key words in CLIP time + `segs` (lead / play / replay = seamless, straight after the word / pause / hold; `o0..o1` video
+  time shows clip `c0..c1`); `news.speed` (0.5-1.5, audio via FFmpeg Rubber Band `STRETCH` = same pitch + tone, `atempo` when the build lacks
+  it: `_clip_sound`, `_NO_RUBBERBAND`), `news.pause` (per clip like speed: `PAUSES` off / short / long = a silent
+  `pause` segment, frame held, after each sentence / clause, cut in the gap after the word; a repeated word replays
+  first; replays end in the gap before the next word) and a 6th
   words column `repeat` (extra replays of a key word, `REP_MAX`) build them; render maps t -> clip time with `_c(t)`
   (captions / video frame), cards + header + ending stay in video time (`g["t0"]` = `_out(c0)`, a repeated word's card
   lasts to `rep_end`); `length_report` = the editor's length line. Text template's `parse_words` keeps `rep` too.
