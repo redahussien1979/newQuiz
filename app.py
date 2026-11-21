@@ -3621,13 +3621,29 @@ def build_ui():
         with gr.Tab("📘 Help"):
             gr.Markdown(HELP)
 
-        demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["timeline"][2]), "timeline"), None, tl_fields)
-        demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["quiz"][2]), "quiz"), None, qz_fields)
-        demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["mcq"][2]), "mcq"), None, mq_fields)
-        demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["vocab"][2]), "vocab"), None, vc_fields)
-        demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["text"][2]), "text"), None, tx_fields)
-        demo.load(lambda: project_to_values(copy.deepcopy(TEMPLATES["news"][2]), "news"), None, nw_fields)
+        for tpl, fields in (("timeline", tl_fields), ("quiz", qz_fields), ("mcq", mq_fields), ("vocab", vc_fields),
+                            ("text", tx_fields), ("news", nw_fields)):
+            preset(fields, project_to_values(copy.deepcopy(TEMPLATES[tpl][2]), tpl))
     return demo
+
+
+def preset(fields, values):
+    """Put the example project into the fields while the page is built, so the browser gets it with the page.
+    (Filling them by demo.load sent ~300 updates after the page opened and froze the browser for about a minute.)
+    Same steps as gradio's Component.__init__ for its value; a field it cannot take keeps its own value."""
+    from gradio.processing_utils import move_files_to_cache
+    for comp, val in zip(fields, values):
+        try:
+            v = comp.postprocess(val)
+            if hasattr(v, "model_dump"):
+                v = v.model_dump()
+            v = move_files_to_cache(v, comp, postprocess=True, keep_in_cache=True)
+        except Exception as e:  # never stop the app over one field
+            print(f"Could not preset {type(comp).__name__} {getattr(comp, 'label', '')!r}: {e}")
+            continue
+        comp.value = v
+        if isinstance(v, dict) and isinstance(v.get("path"), str) and hasattr(comp, "keep_in_cache"):
+            comp.keep_in_cache.add(v["path"])
 
 
 def launch_kwargs():
