@@ -62,6 +62,10 @@ INTER = _lib("Inter", "Inter[opsz,wght].ttf")
 LEAD = 0.7                  # the header comes in over the first frame before the clip plays
 SPEED_MIN, SPEED_MAX = 0.5, 1.5
 REP_MAX = 10                # a key word is replayed at most this many extra times
+PAUSES = {"off": (0.0, 0.0), "short": (0.5, 0.25), "long": (0.9, 0.45)}   # silent pause after a sentence / a clause (s)
+PAUSE_CHOICES = [("Off", "off"), ("Short (½ s after each sentence)", "short"), ("Long (1 s)", "long")]
+_SENT = re.compile(r"[.!?…][\"'”’)\]]*$")
+_CLAUSE = re.compile(r"[,;:\u2014\u2013][\"'”’)\]]*$")
 REP_PRE, REP_POST = 0.18, 0.15   # a replay starts this much before the key word and ends this much after it
 ENDING_LEN = 5.0            # the table recap
 RECAP_CHOICES = [("🃏 Flashcards — new colours for every video", "flashcards"), ("📋 Table", "table")]
@@ -202,6 +206,7 @@ EXAMPLE = {
         "trim_end": 0.0,
         "video_gain": 1.0,
         "speed": 1.0,
+        "pause": "off",
         "ending_on": True,
         "recap_style": DEFAULT_RECAP,
         "words": "\n".join([
@@ -237,6 +242,8 @@ def timing(n, sdur):
       play    the clip at `speed` (0.5-1: slower, the voice keeps its pitch)
       replay  a key word said again, straight after it (no pause: seamless): from just before it to just after it,
               as many times as its `rep` ("REPEAT k/n")
+      pause   the frame held in silence after a sentence / a clause (`news.pause`: time to take it in, the voice
+              itself never stretched)
       hold    the clip's last frame held for the last key word's card (see `_card_queue`)"""
     trim0 = max(0.0, float(n.get("trim_start") or 0.0))
     if trim0 > sdur - 0.5:  # a start past the end of the video: use the whole video
@@ -267,18 +274,35 @@ def timing(n, sdur):
             segs.append(dict(o0=o, o1=o + dur, c0=c0, c1=c1, kind=kind, gi=gi, k=k, n=cnt))
             o += dur
     add("lead", 0.0, 0.0, LEAD)
+    # where the clip stops: after a repeated key word (its replays) and after a sentence / clause (a pause)
+    def after(i):   # just after word i: REP_POST, or half the gap when the next word starts sooner
+        gap = words[i + 1]["s"] - words[i]["e"] if i + 1 < len(words) else REP_POST * 2
+        return min(clip, words[i]["e"] + max(0.0, min(REP_POST, gap / 2)))
+    events = [(after(g["i1"]), 0, gi) for gi, g in enumerate(groups) if g["rep"]]
+    p_sent, p_clause = PAUSES.get(n.get("pause"), PAUSES["off"])
+    if p_sent:
+        rep_cuts = [c for c, _, _ in events]
+        for i, w in enumerate(words[:-1]):
+            dur = p_sent if _SENT.search(w["w"]) else p_clause if _CLAUSE.search(w["w"]) else 0.0
+            if not dur:
+                continue
+            c = after(i)                               # in the silence after the word, never cutting into it
+            c = next((rc for rc in rep_cuts if rc - 0.35 <= c <= rc), c)   # a repeated word: its replays first
+            events.append((c, 1, dur))
     pos = 0.0
-    for gi in sorted((gi for gi, g in enumerate(groups) if g["rep"]), key=lambda i: groups[i]["c1"]):
-        g = groups[gi]
-        cut = max(pos, min(clip, g["c1"] + REP_POST))
+    for c, kind, x in sorted(events, key=lambda e: (e[0], e[1])):
+        cut = max(pos, min(clip, c))
         add("play", pos, cut, (cut - pos) / speed)
         pos = cut
+        if kind == 1:
+            add("pause", cut, cut, x)
+            continue
+        g = groups[x]
         a = max(0.0, g["c0"] - REP_PRE)
         if g["i0"] > 0:  # never from inside the word before (its subtitle page / highlight would flash)
             a = min(g["c0"], max(a, words[g["i0"] - 1]["e"] + 0.06))
-        b = cut
         for k in range(1, g["rep"] + 1):
-            add("replay", a, b, (b - a) / speed, gi, k, g["rep"])
+            add("replay", a, cut, (cut - a) / speed, x, k, g["rep"])
     add("play", pos, clip, (clip - pos) / speed)
     starts = [_seg_out(segs, g["c0"], speed) for g in groups]
     if starts:   # the last key word said near the end: hold the last frame so its card can be read
@@ -335,6 +359,9 @@ def length_report(n, sdur):
         txt += f" → **{played:.1f} s at {speed:g}×**"
     if n_rep:
         txt += f" + {rep:.1f} s of repeats ({n_rep} replay{'s' if n_rep != 1 else ''})"
+    pauses = [sg["o1"] - sg["o0"] for sg in segs if sg["kind"] == "pause"]
+    if pauses:
+        txt += f" + {sum(pauses):.1f} s of pauses ({len(pauses)})"
     hold = sum(sg["o1"] - sg["o0"] for sg in segs if sg["kind"] == "hold")
     if hold:
         txt += f" + {hold:.1f} s last frame held (the last key word's card)"
@@ -377,17 +404,30 @@ def probe(path):
     return out
 
 
+# Rubber Band = studio-quality time-stretching made for voices (natural tone, crisp consonants); FFmpeg builds
+# without it fall back to atempo (simple overlap-add: metallic / echoey at 0.75)
+STRETCH = "rubberband=tempo={:.4f}:pitchq=quality:transients=mixed:formant=preserved:channels=together"
+_NO_RUBBERBAND = []   # set once an FFmpeg without the filter was met
+
+
 def _clip_sound(path, trim0, clip, speed=1.0):
     """The clip's sound (stereo float, 44.1 kHz) from trim0 for `clip` seconds, slowed / sped up to `speed` with its
-    pitch kept (FFmpeg atempo). None when the video has no sound."""
-    cmd = [ffmpeg_exe(), "-v", "error", "-ss", f"{trim0:.3f}", "-t", f"{clip:.3f}", "-i", path, "-vn"]
-    if abs(speed - 1.0) > 1e-3:
-        cmd += ["-af", f"atempo={speed:.4f}"]
-    cmd += ["-f", "s16le", "-acodec", "pcm_s16le", "-ac", "2", "-ar", str(SR), "-"]
-    p = subprocess.run(cmd, capture_output=True)
-    if p.returncode != 0 or not p.stdout:
-        return None
-    return np.frombuffer(p.stdout, np.int16).reshape(-1, 2).astype(np.float64) / 32768.0
+    pitch kept (Rubber Band, else atempo). None when the video has no sound."""
+    slow = abs(speed - 1.0) > 1e-3
+    filters = ([] if _NO_RUBBERBAND else [STRETCH.format(speed)]) + [f"atempo={speed:.4f}"] if slow else [None]
+    for af in filters:
+        cmd = [ffmpeg_exe(), "-v", "error", "-ss", f"{trim0:.3f}", "-t", f"{clip:.3f}", "-i", path, "-vn"]
+        if af:
+            cmd += ["-af", af]
+        cmd += ["-f", "s16le", "-acodec", "pcm_s16le", "-ac", "2", "-ar", str(SR), "-"]
+        p = subprocess.run(cmd, capture_output=True)
+        if p.returncode == 0 and p.stdout:
+            return np.frombuffer(p.stdout, np.int16).reshape(-1, 2).astype(np.float64) / 32768.0
+        if not (af and af.startswith("rubberband")):
+            return None
+        if b"no such filter" in p.stderr.lower():
+            _NO_RUBBERBAND.append(True)   # this FFmpeg has no Rubber Band: atempo from now on
+    return None
 
 
 class _Decoder:
