@@ -242,7 +242,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   App: several clips per project — `news.clips` (JSON list of video / headline / trim / words / speed) + `news.clip_index`
   (the clip in the editor, mirrored in the editor fields; `wire_news.commit` only writes onto the same file);
   🎬 Render all clips = `_stream_batch` over `news_project(base, clip)`.
-  `engine/news_words.py` = the tab's transcript editor (click to toggle key words / phrases, meanings table, suggest);
+  `engine/news_words.py` = the tab's transcript editor (meanings table, suggest); the transcript = `view_html` in a
+  gr.HTML, marked in the browser by `app.NW_PICK_JS` (click = key word, drag = phrase, click a key word = remove; drawn
+  at once, sent ~0.45 s after the clicks pause — or at the next press elsewhere — through the hidden `#nw-ops` box as
+  `<word count>|<ranges>|<n>` → `apply_ranges`, which keeps the Arabic / repeat of a key word that grows or shrinks);
   `engine/translate.py` = automatic Arabic meanings by Claude (Messages API via urllib, forced tool call = clean JSON;
   key/model/auto in `DATA_DIR/anthropic.json`, answers cached per model+word+sentence in `meanings_cache.json`, exact
   cost from the response `usage` x `PRICES` with a running total in `anthropic_usage.json`; `alternatives()` = 3 other

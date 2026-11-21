@@ -1,5 +1,6 @@
-"""📰 English in News — the transcript editor behind the tab: ElevenLabs words -> the Words box, click a word to make
-it a key word (the next word joins it into a phrase), the Arabic meanings table, and suggested key words.
+"""📰 English in News — the transcript editor behind the tab: ElevenLabs words -> the Words box, the transcript the
+browser marks key words on (`view_html`: click a word, drag across words for a phrase; the page sends its marks back
+and `apply_ranges` puts them on the words), the Arabic meanings table, and suggested key words.
 
 The Words box (`news.words`) is the only place the choices live, one spoken word per line:
     word | start | end | highlighted | arabic | repeat
@@ -7,6 +8,7 @@ The Words box (`news.words`) is the only place the choices live, one spoken word
 sits on the first line of the word / phrase (the same format as 📖 English Texts, read by templates/news.py), and so
 does `repeat`: how many extra times the video replays the key word (0-10).
 """
+import html
 import re
 
 from . import paragraphs as para
@@ -59,13 +61,61 @@ def groups(words):
     return _groups(words)
 
 
-def view(words):
-    """Value for the clickable gr.HighlightedText: one token per word, labelled with its key-word number."""
-    lab = {}
-    for n, g in enumerate(_groups(words), 1):
-        for i in range(g["i0"], g["i1"] + 1):
-            lab[i] = str(n)
-    return [(w["w"] + " ", lab.get(i)) for i, w in enumerate(words)]
+def view_html(words):
+    """The transcript for the browser picker (`app.NW_PICK_JS`): one span per word, a key word / phrase tinted with
+    its number. `data-s` = the marks as `apply_ranges` reads them, so the page knows when the server has caught up."""
+    if not words:
+        return '<div id="nw-tx-box" class="nw-empty">The transcript appears here once a clip is added.</div>'
+    gs = _groups(words)
+    start = {g["i0"]: (n, g["i1"]) for n, g in enumerate(gs, 1)}
+    spec = ranges_spec(words)
+    out, i = [], 0
+    while i < len(words):
+        if i in start:
+            n, i1 = start[i]
+            ws = [f'<span class="nw-w" data-i="{k}">{html.escape(words[k]["w"])}</span>' for k in range(i, i1 + 1)]
+            ws[-1] = f'<span class="nw-end">{ws[-1]}<b class="nw-n">{n}</b></span>'  # the number never wraps alone
+            out.append(f'<span class="nw-k nw-c{(n - 1) % 8}" data-a="{i}" data-b="{i1}">{" ".join(ws)}</span>')
+            i = i1 + 1
+        else:
+            out.append(f'<span class="nw-w" data-i="{i}">{html.escape(words[i]["w"])}</span>')
+            i += 1
+    return (f'<div id="nw-tx-box" data-n="{len(words)}" data-s="{html.escape(spec)}">' + " ".join(out) + "</div>")
+
+
+def ranges_spec(words):
+    """The marks as text: `0-0,4-5` = word 0 alone, words 4-5 as one phrase."""
+    return ",".join(f'{g["i0"]}-{g["i1"]}' for g in _groups(words))
+
+
+def apply_ranges(words, spec, n):
+    """The browser picker's marks back onto the words (`spec` as `ranges_spec`, made for a transcript of `n` words).
+    A key word / phrase that stays as it was keeps its text, Arabic and repeat; one that grew or shrank from the same
+    first word keeps its Arabic and repeat. None when the marks don't fit these words (another transcript)."""
+    if n != len(words):
+        return None
+    rng = []
+    for part in filter(None, (spec or "").split(",")):
+        try:
+            a, b = (int(x) for x in part.split("-"))
+        except ValueError:
+            return None
+        if not 0 <= a <= b < len(words) or (rng and a <= rng[-1][1]):
+            return None
+        rng.append((a, b))
+    gs = _groups(words)
+    same = {(g["i0"], g["i1"]) for g in gs}
+    by_start = {g["i0"]: (g["ar"], group_rep(words, g)) for g in gs}
+    keep = {k: (words[k].get("mark"), words[k].get("ar"), words[k].get("rep"))
+            for a, b in rng if (a, b) in same for k in range(a, b + 1)}
+    clear(words)
+    for a, b in rng:
+        if (a, b) in same:
+            for k in range(a, b + 1):
+                words[k]["mark"], words[k]["ar"], words[k]["rep"] = keep[k]
+        else:
+            _set_phrase(words, a, b, *by_start.get(a, ("", 0)))
+    return words
 
 
 def _set_phrase(words, i0, i1, ar, rep=0):
@@ -76,25 +126,6 @@ def _set_phrase(words, i0, i1, ar, rep=0):
     else:
         words[i0]["mark"], words[i0]["ar"], words[i0]["rep"] = "*", "", ""
     words[i0]["ar"], words[i0]["rep"] = ar, (str(rep) if rep else "")
-
-
-def toggle(words, i, join=True):
-    """Click on word i: a key word (or phrase) is removed; else the word becomes a key word — or, when `join` and the
-    word just before it is the end of a key word, that key word grows into a phrase."""
-    if not 0 <= i < len(words):
-        return words
-    gs = _groups(words)
-    for g in gs:
-        if g["i0"] <= i <= g["i1"]:
-            for k in range(g["i0"], g["i1"] + 1):
-                words[k]["mark"], words[k]["ar"], words[k]["rep"] = "", "", ""
-            return words
-    prev = next((g for g in gs if g["i1"] == i - 1), None)
-    if join and prev is not None and not _SENT.search(words[i - 1]["w"]):
-        _set_phrase(words, prev["i0"], i, prev["ar"], group_rep(words, prev))
-    else:
-        _set_phrase(words, i, i, "")
-    return words
 
 
 def clear(words):
