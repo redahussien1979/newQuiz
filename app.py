@@ -587,14 +587,9 @@ def _ic_voices(project, progress=None):
     if not ok:
         raise ValueError("🎙️ The voices are ticked but cannot be made: " + why + " — or untick 🎙️ to render "
                          "without voices.")
-    made = word_import.word_voices(_ic_voice_items(items), DATA_DIR,
+    made = word_import.phrase_voices(items, DATA_DIR,
                                    os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"), progress)
     d["audio"] = [c for c in d.get("audio") or [] if clip_key(c)] + [m for m in made if clip_key(m) not in have]
-
-
-def _ic_voice_items(items):
-    """What ElevenLabs reads for 🃏 Idiom cards: the English (w<k>) and the English meaning (w<k>e, when there is one)."""
-    return [{"en": it["en"], "ex": it.get("df") or ""} for it in items]
 
 
 def _ic_missing(items, have):
@@ -2280,7 +2275,7 @@ def wire_idiom_cards(ui, pv, fields):
         if not ok:
             raise gr.Error(why)
         try:
-            made = word_import.word_voices(_ic_voice_items(items), DATA_DIR,
+            made = word_import.phrase_voices(items, DATA_DIR,
                                            os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"),
                                            lambda x, d: progress(x, desc=d))
         except Exception as e:

@@ -180,7 +180,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `idiomcards.transition`: whip = push + motion blur / slice = 5 strips / flip = 3D `_persp` / zoom / wipe; mix cycles
   `MIX`). `_content(i, t)` caches the pre / final layer of a scene. `touches` (counter pill on the band's top edge,
   progress, shine, punch, drift, shadow). Voice clips `w<k>` (the card's English) + `w<k>e` (its English meaning,
-  shown once the English is said; `app._ic_voices` / `_ic_voice_items` via `word_import.word_voices`); Excel
+  shown once the English is said; `app._ic_voices` via `word_import.phrase_voices`: each phrase read as a sentence
+  (`_sentence` adds the full stop) inside an ElevenLabs context (`previous_text` / `next_text`, not spoken or charged;
+  `elevenlabs.speak` keys the cache on it only when given) — a phrase read alone sounded flat and robotic; the card
+  effects play at 30 % while a clip speaks); Excel
   `read_sheet` (English | Arabic name | English meaning | Arabic meaning | Title | Subtitle; cells sorted by language),
   template `projects/idioms_template.xlsx` (`write_template`), Render all = `_stream_batch` → OUT_DIR/idiom_cards_*
   (titles per video by `app._batch_titles`, as Words video)

@@ -212,6 +212,43 @@ def word_voices(words, data_dir, out_dir, progress=None):
     return paths
 
 
+def _sentence(text):
+    """A phrase as a finished sentence for the voice: a full stop at the end (a phrase without one is read like an
+    unfinished label — flat, robotic)."""
+    text = " ".join(str(text or "").split())
+    return text if not text or text[-1] in ".!?…\"'”’)" else text + "."
+
+
+def phrase_voices(items, data_dir, out_dir, progress=None):
+    """🃏 Idiom cards: one ElevenLabs clip per card's English as out_dir/w<k>.mp3 and one per English meaning as
+    w<k>e.mp3. Each phrase is read as a sentence, inside a context (ElevenLabs previous_text / next_text, not spoken):
+    the idiom as the next item of a lesson, followed by its meaning; the meaning right after the idiom — so the voice
+    sounds like a teacher presenting it, not a dictionary reading a label. Returns the clip paths."""
+    from .core import check_stop
+    ok, msg = voice_ready(data_dir)
+    if not ok:
+        raise RuntimeError(msg)
+    s = el.load_settings(data_dir)
+    cache = os.path.join(data_dir, "tts")
+    os.makedirs(out_dir, exist_ok=True)
+    jobs = []
+    for k, it in enumerate(items, 1):
+        en, df = _sentence(it["en"]), _sentence(it.get("df") or "")
+        jobs.append((en, f"w{k}.mp3", f"“{it['en']}”", "Here is the next one to learn.", df or None))
+        if df:
+            jobs.append((df, f"w{k}e.mp3", f"the meaning of “{it['en']}”", en, None))
+    paths = []
+    for done, (text, name, what, before, after) in enumerate(jobs):
+        check_stop()  # ⏹ Stop between two clips
+        if progress:
+            progress(done / len(jobs), f"🎙️ Voice of {what} ({done + 1} of {len(jobs)})")
+        mp3, _ = el.speak(text, cache, s, before, after)
+        dst = os.path.join(out_dir, name)
+        shutil.copyfile(mp3, dst)
+        paths.append(dst)
+    return paths
+
+
 TEMPLATE_ROWS = [("English", "Arabic", "IPA (optional)", "Sample sentence (optional)", "Title (optional)",
                   "Subtitle (optional)", "English meaning (optional)"),
                  ("Tip of the iceberg", "قمة جبل الجليد", "", "This scandal is only the tip of the iceberg.",

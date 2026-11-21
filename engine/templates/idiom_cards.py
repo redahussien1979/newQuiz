@@ -1066,16 +1066,20 @@ class IdiomCards:
                     s, pn = mx.whoosh(0.4)
                     mx.add(sc["sub"], s, 0.1, -pn)
             elif sc["kind"] == "card":
-                mx.add(sc["L"], mx.thump(), 0.22)
-                mx.add(sc["hl"][0], mx.scribble(0.34), 0.14)
-                if self.cards[sc["k"]]["name"] is not None:
-                    mx.add(sc["name"] + 0.05, pop, 0.18)
+                k = sc["k"]
+                # a voice clip starts with the card: the effects step back so they never cover its first syllable
+                v = 0.3 if (k, "w") in self.clip else 1.0
+                ve = 0.3 if (k, "e") in self.clip else 1.0
+                mx.add(sc["L"] - 0.04, mx.thump(), 0.22 * v)
+                mx.add(sc["hl"][0], mx.scribble(0.34), 0.14 * v)
+                if self.cards[k]["name"] is not None:
+                    mx.add(sc["name"] + 0.05, pop, 0.18 * v)
                 if sc["df"] is not None:
                     s, pn = mx.whoosh(0.35)
-                    mx.add(sc["df"], s, 0.07, pn)
-                if self.cards[sc["k"]]["mean"]:
+                    mx.add(sc["df"], s, 0.07 * ve, pn)
+                if self.cards[k]["mean"]:
                     s, pn = mx.whoosh(0.35)
-                    mx.add(sc["mean"], s, 0.08, -pn)
+                    mx.add(sc["mean"], s, 0.08 * min(v, ve), -pn)
             else:
                 mx.add(sc["L"] + 0.1, mx.chime(), 0.3)
             if i < len(self.moves):
