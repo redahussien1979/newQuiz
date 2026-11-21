@@ -198,6 +198,12 @@ def _en_line(path, txt, size, color=INK):
     return im, p + asc, adv, p
 
 
+def _ink(im):
+    """(left, right) of the ink in a text image (the box and the centring follow the letters, not the advance)."""
+    box = im.getchannel("A").getbbox()
+    return (box[0], box[2]) if box else (0, im.width)
+
+
 def _ar_img(path, txt, size, color):
     return text_img_in(path, txt, int(size), color, "Black")
 
@@ -484,9 +490,11 @@ class IdiomCards:
             if kind == "en":
                 for i, (im, base, adv, p) in enumerate(en):
                     by = y + size * 0.84 + i * pitch  # baseline
-                    x = 540 - adv / 2
-                    box = (x - size * 0.13, by - size * 0.86, x + adv + size * 0.13, by + size * 0.2)
-                    out["en"].append((im, x - p, by - base, box))
+                    l, r = _ink(im)
+                    x = 540 - (l + r) / 2  # the image's left edge: the letters are centred
+                    pad = size * 0.16  # the same room on both sides of the letters
+                    box = (x + l - pad, by - size * 0.86, x + r + pad, by + size * 0.2)
+                    out["en"].append((im, x, by - base, box))
             elif kind == "name":
                 out["name"] = (name, 540, y + h / 2)
             else:
@@ -516,9 +524,10 @@ class IdiomCards:
         sp = meas(" ", size)
         for i, ln in enumerate(lines):
             by = y + size * 0.84 + i * pitch
-            lw = meas(ln, size)
-            x = 540 - lw / 2
-            boxes.append((x - size * 0.13, by - size * 0.86, x + lw + size * 0.13, by + size * 0.2))
+            l, _, r, _ = get_font(int(size), "Black", self.en_font).getbbox(ln, anchor="ls")  # the letters' ink
+            x = 540 - (l + r) / 2
+            pad = size * 0.16
+            boxes.append((x + l - pad, by - size * 0.86, x + r + pad, by + size * 0.2))
             for wd in ln.split():
                 im, base, adv, p = _en_line(self.en_font, wd, size)
                 words.append((im, x + adv / 2, by - base + im.height / 2))
@@ -547,6 +556,8 @@ class IdiomCards:
                 while z > 44 and get_font(int(z), "Black", self.en_font).getlength(s) > TEXT_W:
                     z -= 2
                 im, base, adv, p = _en_line(self.en_font, s, z)
+                l, r = _ink(im)
+                im = im.crop((max(0, l - 30), 0, min(im.width, r + 30), im.height))  # centred by its letters
                 h_ = int(z * 1.06)
                 items.append(("mark" if mark else "plain", im, y + z * 0.84 - base + im.height / 2))
             y += h_ + 34
