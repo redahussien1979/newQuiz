@@ -171,14 +171,16 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `app.idiom_cards_ui` / `wire_idiom_cards`, own project bar, shares 🎨 Style & sound + 🔚 Ending; its preview =
   `preview_panel(..., idiom_cards=True)` → `pv["ic"]` in `ic_col`, `right_side` shows one of post / wv / ic / video;
   its own fields are `preset` at build time). Felt board (`LOOKS`, `_felt` cached per look, camera drift) with a white
-  band (`BH` = one height for every scene, centre `CY`); `idiomcards.items` = lines `English | Arabic name | Arabic
-  meaning` (2 parts = English | meaning; `parse_items` / `items_text`). Scenes (`_timeline`): optional hook (title
+  band (`BH` = one height for every scene, centre `CY`); `idiomcards.items` = lines `English | …` where the parts after
+  the English are told apart by language (`sort_parts`): Latin = English meaning `df` (dark slate, wiped in L→R,
+  `_df_block`), one Arabic = the red meaning, two Arabic = [name] + meaning (`parse_items` / `items_text`). Scenes (`_timeline`): optional hook (title
   words slam in one by one, highlighter, Arabic subtitle wiped RTL) → cards (English visible on arrival, highlighter
   swipe `hl`, [name] pops, meaning wiped RTL, timer bar) → ending; between scenes a move (`moves`,
   `idiomcards.transition`: whip = push + motion blur / slice = 5 strips / flip = 3D `_persp` / zoom / wipe; mix cycles
   `MIX`). `_content(i, t)` caches the pre / final layer of a scene. `touches` (counter pill on the band's top edge,
-  progress, shine, punch, drift, shadow). Voice clips `w<k>` (the card's English, `app._ic_voices` via
-  `word_import.word_voices`); Excel `read_sheet` (English idiom | Arabic name | Arabic meaning | Title | Subtitle),
+  progress, shine, punch, drift, shadow). Voice clips `w<k>` (the card's English) + `w<k>e` (its English meaning,
+  shown once the English is said; `app._ic_voices` / `_ic_voice_items` via `word_import.word_voices`); Excel
+  `read_sheet` (English | Arabic name | English meaning | Arabic meaning | Title | Subtitle; cells sorted by language),
   template `projects/idioms_template.xlsx` (`write_template`), Render all = `_stream_batch` → OUT_DIR/idiom_cards_*
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
   (ElevenLabs word timings); words ink in as spoken (`vs`/`ve` per word), highlighted words get a marker swipe, fly

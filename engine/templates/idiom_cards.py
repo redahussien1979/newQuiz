@@ -4,8 +4,10 @@ hook opens the video (the band slices open, the title words slam in, a highlight
 follow one another with a cinematic transition (`idiomcards.transition`: whip pan, slice, 3D flip, zoom punch, soft
 wipe, or a mix of them), and the shared 🔚 Ending card closes it on the same band.
 
-`idiomcards.items` = one card per line: `English | Arabic name | Arabic meaning` (two parts = English | meaning).
-Voice clips named `w<k>` (the k-th card's English) are played when the card lands and the card waits for them.
+`idiomcards.items` = one card per line: the English, then any of an [Arabic name], an English meaning and the Arabic
+meaning, told apart by their language (`sort_parts`): `Achilles' heel | كعب أخيل | نقطة الضعف القاتلة`,
+`Resilient | able to recover quickly | مَرِن`, `Grateful | ممتنّ`. Voice clips `w<k>` (the k-th card's English) and
+`w<k>e` (its English meaning) are played when they show and the card waits for them.
 Every frame depends only on t (frames are drawn on several processes); card layers are cached per process."""
 import math
 import os
@@ -57,14 +59,27 @@ CY = 900            # band centre
 TR = 0.5            # transition length
 OPEN = 0.55         # the band opening at the start
 EN_MAX, EN_MIN = 106, 70
-NAME_SIZE, MEAN_SIZE = 58, 60
+NAME_SIZE, MEAN_SIZE, DEF_SIZE = 58, 60, 50
+DEF_INK = (58, 62, 74)  # the English meaning: dark slate, quieter than the idiom
 TEXT_W = 920
 _BG = {}
 
 
 # ------------------------------------------------------------------ text
+def sort_parts(en, parts):
+    """dict(en, name, df, mean) from the parts after the English, by their language (in their order): English text =
+    the English meaning (df); one Arabic part = the Arabic meaning; two = the [Arabic name] + the Arabic meaning."""
+    parts = [" ".join(str(p or "").split()) for p in parts]
+    ar = [p for p in parts if p and ARABIC_RE.search(p)]
+    df = " ".join(p for p in parts if p and not ARABIC_RE.search(p))
+    name = ar[0] if len(ar) >= 2 else ""
+    mean = " ".join(ar[1:] if len(ar) >= 2 else ar)
+    return dict(en=en, name=name, df=df, mean=mean)
+
+
 def parse_items(text):
-    """[dict(en, name, mean)] from 'English | Arabic name | Arabic meaning' lines (2 parts = English | meaning)."""
+    """[dict(en, name, df, mean)] from 'English | … ' lines: after the English, any of an [Arabic name], an English
+    meaning and the Arabic meaning, told apart by their language (`sort_parts`)."""
     out = []
     for line in str(text or "").splitlines():
         line = line.strip()
@@ -73,33 +88,32 @@ def parse_items(text):
         parts = [" ".join(p.split()) for p in line.split("|")]
         if not parts[0]:
             continue
-        if len(parts) == 1:
-            out.append(dict(en=parts[0], name="", mean=""))
-        elif len(parts) == 2:
-            out.append(dict(en=parts[0], name="", mean=parts[1]))
-        else:
-            out.append(dict(en=parts[0], name=parts[1], mean=" ".join(p for p in parts[2:] if p)))
+        out.append(sort_parts(parts[0], parts[1:]))
     return out
 
 
 def items_text(items):
-    """The editor's text from item dicts (en, name, mean)."""
+    """The editor's text from item dicts (en, name, df, mean): English | name | English meaning | meaning, empty parts
+    left out (parse_items tells them apart again by their language)."""
     lines = []
     for it in items:
-        cells = [" ".join(str(it.get(k) or "").replace("|", "/").split()) for k in ("en", "name", "mean")]
-        lines.append(" | ".join(cells) if cells[1] else " | ".join([cells[0], cells[2]]) if cells[2] else cells[0])
+        cells = [" ".join(str(it.get(k) or "").replace("|", "/").split()) for k in ("en", "name", "df", "mean")]
+        lines.append(" | ".join([cells[0]] + [c for c in cells[1:] if c]))
     return "\n".join(lines)
 
 
-_HEAD = {"en": ("english", "idiom", "expression", "phrase", "الإنجليزي", "الانجليزي", "التعبير"),
+_HEAD = {"df": ("english meaning", "english definition", "definition", "meaning in english", "التعريف",
+                "المعنى بالإنجليزي", "المعنى بالانجليزي"),
+         "en": ("english", "idiom", "expression", "phrase", "word", "الإنجليزي", "الانجليزي", "التعبير"),
          "name": ("arabic name", "name", "translation", "arabic", "عربي", "الاسم", "الترجمة"),
          "mean": ("meaning", "arabic meaning", "المعنى", "الشرح"),
          "title": ("title", "العنوان"), "sub": ("subtitle", "sub title", "العنوان الفرعي")}
 
 
 def read_sheet(path, sheet=None):
-    """([dict(en, name, mean, title, sub)], [problems]) from an Excel / CSV sheet: columns English | Arabic name |
-    Arabic meaning (+ optional Title, Subtitle), with or without a header row. A Title goes on until the next one."""
+    """([dict(en, name, df, mean, title, sub)], [problems]) from an Excel / CSV sheet: columns English | Arabic name |
+    English meaning | Arabic meaning (any of the last three; + optional Title, Subtitle), with or without a header
+    row. A Title goes on until the next one."""
     from ..batch import read_table
     rows = read_table(path, sheet)
     cols, start = None, 0
@@ -107,15 +121,15 @@ def read_sheet(path, sheet=None):
         found = {}
         for j, cell in enumerate(row):
             c = " ".join(str(cell or "").lower().split())
-            for key in ("sub", "title", "mean", "name", "en"):  # the longer names first ("arabic name" ≠ "name")
+            for key in ("sub", "title", "df", "mean", "name", "en"):  # longer names first ("arabic name" ≠ "name")
                 if key not in found and c and any(c == h or c.startswith(h) for h in _HEAD[key]):
                     found[key] = j
                     break
-        if "en" in found and ("mean" in found or "name" in found):
+        if "en" in found and ("mean" in found or "name" in found or "df" in found):
             cols, start = found, i + 1
             break
     if cols is None:
-        cols = {"en": 0, "name": 1, "mean": 2, "title": 3, "sub": 4}
+        cols = {"en": 0, "name": 1, "mean": 2, "df": 3}  # no header: columns B-D, told apart by language
     items, problems = [], []
     title = sub = ""
     for r, row in enumerate(rows[start:], start + 1):
@@ -125,39 +139,46 @@ def read_sheet(path, sheet=None):
             title, sub = cell("title"), cell("sub")
         elif cell("sub"):
             sub = cell("sub")
-        en, name, mean = cell("en"), cell("name"), cell("mean")
-        if not en and not (name or mean):
+        en = cell("en")
+        # the cells in sheet order; what each one is comes from its language (an English meaning may sit in the
+        # Arabic name column and so on)
+        rest = [cell(k) for k in sorted(("name", "df", "mean"), key=lambda k: cols.get(k, 99)) if k in cols]
+        if not en and not any(rest):
             continue
         if not en:
             problems.append(f"row {r}: the English idiom is empty — left out")
             continue
-        if not (name or mean):
-            problems.append(f"row {r}: no Arabic for “{en}” — left out")
+        if not any(rest):
+            problems.append(f"row {r}: no meaning for “{en}” — left out")
             continue
-        items.append(dict(en=en, name=name, mean=mean, title=title, sub=sub))
+        items.append(dict(sort_parts(en, rest), title=title, sub=sub))
     return items, problems
 
 
 TEMPLATE_ROWS = [
-    ("English idiom", "Arabic name", "Arabic meaning", "Title", "Subtitle"),
-    ("Achilles' heel", "كعب أخيل", "نقطة الضعف القاتلة", "{count} Idioms from Greek Myths",
+    ("English idiom / word", "Arabic name (optional)", "English meaning (optional)", "Arabic meaning", "Title",
+     "Subtitle"),
+    ("Achilles' heel", "كعب أخيل", "", "نقطة الضعف القاتلة", "{count} Idioms from Greek Myths",
      "تعابير إنجليزية أصلها أساطير يونانية"),
-    ("Pandora's box", "صندوق باندورا", "مصدر لمشكلات متعاقبة يصعب احتواؤها", "", ""),
-    ("Herculean effort", "جهد هرقلي", "جهد خارق يفوق المعتاد", "", ""),
-    ("Gordian knot", "العقدة الغوردية", "معضلة معقدة يصعب حلها بالوسائل التقليدية", "", ""),
-    ("Elysian fields", "حقول إليسيوم", "رمز للنعيم الأبدي أو المكان المثالي", "", ""),
-    ("Procrustean bed", "سرير بروكرست", "إطار قسري تُفرض فيه الوقائع أو الأفراد ليتوافقوا مع معيار صارم", "", ""),
-    ("Trojan horse", "حصان طروادة", "خدعة تبدو بريئة وتُخفي خطرًا من الداخل", "", ""),
-    ("Break the ice", "كسر الجليد", "بدء الحديث وإزالة التوتر في أول لقاء", "{count} Everyday Idioms",
-     "تعابير يستخدمها الإنجليز كل يوم"),
-    ("Spill the beans", "أفشى السر", "كشف سرٍّ قبل أوانه", "", ""),
-    ("Hit the sack", "ذهب إلى الفراش", "الذهاب إلى النوم", "", ""),
-    ("Piece of cake", "قطعة كعك", "أمر سهل جدًا", "", ""),
+    ("Pandora's box", "صندوق باندورا", "", "مصدر لمشكلات متعاقبة يصعب احتواؤها", "", ""),
+    ("Herculean effort", "جهد هرقلي", "", "جهد خارق يفوق المعتاد", "", ""),
+    ("Gordian knot", "العقدة الغوردية", "", "معضلة معقدة يصعب حلها بالوسائل التقليدية", "", ""),
+    ("Elysian fields", "حقول إليسيوم", "", "رمز للنعيم الأبدي أو المكان المثالي", "", ""),
+    ("Procrustean bed", "سرير بروكرست", "", "إطار قسري تُفرض فيه الوقائع أو الأفراد ليتوافقوا مع معيار صارم", "", ""),
+    ("Trojan horse", "حصان طروادة", "", "خدعة تبدو بريئة وتُخفي خطرًا من الداخل", "", ""),
+    ("Break the ice", "", "to make people feel relaxed when they first meet", "بدء الحديث وإزالة التوتر في أول لقاء",
+     "{count} Everyday Idioms", "تعابير يستخدمها الإنجليز كل يوم"),
+    ("Spill the beans", "", "to tell a secret too early", "كشف سرٍّ قبل أوانه", "", ""),
+    ("Hit the sack", "", "to go to bed", "الذهاب إلى النوم", "", ""),
+    ("Piece of cake", "", "something very easy to do", "أمر سهل جدًا", "", ""),
+    ("Resilient", "", "able to recover quickly from difficulties", "مَرِن، سريع التعافي", "{count} Words to Sound Smarter",
+     "كلمات إنجليزية ستبهر بها الجميع"),
+    ("Overwhelmed", "", "having too much to deal with at once", "مُنهَك، غارق في المهام", "", ""),
 ]
 
 
 def write_template(path):
-    """projects/idioms_template.xlsx: English idiom | Arabic name | Arabic meaning | Title | Subtitle."""
+    """projects/idioms_template.xlsx: English | Arabic name | English meaning | Arabic meaning | Title | Subtitle."""
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
     wb = openpyxl.Workbook()
@@ -168,10 +189,10 @@ def write_template(path):
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="14402A")
-    for col, w in zip("ABCDE", (26, 26, 60, 34, 40)):
+    for col, w in zip("ABCDEF", (24, 22, 46, 56, 32, 38)):
         ws.column_dimensions[col].width = w
     for row in ws.iter_rows(min_row=2):
-        for c in row[1:3] + row[4:5]:
+        for c in (row[1], row[3], row[5]):
             c.alignment = Alignment(horizontal="right", readingOrder=2)
     ws.freeze_panes = "A2"
     wb.save(path)
@@ -187,9 +208,9 @@ def _arabic_font(name):
     return wv_font(name or AR_DEFAULT)
 
 
-def _en_line(path, txt, size, color=INK):
+def _en_line(path, txt, size, color=INK, weight="Black"):
     """A Latin line on a fixed-height box: (image, baseline y, advance, pad)."""
-    f = get_font(int(size), "Black", path)
+    f = get_font(int(size), weight, path)
     asc, desc = f.getmetrics()
     adv = f.getlength(txt)
     p = int(size * 0.3) + 8
@@ -420,9 +441,9 @@ class IdiomCards:
         for p in d.get("audio") or []:
             if p and os.path.isfile(str(p)):
                 key = clip_key(p)
-                if key and 1 <= key[0] <= n and key[1] == "w":
+                if key and 1 <= key[0] <= n and key[1] in ("w", "e"):
                     try:
-                        self.clip[key[0] - 1] = (p, audio_length(p))
+                        self.clip[(key[0] - 1, key[1])] = (p, audio_length(p))
                     except Exception:
                         pass
         self._layout()
@@ -456,6 +477,19 @@ class IdiomCards:
                 size -= 2
         return [_en_line(self.en_font, ln, size) for ln in lines], size
 
+    def _df_block(self, txt):
+        """The English meaning: up to 3 lines in the English font, a little lighter and smaller than the idiom."""
+        if not txt:
+            return [], DEF_SIZE
+        meas = lambda s, z: get_font(int(z), "Bold", self.en_font).getlength(s)  # noqa: E731
+        z = DEF_SIZE
+        while z > 34:
+            ls = _wrap(lambda s: meas(s, z), txt, TEXT_W, 3)
+            if ls:
+                return [_en_line(self.en_font, ln, z, DEF_INK, "Bold") for ln in ls], z
+            z -= 2
+        return [_en_line(self.en_font, txt, 34, DEF_INK, "Bold")], 34
+
     def _ar_block(self, txt, size, col, n_max=3):
         meas = lambda s, z: _ar_img(self.ar_font, s, z, (0, 0, 0)).width - 60  # noqa: E731
         z = size
@@ -476,14 +510,18 @@ class IdiomCards:
         name = _ar_img(self.ar_font, f"[{it['name']}]", NAME_SIZE, INK) if it["name"] else None
         if name is not None:
             blocks.append(("name", name.height - 60))
+        df, dz = self._df_block(it.get("df") or "")
+        dpitch = int(dz * 1.3)
+        if df:
+            blocks.append(("df", dpitch * (len(df) - 1) + int(dz * 1.0)))
         mean, mz = self._ar_block(it["mean"], MEAN_SIZE, RED) if it["mean"] else ([], MEAN_SIZE)
         mpitch = int(mz * 1.45)
         if mean:
             blocks.append(("mean", mpitch * (len(mean) - 1) + max(m.height for m in mean) - 60))
-        gaps = {"name": 62, "mean": 72}
+        gaps = {"name": 62, "df": 58, "mean": 72}
         total = sum(h for _, h in blocks) + sum(gaps[k] for k, _ in blocks[1:])
         y = -total / 2
-        out = dict(en=[], name=None, mean=[], h=total)
+        out = dict(en=[], name=None, df=[], mean=[], h=total)
         for kind, h in blocks:
             if kind != "en":
                 y += gaps[kind]
@@ -497,6 +535,11 @@ class IdiomCards:
                     out["en"].append((im, x, by - base, box))
             elif kind == "name":
                 out["name"] = (name, 540, y + h / 2)
+            elif kind == "df":
+                for i, (im, base, adv, p) in enumerate(df):
+                    by = y + dz * 0.78 + i * dpitch
+                    l, r = _ink(im)
+                    out["df"].append((im, 540 - (l + r) / 2, by - base))
             else:
                 for i, im in enumerate(mean):
                     out["mean"].append((im, 540, y + (h - mpitch * (len(mean) - 1)) / 2 + i * mpitch))
@@ -620,14 +663,28 @@ class IdiomCards:
             sc = dict(kind="card", k=k, L=t)
             sc["hl"] = (t, t + 0.34)
             sc["name"] = t + 0.3
-            sc["mean"] = t + 0.55
-            nm = len(c["mean"])
-            mean_end = sc["mean"] + 0.25 * max(0, nm - 1) + 0.42 if nm else sc["name"] + 0.3
+            cur = t + (0.55 if c["name"] is not None else 0.35)
             x = t + self.hold
-            if k in self.clip:
-                path, ln = self.clip[k]
+            said = t  # when the English has been said
+            if (k, "w") in self.clip:
+                path, ln = self.clip[(k, "w")]
                 self.voices.append((t + 0.1, path))
-                x = max(x, t + 0.1 + ln + 0.6)
+                said = t + 0.1 + ln
+                x = max(x, said + 0.6)
+            sc["df"] = None
+            if c["df"]:  # the English meaning, after the English has been said; then its own clip
+                sc["df"] = max(cur, said + 0.05)
+                nd = len(c["df"])
+                df_end = sc["df"] + 0.2 * (nd - 1) + 0.4
+                cur = sc["df"] + 0.45
+                x = max(x + 0.8, df_end + 1.4)  # more to read
+                if (k, "e") in self.clip:
+                    path, ln = self.clip[(k, "e")]
+                    self.voices.append((sc["df"] + 0.05, path))
+                    x = max(x, sc["df"] + 0.05 + ln + 0.6)
+            sc["mean"] = cur
+            nm = len(c["mean"])
+            mean_end = sc["mean"] + 0.25 * max(0, nm - 1) + 0.42 if nm else cur
             sc["x"] = max(x, mean_end + 0.9)
             if "punch" in self.touch:
                 self.impacts.append((sc["hl"][1], 0.55))
@@ -731,6 +788,12 @@ class IdiomCards:
                 im, cx, cy = c["name"]
                 _put(lay, _scaled(im, 0.6 + 0.4 * ease_out_back(p)), cx, cy + oy + 18 * (1 - _ease_out(p)),
                      min(1, p * 2))
+        for j, (im, x, y) in enumerate(c["df"]):  # the English meaning writes in left to right
+            a = sc["df"] + 0.2 * j
+            p = prog(t, a, a + 0.4)
+            if p > 0:
+                w_ = _wipe(im, _ease_out(p, 2))
+                composite(lay, w_, int(x), int(y + oy + 10 * (1 - _ease_out(p))))
         for j, (im, cx, cy) in enumerate(c["mean"]):
             a = sc["mean"] + 0.25 * j
             p = prog(t, a, a + 0.42)
@@ -1007,6 +1070,9 @@ class IdiomCards:
                 mx.add(sc["hl"][0], mx.scribble(0.34), 0.14)
                 if self.cards[sc["k"]]["name"] is not None:
                     mx.add(sc["name"] + 0.05, pop, 0.18)
+                if sc["df"] is not None:
+                    s, pn = mx.whoosh(0.35)
+                    mx.add(sc["df"], s, 0.07, pn)
                 if self.cards[sc["k"]]["mean"]:
                     s, pn = mx.whoosh(0.35)
                     mx.add(sc["mean"], s, 0.08, -pn)
