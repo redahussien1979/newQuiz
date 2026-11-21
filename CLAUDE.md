@@ -222,8 +222,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   = speech envelope from the word timings, `_draw_wave`); post: `header="post"` (`_layout_post_head` /
   `_layout_post_card` / `_draw_post`: card around the clip, `post_box` in `_place`, heart pops at each card).
   Layout `_place()` measures the cards (`card_box`, solid part) and the subtitle letters (`cap_band`) and only shrinks a
-  landscape panel when the card would cross the safe line. Cards queue (never overlap), give way after `CARD_MIN`,
-  are left out if they would come `CARD_LAG` late (the word stays in the subtitles + recap).
+  landscape panel when the card would cross the safe line. Cards queue (never overlap), give way after `CARD_MIN`;
+  no key word is left out (`_card_queue`, shared by `timing` and `_layout_cards`): when the last card would have less
+  than `CARD_TAIL` s before the clip ends, `timing` adds a `hold` segment (the clip's last frame held, no sound;
+  `_Decoder.frame` reads a fresh last frame from 1 s earlier).
   Time: `timing(n, sdur)` -> words / key words in CLIP time + `segs` (lead / play / freeze / replay; `o0..o1` video
   time shows clip `c0..c1`); `news.speed` (0.5-1.5, audio via FFmpeg `atempo` = same pitch, `_clip_sound`) and a 6th
   words column `repeat` (extra replays of a key word, `REP_MAX`) build them; render maps t -> clip time with `_c(t)`
