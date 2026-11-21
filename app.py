@@ -241,8 +241,8 @@ One question per block, 3 or 4 options, a `*` after the correct one, optional `>
   go back onto their words in every clip.
 - **🐢 Speed of this clip** (0.5–1): plays the clip slower — the voice keeps its pitch — and the line under the
   buttons shows the length it gives (with the repeats), e.g. *clip 8.0 s → 10.7 s at 0.75× + 2.7 s of repeats*.
-- **🔁 Repeat** (meanings table / Excel, 0–10): when the video reaches that key word it holds the frame
-  (**REPEAT 1/2** badge), rewinds and plays the word again — as many extra times as you set — then carries on.
+- **🔁 Repeat** (meanings table / Excel, 0–10): right after that key word the video plays it again at once,
+  with no pause (**REPEAT 1/2** badge) — as many extra times as you set — then carries on.
 - **Recap design** (⏱️ Design): **🃏 Flashcards** — one card per key word, dealt from a deck: each flips in, lands
   and settles, a shine sweeps them, a ring counts the words and bursts into a ✓ — with **new colours for every video**
   (12 matched colour sets, picked from the clip, always readable; a video keeps its colours when re-rendered); or

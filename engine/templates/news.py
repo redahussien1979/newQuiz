@@ -63,7 +63,6 @@ LEAD = 0.7                  # the header comes in over the first frame before th
 SPEED_MIN, SPEED_MAX = 0.5, 1.5
 REP_MAX = 10                # a key word is replayed at most this many extra times
 REP_PRE, REP_POST = 0.18, 0.15   # a replay starts this much before the key word and ends this much after it
-REP_GAP = 0.45              # the held frame (with REPEAT k/n) before each replay
 ENDING_LEN = 5.0            # the table recap
 RECAP_CHOICES = [("🃏 Flashcards — new colours for every video", "flashcards"), ("📋 Table", "table")]
 DEFAULT_RECAP = "flashcards"
@@ -96,8 +95,9 @@ def recap_len(kind, n):
 CARD_MIN, CARD_HOLD = 1.0, 4.2   # a word card stays at least / at most this long (s): it gives way to the next
                                  # key word's card, but only after CARD_MIN
 REC_MIN = 0.72                   # the recap's common text size may go down to this share of its full size
-CARD_LAG = 1.0                   # a card may come at most this late after its word (else it is left out)
 CARD_OUT = 0.25                  # its exit
+CARD_TAIL = 1.6                  # the last card is up at least this long before the clip ends (else the clip's
+                                 # last frame is held: `timing` adds a "hold" segment)
 SAFE_BOTTOM = 1536
 CAP_MAX_W = 860            # a subtitle line (centred: clear of the Shorts buttons on the right)
 POP_MAX_W = 820            # pop: the widest a line of huge words may be (1080 - 2 x 130)
@@ -235,8 +235,9 @@ def timing(n, sdur):
     dict(o0, o1, c0, c1, kind, gi, k, n): its time o0..o1 shows the clip from c0 to c1 —
       lead    the first frame held while the header comes in
       play    the clip at `speed` (0.5-1: slower, the voice keeps its pitch)
-      freeze  a held frame before a replay ("REPEAT k/n")
-      replay  a key word said again: from just before it to just after it, as many times as its `rep`."""
+      replay  a key word said again, straight after it (no pause: seamless): from just before it to just after it,
+              as many times as its `rep` ("REPEAT k/n")
+      hold    the clip's last frame held for the last key word's card (see `_card_queue`)"""
     trim0 = max(0.0, float(n.get("trim_start") or 0.0))
     if trim0 > sdur - 0.5:  # a start past the end of the video: use the whole video
         trim0 = 0.0
@@ -277,23 +278,66 @@ def timing(n, sdur):
             a = min(g["c0"], max(a, words[g["i0"] - 1]["e"] + 0.06))
         b = cut
         for k in range(1, g["rep"] + 1):
-            add("freeze", a, a, REP_GAP, gi, k, g["rep"])
             add("replay", a, b, (b - a) / speed, gi, k, g["rep"])
     add("play", pos, clip, (clip - pos) / speed)
+    starts = [_seg_out(segs, g["c0"], speed) for g in groups]
+    if starts:   # the last key word said near the end: hold the last frame so its card can be read
+        holds = [_rep_end(segs, gi, g, speed) for gi, g in enumerate(groups)]
+        for _ in range(3):   # holding longer can only move the last card later: repeat until it settles
+            last = _card_queue(starts, holds, segs[-1]["o1"])[-1][0]
+            extra = last + CARD_TAIL - segs[-1]["o1"]
+            if extra <= 1e-3:
+                break
+            if segs[-1]["kind"] == "hold":
+                segs[-1]["o1"] += extra
+            else:
+                add("hold", clip, clip, extra)
     return trim0, clip, speed, words, groups, segs
+
+
+def _seg_out(segs, c, speed):
+    """The video time at which clip time c is first played."""
+    for sg in segs:
+        if sg["kind"] == "play" and sg["c0"] <= c <= sg["c1"] and sg["c1"] > sg["c0"]:
+            return sg["o0"] + (c - sg["c0"]) / speed
+    return LEAD if c <= 0 else segs[-1]["o1"]
+
+
+def _rep_end(segs, gi, g, speed):
+    """When a key word has been said for the last time (its last replay, or just its first time)."""
+    reps = [sg for sg in segs if sg["gi"] == gi]
+    return reps[-1]["o1"] if reps else _seg_out(segs, g["c1"], speed)
+
+
+def _card_queue(starts, rep_ends, end):
+    """[(t0, t1)] of every key word's card: it comes when its word is said, or as soon as the card before has gone
+    (cards never overlap: they queue). It stays until the next key word (at least CARD_MIN, at most CARD_HOLD, through
+    the word's replays) and goes at the latest just after the clip `end`. No key word is left out."""
+    out, free = [], 0.0
+    for i, s in enumerate(starts):
+        t0 = max(s, free)
+        nxt = starts[i + 1] if i + 1 < len(starts) else end + 0.3
+        t1 = min(max(nxt - CARD_OUT - 0.02, t0 + CARD_MIN), max(t0 + CARD_HOLD, rep_ends[i] + 0.5), end + 0.2)
+        t1 = max(t1, t0 + 0.3)
+        free = t1 + CARD_OUT + 0.02
+        out.append((t0, t1))
+    return out
 
 
 def length_report(n, sdur):
     """One line for the editor: how long the clip part of the video is, with the speed and the repeats."""
     trim0, clip, speed, words, groups, segs = timing(n, sdur)
     played = sum(sg["o1"] - sg["o0"] for sg in segs if sg["kind"] == "play")
-    rep = sum(sg["o1"] - sg["o0"] for sg in segs if sg["kind"] in ("freeze", "replay"))
+    rep = sum(sg["o1"] - sg["o0"] for sg in segs if sg["kind"] == "replay")
     n_rep = sum(g["rep"] for g in groups)
     txt = f"⏱️ clip {clip:.1f} s"
     if abs(speed - 1) > 1e-3:
         txt += f" → **{played:.1f} s at {speed:g}×**"
     if n_rep:
         txt += f" + {rep:.1f} s of repeats ({n_rep} replay{'s' if n_rep != 1 else ''})"
+    hold = sum(sg["o1"] - sg["o0"] for sg in segs if sg["kind"] == "hold")
+    if hold:
+        txt += f" + {hold:.1f} s last frame held (the last key word's card)"
     kind = n.get("recap_style") if n.get("recap_style") in ("flashcards", "table") else DEFAULT_RECAP
     return txt + f" = **{segs[-1]['o1'] - LEAD:.1f} s** (+ {LEAD:g} s intro" + \
         (f", + {recap_len(kind, len(groups)):.1f} s recap)" if groups else ")")
@@ -381,6 +425,14 @@ class _Decoder:
             got = self._read()
             if got is not None:
                 im = got
+        if im is None and self.last is None and idx > 0:
+            # a fresh start on the very last frames gets none (the seek lands past them): read from 1 s earlier
+            # and keep the last frame there is (the held end of the clip, the recap's background)
+            self._open(max(0, idx - int(round(self.fps))))
+            while self.proc is not None and self.next <= idx:
+                got = self._read()
+                if got is not None:
+                    im = got
         if im is None:  # past the end (or a decode error): hold the last good frame
             return self.last[1] if self.last is not None else Image.new("RGB", self.size, (12, 14, 20))
         self.last = (idx, im)
@@ -603,8 +655,7 @@ class NewsVideo:
         self.key_of = {}
         for gi, g in enumerate(self.groups):
             g["t0"] = self._out(g["c0"])           # when the key word is first said in the video
-            reps = [sg for sg in self.segs if sg["gi"] == gi]
-            g["rep_end"] = reps[-1]["o1"] if reps else self._out(g["c1"])
+            g["rep_end"] = _rep_end(self.segs, gi, g, self.speed)
             for k in range(g["i0"], g["i1"] + 1):
                 self.key_of[k] = gi
 
@@ -1172,15 +1223,8 @@ class NewsVideo:
         make = {"pop": self._card_pop, "bar": self._card_bar, "sticker": self._card_sticker,
                 "clip": self._card_clip, "notify": self._card_notify, "podpill": self._card_podpill,
                 "reply": self._card_reply}[self.L["card"]]
-        free = 0.0                 # when the card before has fully gone (cards never overlap: they queue)
-        for gi, g in enumerate(self.groups):
-            t0 = max(g["t0"], free)
-            if t0 - g["t0"] > CARD_LAG or t0 > self.E - 0.6:
-                continue  # key words too close together / too late: this one is marked in the subtitles + recap
-            nxt = self.groups[gi + 1]["t0"] if gi + 1 < n else self.E + 0.3
-            hold = max(t0 + CARD_HOLD, g["rep_end"] + 0.5)   # a repeated word keeps its card through the replays
-            t1 = min(max(nxt - CARD_OUT - 0.02, t0 + CARD_MIN), hold, self.E + 0.2)
-            free = t1 + CARD_OUT + 0.02
+        plan = _card_queue([g["t0"] for g in self.groups], [g["rep_end"] for g in self.groups], self.E)
+        for gi, (g, (t0, t1)) in enumerate(zip(self.groups, plan)):
             self.cards.append(dict(im=make(gi, g, n), t0=t0, t1=t1, gi=gi))
         if self.L["card"] == "notify":   # the frosted part: where the banner itself is (not its shadow)
             for c in self.cards:
@@ -1845,15 +1889,12 @@ class NewsVideo:
 
     def _out(self, c):
         """The video time at which clip time c is first played."""
-        for sg in self.segs:
-            if sg["kind"] == "play" and sg["c0"] <= c <= sg["c1"] and sg["c1"] > sg["c0"]:
-                return sg["o0"] + (c - sg["c0"]) / self.speed
-        return LEAD if c <= 0 else self.segs[-1]["o1"]
+        return _seg_out(self.segs, c, self.speed)
 
     def _draw_repeat(self, frame, t, a):
-        """REPEAT k/n badge while a key word is replayed (with the held frame before it)."""
+        """REPEAT k/n badge while a key word is replayed."""
         sg = self._seg(t)
-        if sg["kind"] not in ("freeze", "replay") or t >= self.E:
+        if sg["kind"] != "replay" or t >= self.E:
             return
         same = [x for x in self.segs if x["gi"] == sg["gi"]]
         t0, t1 = same[0]["o0"], same[-1]["o1"]
@@ -1864,8 +1905,9 @@ class NewsVideo:
         if key not in self._rep_ims:
             self._rep_ims[key] = self._repeat_badge(*key)
         im = _scaled(self._rep_ims[key], 0.6 + 0.4 * min(1.0, k))
-        if sg["kind"] == "freeze":   # a soft pulse while the frame is held
-            im = _scaled(im, 1.0 + 0.05 * math.sin(math.pi * (t - sg["o0"]) / max(1e-6, sg["o1"] - sg["o0"])))
+        u = (t - sg["o0"]) / 0.25
+        if sg["k"] > 1 and u < 1:   # a soft beat as the count goes up
+            im = _scaled(im, 1.0 + 0.08 * math.sin(math.pi * u))
         if self.vertical:
             x, y = (W - im.width) // 2, int(self.cap_y + self.cap_box[0]) - im.height - 24
         else:
@@ -2079,10 +2121,10 @@ class NewsVideo:
                 if n > 0:
                     mx.voice[at:at + n] += seg[:n]
                     mx.has_voice = True
-        for sg in self.segs:   # a soft rewind swish as each replay begins
-            if sg["kind"] == "freeze":
-                sig, pan = mx.whoosh(0.35)
-                mx.add(sg["o0"], sig[::-1].copy(), 0.07, pan)
+        for sg in self.segs:   # a soft rewind swish leading into each replay (under the voice)
+            if sg["kind"] == "replay":
+                sig, pan = mx.whoosh(0.3)
+                mx.add(max(0.0, sg["o0"] - 0.26), sig[::-1].copy(), 0.045, pan)
         sig, pan = mx.whoosh(0.5)
         mx.add(0.02, sig, 0.08, pan)
         for c in self.cards:   # the notification banner comes with a soft chime, the other cards with a pop
