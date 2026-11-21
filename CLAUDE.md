@@ -274,6 +274,9 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   Without RAQM a font with no joined presentation forms (Aref Ruqaa, Baloo, Marhey, Readex Pro, Reem Kufi) would show
   separate letters: `core._basic_font` draws its Arabic with the nearest font that has them (`_BASIC_SUBS`). Test the
   fallback with env `VS_FORCE_BASIC=1`.
+- Start-up speed: never fill fields with `demo.load` — `build_ui` gives them the example project at build time
+  (`app.preset`); the old 6 load events froze the browser ~1 min. `run_windows.bat` runs pip only when
+  `requirements.txt` differs from `.venv/installed-requirements.txt`.
 - Keep changes minimal and consistent with the existing structure.
 - The user runs it on Windows via `run_windows.bat` (venv + `requirements.txt`); avoid heavy new dependencies.
 - A new template needs: `NAME`, `EXAMPLE`, a class with `base_duration`, `dur`, `fps`, `silences`, `render(t)` and `sound(mixer)`, plus a tab in `app.py`.
