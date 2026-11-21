@@ -558,24 +558,34 @@ def _wv_voices(project, progress=None):
 
 
 def _ic_voices(project, progress=None):
-    """🃏 Idiom cards with 🎙️ ticked: make the missing voice clips w<k> (the English of card k) with the user's
-    ElevenLabs voice (cached: a clip costs credits only once); the uploaded / earlier clips stay."""
+    """🃏 Idiom cards with 🎙️ ticked: make the missing voice clips w<k> (the English of card k) and w<k>e (its English
+    meaning) with the user's ElevenLabs voice (cached: a clip costs credits only once); uploaded / earlier clips stay."""
     d = project.get("idiomcards", {})
     if not d.get("voice_on"):
         return
     from engine.templates.vocab import clip_key
     items = icards.parse_items(d.get("items"))
     have = {clip_key(c) for c in d.get("audio") or []} - {None}
-    missing = [i for i in range(len(items)) if (i + 1, "w") not in have]
-    if not missing:
+    if not _ic_missing(items, have):
         return
     ok, why = word_import.voice_ready(DATA_DIR)
     if not ok:
         raise ValueError("🎙️ The voices are ticked but cannot be made: " + why + " — or untick 🎙️ to render "
                          "without voices.")
-    made = word_import.word_voices([{"en": it["en"]} for it in items], DATA_DIR,
+    made = word_import.word_voices(_ic_voice_items(items), DATA_DIR,
                                    os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"), progress)
     d["audio"] = [c for c in d.get("audio") or [] if clip_key(c)] + [m for m in made if clip_key(m) not in have]
+
+
+def _ic_voice_items(items):
+    """What ElevenLabs reads for 🃏 Idiom cards: the English (w<k>) and the English meaning (w<k>e, when there is one)."""
+    return [{"en": it["en"], "ex": it.get("df") or ""} for it in items]
+
+
+def _ic_missing(items, have):
+    """How many voice clips the cards still lack: w<k> for every card, w<k>e for a card with an English meaning."""
+    return sum((i + 1, "w") not in have for i in range(len(items))) + \
+        sum((i + 1, "e") not in have for i, it in enumerate(items) if it.get("df"))
 
 
 _VOICES = {"wordsvideo": _wv_voices, "idiomcards": _ic_voices}
@@ -2050,8 +2060,10 @@ IC_HELP = ("**🃏 Idiom cards** — a felt board with a white band: each idiom 
            "(the band snaps open, the title words slam in), every card arrives with a cinematic move (whip pan, "
            "slice, 3D flip, zoom punch) and the 🔚 Ending closes it on the band. Made for Facebook / Reels: keep it "
            "under 60 s (about 12 cards). The preview on the right is this video's own.")
-IC_ITEMS_HELP = ("One card per line: `English idiom | Arabic name | Arabic meaning` — e.g. `Achilles' heel | كعب أخيل | "
-                 "نقطة الضعف القاتلة`. Two parts = `English | Arabic meaning` (no [name] line).")
+IC_ITEMS_HELP = ("One card per line: the English idiom or word, then any of an **[Arabic name]**, an **English meaning** "
+                 "and the **Arabic meaning** — told apart by their language: `Achilles' heel | كعب أخيل | نقطة الضعف "
+                 "القاتلة` · `Resilient | able to recover quickly | مَرِن` · `Break the ice | كسر الجليد | to make people "
+                 "relax | بدء الحديث` · `Grateful | ممتنّ`.")
 
 
 def _ic_template_path():
@@ -2088,18 +2100,20 @@ def idiom_cards_ui():
                                                                             "Arabic")
     touches = gr.CheckboxGroup(icards.TOUCHES, value=list(icards.TOUCH_DEFAULT), label="Touches",
                                info="Small details that keep eyes on the screen — untick any you don't want")
-    voice = gr.Checkbox(value=False, label="🎙️ Read every idiom aloud with my ElevenLabs voice",
+    voice = gr.Checkbox(value=False, label="🎙️ Read every idiom (and its English meaning) aloud with my ElevenLabs voice",
                         info="Ticked: 🎬 Render video (and ▶️ Quick motion) first makes the missing clips. Uses 🔑 "
                              "ElevenLabs voice in 📖 English Texts → ✍️ Paragraphs; each clip costs credits only once")
     audio = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=110,
-                    label="Voice clips (made for you when the box is ticked — or your own: w1, w2 … = card 1, 2 …)")
+                    label="Voice clips (made for you when the box is ticked — or your own: w1, w2 … = card 1, 2 …; "
+                          "w1e = card 1's English meaning)")
     with gr.Row(equal_height=True):
         v_status = gr.Markdown("")
         v_make = gr.Button("🎙️ Make the voices", min_width=170, scale=0)
     gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
     with gr.Row(equal_height=True):
-        gr.Markdown("---\n**📥 Idioms from Excel** — columns **English idiom | Arabic name | Arabic meaning** "
-                    "(+ optional **Title | Subtitle**: a title goes on until the next one). They are cut into videos "
+        gr.Markdown("---\n**📥 Idioms from Excel** — columns **English idiom / word | Arabic name | English meaning | "
+                    "Arabic meaning** (the name or the English meaning may be empty; + optional **Title | Subtitle**: a "
+                    "title goes on until the next one). They are cut into videos "
                     "of *Cards per video*; **🎬 Render all** makes every video. In the Title **{n}** = the video "
                     "number, **{total}** = how many; empty Title = the sheet's Title column.")
         tpl = _ic_template_path()
@@ -2230,18 +2244,19 @@ def wire_idiom_cards(ui, pv, fields):
         if not items:
             return ""
         have = {vocab_clip_key(c) for c in clips or []} - {None}
-        miss = sum(1 for i in range(len(items)) if (i + 1, "w") not in have)
+        miss = _ic_missing(items, have)
         if not miss:
-            return f"🎙️ ✅ All **{len(items)} idioms** have a voice"
+            nd = sum(1 for it in items if it.get("df"))
+            return f"🎙️ ✅ All **{len(items)} idioms**" + (f" and **{nd} English meanings**" if nd else "") + " have a voice"
         if on:
             ok, why = word_import.voice_ready(DATA_DIR)
             if not ok:
                 return "⚠️ " + why
             return (f"🎙️ **Voices on** — 🎬 Render video first makes the {miss} missing clip{'s' if miss != 1 else ''} "
                     f"(each costs credits only once). {why}")
-        if miss == len(items):
+        if not have:
             return "No voice: music and sound effects only (tick 🎙️ or add clips w1, w2 … to read the idioms aloud)."
-        return f"⚠️ **{miss} card{'s' if miss != 1 else ''} without a voice clip** (the 🎙️ box is unticked)."
+        return f"⚠️ **{miss} voice clip{'s' if miss != 1 else ''} missing** (the 🎙️ box is unticked)."
 
     def make_voices(text, clips, progress=gr.Progress()):
         items = icards.parse_items(text)
@@ -2251,7 +2266,7 @@ def wire_idiom_cards(ui, pv, fields):
         if not ok:
             raise gr.Error(why)
         try:
-            made = word_import.word_voices([{"en": it["en"]} for it in items], DATA_DIR,
+            made = word_import.word_voices(_ic_voice_items(items), DATA_DIR,
                                            os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"),
                                            lambda x, d: progress(x, desc=d))
         except Exception as e:
