@@ -164,7 +164,8 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   Excel batch (`wire_words_video`): Start at / How many (0 = all) / Words per video → `groups` (in order, the last
   gets what is left); `check` = "18 words make 3 videos of 6" + the video menu; 📥 puts one video in the editor;
   🎬 Render all = `_stream_batch` (one project per group: its words, its own voices via `_wv_voices`, Title `{n}` /
-  `{total}`, empty Title = the sheet's Title column) → files + zip in OUT_DIR/words_videos_*. Looks `DESIGNS` (paper default / sky / mint / blush / slate = a little dark; the user does not want
+  `{total}`; titles by `app._batch_titles`: an empty Title / Subtitle box — or one holding a sheet title, as 📥 leaves it —
+  = each video's own sheet Title / Subtitle, typed text = every video) → files + zip in OUT_DIR/words_videos_*. Looks `DESIGNS` (paper default / sky / mint / blush / slate = a little dark; the user does not want
   glass, aurora or dark looks); fonts Poppins (a 🎨 Style & sound font replaces it) + `wordsvideo.arabic_font` (any
   library family, default `AR_DEFAULT` = Noto Sans Arabic, `_arabic_font`)
 - `engine/templates/idiom_cards.py` — template `idiomcards`, English Words sub-tab 🃏 Idiom cards (after 🎬 Words video;
@@ -179,9 +180,21 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `idiomcards.transition`: whip = push + motion blur / slice = 5 strips / flip = 3D `_persp` / zoom / wipe; mix cycles
   `MIX`). `_content(i, t)` caches the pre / final layer of a scene. `touches` (counter pill on the band's top edge,
   progress, shine, punch, drift, shadow). Voice clips `w<k>` (the card's English) + `w<k>e` (its English meaning,
-  shown once the English is said; `app._ic_voices` / `_ic_voice_items` via `word_import.word_voices`); Excel
+  shown once the English is said; `app._ic_voices` via `word_import.phrase_voices`: each phrase read as a sentence
+  (`_sentence` adds the full stop) inside an ElevenLabs context (`previous_text` / `next_text`, not spoken or charged;
+  `elevenlabs.speak` keys the cache on it only when given) — a phrase read alone sounded flat and robotic; the card
+  effects play at 30 % while a clip speaks). 🎧 panel in the tab (`v_pick` / `v_play` / `v_new` / `v_back`): the Clip
+  menu lists every `phrase_jobs` clip (✅ in the list / ⏳ not made), picking one plays it (`phrase_take(..., "listen")`
+  never calls ElevenLabs), 🔄 New take = `phrase_take("new")` (old take kept as <key>.prev.mp3/json in DATA_DIR/tts),
+  ↩️ Previous take = `"back"` (swap, no credits); both copy the take to a fresh file and put it in the clip list).
+  Voice per project: `idiomcards.voice_id` (`v_voice`, empty = the saved 🔑 voice; `word_import._voice_settings`
+  overrides it in `phrase_voices` / `phrase_take`; the cache key includes the voice), 🔄 Load my voices
+  (`el.list_voices`), ▶ Hear this voice = the first idiom (`phrase_take("make")`, cached, reused by Make the voices);
+  `voice_changed` keeps your own recordings (`is_made_clip` = md5 match with a DATA_DIR/tts take) and fills the list
+  with the new voice's already-made takes (copied as w<k>.mp3); Excel
   `read_sheet` (English | Arabic name | English meaning | Arabic meaning | Title | Subtitle; cells sorted by language),
   template `projects/idioms_template.xlsx` (`write_template`), Render all = `_stream_batch` → OUT_DIR/idiom_cards_*
+  (titles per video by `app._batch_titles`, as Words video)
 - `engine/templates/text.py` — 📖 English Texts (Textbook page): one paragraph read aloud from the user's recording
   (ElevenLabs word timings); words ink in as spoken (`vs`/`ve` per word), highlighted words get a marker swipe, fly
   into the Word Bank, Arabic writes in right-to-left. `text.words` = lines `word | start | end | highlighted | arabic`

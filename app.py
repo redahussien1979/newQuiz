@@ -92,7 +92,7 @@ NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", 
            "pause"]
 WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "voice_on", "arabic_font", "ar_style", "kind", "ex_reveal", "pop_fx", "touches", "bubble_style"]
 IC_KEYS = ["title", "subtitle", "items", "look", "marker", "transition", "pace", "touches", "arabic_font", "audio",
-           "audio_gain", "voice_on"]
+           "audio_gain", "voice_on", "voice_id"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS, "wordsvideo": WV_KEYS,
         "idiomcards": IC_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
@@ -527,6 +527,21 @@ def _save_cover(project, video_path):
         return None
 
 
+def _batch_titles(d, grp, rows, k, total):
+    """Title + subtitle of video k of a 🎬 Render all from a sheet. A title typed in the editor is used for every
+    video; an empty one — or one the sheet put there (📥 Put it in the editor copies the first video's) — gives
+    each video its own sheet Title / Subtitle. {n} = the video number, {total} = how many."""
+    sheet_t = {str(r.get("title") or "") for r in rows} - {""}
+    sheet_s = {str(r.get("sub") or "") for r in rows} - {""}
+    typed_t = str(d.get("title") or "")
+    typed_s = str(d.get("subtitle") or "")
+    # typed by hand: the same for all videos; empty or from the sheet: this video's own sheet title / subtitle
+    title = typed_t if typed_t and typed_t not in sheet_t else str(grp[0].get("title") or typed_t)
+    sub = typed_s if typed_s and typed_s not in sheet_s else str(grp[0].get("sub") or "")
+    fill = lambda x: x.replace("{n}", str(k)).replace("{total}", str(total))  # noqa: E731
+    return fill(title), fill(sub)
+
+
 def _progress_on(dep, comp):
     """Show the batch progress bar only on `comp` (not over the list of finished videos) when Gradio allows it."""
     try:
@@ -572,14 +587,10 @@ def _ic_voices(project, progress=None):
     if not ok:
         raise ValueError("🎙️ The voices are ticked but cannot be made: " + why + " — or untick 🎙️ to render "
                          "without voices.")
-    made = word_import.word_voices(_ic_voice_items(items), DATA_DIR,
-                                   os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"), progress)
+    made = word_import.phrase_voices(items, DATA_DIR,
+                                   os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"), progress,
+                                   d.get("voice_id") or None)
     d["audio"] = [c for c in d.get("audio") or [] if clip_key(c)] + [m for m in made if clip_key(m) not in have]
-
-
-def _ic_voice_items(items):
-    """What ElevenLabs reads for 🃏 Idiom cards: the English (w<k>) and the English meaning (w<k>e, when there is one)."""
-    return [{"en": it["en"], "ex": it.get("df") or ""} for it in items]
 
 
 def _ic_missing(items, have):
@@ -1871,9 +1882,10 @@ def words_video_ui():
     gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
     gr.Markdown("---\n**📥 Words from Excel** — the 📃 Word list sheet: **English | Arabic | IPA | Sample sentence | "
                 "English meaning** (any number of rows). They are cut into videos of *Words per video*; "
-                "**🎬 Render all** makes every video (voices included when 🎙️ is ticked). In the Title, **{n}** = "
-                "the video number and **{total}** = how many (Words Part {n}/{total}); empty Title = the sheet's "
-                "Title column.")
+                "**🎬 Render all** makes every video (voices included when 🎙️ is ticked). **Titles:** with the Title / "
+                "Subtitle boxes empty (or holding what 📥 copied from the sheet) each video takes its own sheet Title / "
+                "Subtitle; text you type yourself is used for every video — **{n}** = the video number, **{total}** = "
+                "how many (Words Part {n}/{total}).")
     with gr.Row():
         sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Words sheet (.xlsx or .csv)",
                         height=110)
@@ -1988,10 +2000,7 @@ def wire_words_video(ui, pv, fields):
                     d = proj["wordsvideo"]
                     d["words"] = wvid.words_text(grp)
                     d["audio"] = []  # this video's own voices
-                    title = str(d.get("title") or grp[0].get("title") or "")
-                    d["title"] = title.replace("{n}", str(k)).replace("{total}", str(total))
-                    d["subtitle"] = str(d.get("subtitle") or grp[0].get("sub") or "").replace("{n}", str(k)).replace(
-                        "{total}", str(total))
+                    d["title"], d["subtitle"] = _batch_titles(d, grp, part, k, total)
                     _wv_voices(proj, lambda x, desc, k=k: (check_stop(), progress((k - 1 + 0.15 * x) / total,
                                                                                   desc=f"Video {k} of {total}: {desc}")))
                     yield f"Words video {k:02d} of {total:02d}", proj
@@ -2076,6 +2085,10 @@ def _ic_template_path():
     return path
 
 
+def _saved_voice_label(s):
+    return f"My saved voice — {s['voice_name'] or s['voice_id'] or 'none yet'} (🔑 ElevenLabs voice in English Texts)"
+
+
 def idiom_cards_ui():
     """🃏 Idiom cards sub-tab (English Words): its own project, cards, design and sheet import."""
     with gr.Row(equal_height=True):
@@ -2083,7 +2096,9 @@ def idiom_cards_ui():
     proj = project_bar()
     with gr.Row():
         title = gr.Textbox(label="Hook title (empty = no title, the first card opens the video)",
-                           placeholder="{count} Idioms from Greek Myths", info="{count} = the number of cards")
+                           placeholder="{count} Idioms from Greek Myths",
+                           info="{count} = the number of cards. 🎬 Render all from Excel: empty = each video's own sheet "
+                                "Title; typed here = the same for every video")
         sub = gr.Textbox(label="Subtitle (optional)", rtl=True, placeholder="تعابير إنجليزية أصلها أساطير يونانية")
     items = gr.Textbox(lines=10, max_lines=60, label="Cards", info=IC_ITEMS_HELP)
     with gr.Row():
@@ -2109,13 +2124,31 @@ def idiom_cards_ui():
     with gr.Row(equal_height=True):
         v_status = gr.Markdown("")
         v_make = gr.Button("🎙️ Make the voices", min_width=170, scale=0)
+    with gr.Accordion("🎧 Listen to the voices before rendering — and redo the ones you don't like", open=True):
+        sv = el.load_settings(DATA_DIR)
+        with gr.Row(equal_height=True):
+            v_voice = gr.Dropdown([(_saved_voice_label(sv), "")], value="", allow_custom_value=True, scale=3,
+                                  label="Voice of this video",
+                                  info="Saved with the project (English Texts / Words video keep theirs). 🔄 lists "
+                                       "every voice in your ElevenLabs account — or paste a voice ID")
+            v_load = gr.Button("🔄 Load my voices", min_width=150, scale=1)
+            v_hear = gr.Button("▶ Hear this voice", min_width=150, scale=1)
+        with gr.Row(equal_height=True):
+            v_pick = gr.Dropdown([], label="Clip", scale=3,
+                                 info="✅ = in the video · ⏳ = not made yet (🎙️ Make the voices)")
+            v_new = gr.Button("🔄 New take", min_width=130, scale=1)
+            v_back = gr.Button("↩️ Previous take", min_width=130, scale=1)
+        v_play = gr.Audio(type="filepath", interactive=False, show_label=False, autoplay=True)
+        v_note = gr.Markdown("")
     gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
     with gr.Row(equal_height=True):
         gr.Markdown("---\n**📥 Idioms from Excel** — columns **English idiom / word | Arabic name | English meaning | "
                     "Arabic meaning** (the name or the English meaning may be empty; + optional **Title | Subtitle**: a "
                     "title goes on until the next one). They are cut into videos "
-                    "of *Cards per video*; **🎬 Render all** makes every video. In the Title **{n}** = the video "
-                    "number, **{total}** = how many; empty Title = the sheet's Title column.")
+                    "of *Cards per video*; **🎬 Render all** makes every video. **Titles:** with the Title / Subtitle "
+                    "boxes empty (or holding what 📥 copied from the sheet) each video takes its own Title / Subtitle "
+                    "from the sheet; text you type yourself is used for every video — **{n}** = the video number, "
+                    "**{total}** = how many (Idioms Part {n}/{total}). ▶️ Preview and 🎬 Render video use the boxes.")
         tpl = _ic_template_path()
         gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), size="sm", min_width=130, scale=0)
     with gr.Row():
@@ -2137,14 +2170,14 @@ def idiom_cards_ui():
                     visible=False, height=260)
     return dict(proj=proj, title=title, sub=sub, items=items, look=look, marker=marker, transition=transition,
                 pace=pace, touches=touches, ar_font=ar_font, audio=audio, gain=gain, voice=voice, v_status=v_status,
-                v_make=v_make, sheet=sheet, tab=tab, start=start, count=count, per=per, info=info, part=part,
+                v_make=v_make, v_voice=v_voice, v_load=v_load, v_hear=v_hear, v_pick=v_pick, v_new=v_new, v_back=v_back, v_play=v_play, v_note=v_note, sheet=sheet, tab=tab, start=start, count=count, per=per, info=info, part=part,
                 load=load, go=go, zip=zipb, files=files)
 
 
 def ic_fields(ui):
     """The Idiom cards' own fields in IC_KEYS order."""
     return [ui["title"], ui["sub"], ui["items"], ui["look"], ui["marker"], ui["transition"], ui["pace"],
-            ui["touches"], ui["ar_font"], ui["audio"], ui["gain"], ui["voice"]]
+            ui["touches"], ui["ar_font"], ui["audio"], ui["gain"], ui["voice"], ui["v_voice"]]
 
 
 def wire_idiom_cards(ui, pv, fields):
@@ -2228,10 +2261,7 @@ def wire_idiom_cards(ui, pv, fields):
                     d = proj["idiomcards"]
                     d["items"] = icards.items_text(grp)
                     d["audio"] = []  # this video's own voices
-                    title = str(d.get("title") or grp[0].get("title") or "")
-                    d["title"] = title.replace("{n}", str(k)).replace("{total}", str(total))
-                    d["subtitle"] = str(d.get("subtitle") or grp[0].get("sub") or "").replace("{n}", str(k)).replace(
-                        "{total}", str(total))
+                    d["title"], d["subtitle"] = _batch_titles(d, grp, part, k, total)
                     _ic_voices(proj, lambda x, desc, k=k: (check_stop(), progress((k - 1 + 0.15 * x) / total,
                                                                                   desc=f"Video {k} of {total}: {desc}")))
                     yield f"Idiom cards {k:02d} of {total:02d}", proj
@@ -2239,7 +2269,7 @@ def wire_idiom_cards(ui, pv, fields):
 
         yield from _stream_batch(request, plan, progress)
 
-    def voices_status(text, clips, on):
+    def voices_status(text, clips, on, voice=""):
         items = icards.parse_items(text)
         if not items:
             return ""
@@ -2252,13 +2282,15 @@ def wire_idiom_cards(ui, pv, fields):
             ok, why = word_import.voice_ready(DATA_DIR)
             if not ok:
                 return "⚠️ " + why
+            if voice:
+                why = "🎙️ Voice: **the one picked in 🎧 below** (this video's own)"
             return (f"🎙️ **Voices on** — 🎬 Render video first makes the {miss} missing clip{'s' if miss != 1 else ''} "
                     f"(each costs credits only once). {why}")
         if not have:
             return "No voice: music and sound effects only (tick 🎙️ or add clips w1, w2 … to read the idioms aloud)."
         return f"⚠️ **{miss} voice clip{'s' if miss != 1 else ''} missing** (the 🎙️ box is unticked)."
 
-    def make_voices(text, clips, progress=gr.Progress()):
+    def make_voices(text, clips, voice, progress=gr.Progress()):
         items = icards.parse_items(text)
         if not items:
             raise gr.Error("Write or import the idioms first.")
@@ -2266,18 +2298,144 @@ def wire_idiom_cards(ui, pv, fields):
         if not ok:
             raise gr.Error(why)
         try:
-            made = word_import.word_voices(_ic_voice_items(items), DATA_DIR,
+            made = word_import.phrase_voices(items, DATA_DIR,
                                            os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"),
-                                           lambda x, d: progress(x, desc=d))
+                                           lambda x, d: progress(x, desc=d), voice or None)
         except Exception as e:
             raise gr.Error(_msg(e))
         gr.Info(f"🎙️ {len(made)} voice clips are ready.", duration=5)
         return made
 
-    ui["v_make"].click(make_voices, [ui["items"], ui["audio"]], ui["audio"])
-    gr.on(triggers=[ui["items"].change, ui["audio"].change, ui["voice"].change], fn=voices_status,
-          inputs=[ui["items"], ui["audio"], ui["voice"]], outputs=ui["v_status"], trigger_mode="always_last",
+    def clip_map(clips):
+        """{'w3' / 'w3e': path} of the clips in the list (your own and the made ones)."""
+        out = {}
+        for c in clips or []:
+            key = vocab_clip_key(c)
+            if key and key[1] in ("w", "e"):
+                out[f"w{key[0]}" + ("e" if key[1] == "e" else "")] = c
+        return out
+
+    def clip_choices(text, clips, cur):
+        """The Clip menu: every clip the cards need, ✅ when it is in the video, ⏳ when not made yet."""
+        items = icards.parse_items(text)
+        have = clip_map(clips)
+        choices = []
+        for clip, _, label, _, _ in word_import.phrase_jobs(items):
+            n = clip[1:].rstrip("e")
+            what = f"{n}. {label}" if not clip.endswith("e") else f"{n}. ↳ meaning: {items[int(n) - 1]['df']}"
+            choices.append((("✅ " if clip in have else "⏳ ") + what, clip))
+        keys = [c for _, c in choices]
+        return gr.update(choices=choices, value=cur if cur in keys else (keys[0] if keys else None))
+
+    def take_note(clip, own, prev, done=""):
+        if own:
+            return ("🎤 **This clip from the list is used in the video** (your own, or another take) — 🔄 New take "
+                    "replaces it with your ElevenLabs voice" + (", ↩️ Previous take with the kept take." if prev else "."))
+        return ((done + " — " if done else "") + "✅ This take is used in the video"
+                + (" · ↩️ the previous take is kept (free to switch back)" if prev else "") + ".")
+
+    def listen(clip, text, clips, voice):
+        """Play the clip: the one in the list, else the cached take (never calls ElevenLabs)."""
+        if not clip:
+            return None, ""
+        have = clip_map(clips)
+        items = icards.parse_items(text)
+        try:
+            cached, prev = word_import.phrase_take(items, clip, DATA_DIR, None, "listen", voice or None)
+        except Exception as e:
+            return None, f"⚠️ {_msg(e)}"
+        if clip in have:
+            if cached is None:  # nothing made for this text: your recording, or a take of text you changed since
+                return have[clip], ("🎤 **This clip from the list is used in the video** (your own, or made before "
+                                    "the text was changed) — 🔄 New take reads the current text with your voice.")
+            own = os.path.getsize(cached) != os.path.getsize(have[clip])
+            return have[clip], take_note(clip, own, prev)
+        if cached:
+            return cached, "Made before but not in the clip list yet — 🎬 Render video adds it (no credits)."
+        return None, "⏳ Not made yet — press **🎙️ Make the voices** (or 🔄 New take for just this one)."
+
+    def take(mode):
+        def fn(clip, text, clips, voice, progress=gr.Progress()):
+            if not clip:
+                raise gr.Error("Pick a clip first.")
+            items = icards.parse_items(text)
+            try:
+                path, prev = word_import.phrase_take(items, clip, DATA_DIR,
+                                                     os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"), mode,
+                                                     voice or None)
+            except Exception as e:
+                raise gr.Error(_msg(e))
+            new_list = [c for c in clips or [] if clip_map([c]).get(clip) is None] + [path]
+            done = "🔄 New take" if mode == "new" else "↩️ Switched to the other take"
+            return new_list, path, take_note(clip, False, prev, done)
+        return fn
+
+    ui["v_make"].click(make_voices, [ui["items"], ui["audio"], ui["v_voice"]], ui["audio"])
+    gr.on(triggers=[ui["items"].change, ui["audio"].change], fn=clip_choices,
+          inputs=[ui["items"], ui["audio"], ui["v_pick"]], outputs=ui["v_pick"], trigger_mode="always_last",
           show_progress="hidden")
+    ui["v_pick"].input(listen, [ui["v_pick"], ui["items"], ui["audio"], ui["v_voice"]], [ui["v_play"], ui["v_note"]],
+                       show_progress="hidden")
+    for btn, mode in ((ui["v_new"], "new"), (ui["v_back"], "back")):
+        btn.click(take(mode), [ui["v_pick"], ui["items"], ui["audio"], ui["v_voice"]],
+                  [ui["audio"], ui["v_play"], ui["v_note"]])
+
+    def load_voices(cur):
+        sv = el.load_settings(DATA_DIR)
+        if not sv["api_key"]:
+            raise gr.Error(word_import.voice_ready(DATA_DIR)[1])
+        try:
+            vs = el.list_voices(sv["api_key"])
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        choices = [(_saved_voice_label(sv), "")] + vs
+        gr.Info(f"{len(vs)} voices found in your account — pick one, then ▶ Hear this voice.", duration=5)
+        return gr.update(choices=choices, value=cur if any(i == cur for _, i in choices) else "")
+
+    def hear(voice, text):
+        """The first idiom in this voice (made once and cached: making the voices later reuses it, no extra cost)."""
+        items = icards.parse_items(text)
+        if not items:
+            raise gr.Error("Write or import the idioms first.")
+        try:
+            path, _ = word_import.phrase_take(items, "w1", DATA_DIR, None, "make", voice or None)
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        return path, (f"▶ “{items[0]['en']}” in this voice — like it? Keep it picked and press 🎙️ Make the voices "
+                      "(this clip is reused, no extra cost).")
+
+    def voice_changed(voice, text, clips):
+        """Another voice: the made clips in the list are swapped for that voice's takes (when made before, free) or
+        taken out (made again by 🎙️ Make the voices / 🎬 Render video); your own recordings stay."""
+        items = icards.parse_items(text)
+        out_dir = os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}")
+        keep = [c for c in clips or [] if clip_map([c]) and not word_import.is_made_clip(c, DATA_DIR)]  # your own
+        own = clip_map(keep)
+        made = 0
+        for clip, *_ in word_import.phrase_jobs(items):
+            if clip in own:
+                continue
+            path, _ = word_import.phrase_take(items, clip, DATA_DIR, None, "listen", voice or None)
+            if path:  # made in this voice before: free, under its clip name (w3.mp3) so the video finds it
+                os.makedirs(out_dir, exist_ok=True)
+                dst = os.path.join(out_dir, clip + ".mp3")
+                shutil.copyfile(path, dst)
+                keep.append(dst)
+                made += 1
+        out = sum(1 for clip, *_ in word_import.phrase_jobs(items) if clip not in clip_map(keep))
+        note = "🗣️ Voice changed" + (f" — {made} clip{'s' if made != 1 else ''} already made in this voice (free)"
+                                      if made else "") + (
+            f" — **{out} clip{'s' if out != 1 else ''} to make**: press 🎙️ Make the voices (or 🎬 Render video does it)"
+            if out else " — every clip is ready") + "."
+        return keep, None, note
+
+    ui["v_load"].click(load_voices, ui["v_voice"], ui["v_voice"])
+    ui["v_hear"].click(hear, [ui["v_voice"], ui["items"]], [ui["v_play"], ui["v_note"]])
+    ui["v_voice"].input(voice_changed, [ui["v_voice"], ui["items"], ui["audio"]],
+                        [ui["audio"], ui["v_play"], ui["v_note"]])
+    gr.on(triggers=[ui["items"].change, ui["audio"].change, ui["voice"].change, ui["v_voice"].change],
+          fn=voices_status, inputs=[ui["items"], ui["audio"], ui["voice"], ui["v_voice"]], outputs=ui["v_status"],
+          trigger_mode="always_last", show_progress="hidden")
     ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
     src = [ui["sheet"], ui["tab"], ui["start"], ui["count"], ui["per"]]
     gr.on(triggers=[c.change for c in src], fn=check, inputs=src, outputs=[ui["info"], ui["part"], ui["go"]],

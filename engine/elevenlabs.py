@@ -88,15 +88,30 @@ def list_voices(key):
     return sorted(out, key=lambda x: x[0].lower())
 
 
-def synthesize(text, key, voice_id, model, speed=1.0, stability=0.5, similarity=0.75):
+def synthesize(text, key, voice_id, model, speed=1.0, stability=0.5, similarity=0.75, previous_text=None,
+               next_text=None):
     """(mp3 bytes, alignment) for text. alignment = dict(characters, character_start_times_seconds,
-    character_end_times_seconds) for the text exactly as sent."""
+    character_end_times_seconds) for the text exactly as sent. previous_text / next_text = what comes before / after
+    (not spoken, not charged): ElevenLabs shapes the intonation as if the text were part of that speech — a short
+    phrase read alone otherwise comes out flat and robotic."""
     if not voice_id:
         raise RuntimeError("Choose a voice (or paste its voice ID).")
     body = {"text": text, "model_id": model or DEFAULTS["model"],
             "voice_settings": {"stability": float(stability), "similarity_boost": float(similarity),
                                "speed": float(speed), "use_speaker_boost": True}}
-    data = _request(f"/v1/text-to-speech/{voice_id}/with-timestamps?output_format=mp3_44100_128", key, body)
+    if previous_text:
+        body["previous_text"] = previous_text
+    if next_text:
+        body["next_text"] = next_text
+    path = f"/v1/text-to-speech/{voice_id}/with-timestamps?output_format=mp3_44100_128"
+    try:
+        data = _request(path, key, body)
+    except RuntimeError as e:  # a model that does not take the context: the same request without it
+        if not (previous_text or next_text) or "error 4" not in str(e) or "401" in str(e) or "429" in str(e):
+            raise
+        body.pop("previous_text", None)
+        body.pop("next_text", None)
+        data = _request(path, key, body)
     audio = base64.b64decode(data.get("audio_base64") or "")
     al = data.get("alignment") or data.get("normalized_alignment")
     if not audio or not al:
@@ -122,14 +137,23 @@ def cached(cache_dir, key):
     return None
 
 
-def speak(text, cache_dir, settings):
+def speak_key(text, settings, previous_text=None, next_text=None):
+    """The cache key of a clip. With a context (previous_text / next_text) it includes it; without one it is the key
+    it always was (no cached clip is paid twice)."""
+    s = settings
+    said = text if not (previous_text or next_text) else "\x00".join([previous_text or "", text, next_text or ""])
+    return cache_key(said, s["voice_id"], s["model"], s["speed"], s["stability"], s["similarity"])
+
+
+def speak(text, cache_dir, settings, previous_text=None, next_text=None):
     """(mp3 path, alignment) — from the cache, or made by ElevenLabs (and cached)."""
     s = settings
-    k = cache_key(text, s["voice_id"], s["model"], s["speed"], s["stability"], s["similarity"])
+    k = speak_key(text, s, previous_text, next_text)
     hit = cached(cache_dir, k)
     if hit:
         return hit
-    audio, al = synthesize(text, s["api_key"], s["voice_id"], s["model"], s["speed"], s["stability"], s["similarity"])
+    audio, al = synthesize(text, s["api_key"], s["voice_id"], s["model"], s["speed"], s["stability"], s["similarity"],
+                           previous_text, next_text)
     os.makedirs(cache_dir, exist_ok=True)
     mp3 = os.path.join(cache_dir, k + ".mp3")
     with open(mp3 + ".part", "wb") as f:
