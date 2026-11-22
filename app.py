@@ -2119,6 +2119,14 @@ def idiom_cards_ui():
     with gr.Row(equal_height=True):
         v_status = gr.Markdown("")
         v_make = gr.Button("🎙️ Make the voices", min_width=170, scale=0)
+    with gr.Accordion("🎧 Listen to the voices before rendering — and redo the ones you don't like", open=True):
+        with gr.Row(equal_height=True):
+            v_pick = gr.Dropdown([], label="Clip", scale=3,
+                                 info="✅ = in the video · ⏳ = not made yet (🎙️ Make the voices)")
+            v_new = gr.Button("🔄 New take", min_width=130, scale=1)
+            v_back = gr.Button("↩️ Previous take", min_width=130, scale=1)
+        v_play = gr.Audio(type="filepath", interactive=False, show_label=False, autoplay=True)
+        v_note = gr.Markdown("")
     gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
     with gr.Row(equal_height=True):
         gr.Markdown("---\n**📥 Idioms from Excel** — columns **English idiom / word | Arabic name | English meaning | "
@@ -2149,7 +2157,7 @@ def idiom_cards_ui():
                     visible=False, height=260)
     return dict(proj=proj, title=title, sub=sub, items=items, look=look, marker=marker, transition=transition,
                 pace=pace, touches=touches, ar_font=ar_font, audio=audio, gain=gain, voice=voice, v_status=v_status,
-                v_make=v_make, sheet=sheet, tab=tab, start=start, count=count, per=per, info=info, part=part,
+                v_make=v_make, v_pick=v_pick, v_new=v_new, v_back=v_back, v_play=v_play, v_note=v_note, sheet=sheet, tab=tab, start=start, count=count, per=per, info=info, part=part,
                 load=load, go=go, zip=zipb, files=files)
 
 
@@ -2283,7 +2291,77 @@ def wire_idiom_cards(ui, pv, fields):
         gr.Info(f"🎙️ {len(made)} voice clips are ready.", duration=5)
         return made
 
+    def clip_map(clips):
+        """{'w3' / 'w3e': path} of the clips in the list (your own and the made ones)."""
+        out = {}
+        for c in clips or []:
+            key = vocab_clip_key(c)
+            if key and key[1] in ("w", "e"):
+                out[f"w{key[0]}" + ("e" if key[1] == "e" else "")] = c
+        return out
+
+    def clip_choices(text, clips, cur):
+        """The Clip menu: every clip the cards need, ✅ when it is in the video, ⏳ when not made yet."""
+        items = icards.parse_items(text)
+        have = clip_map(clips)
+        choices = []
+        for clip, _, label, _, _ in word_import.phrase_jobs(items):
+            n = clip[1:].rstrip("e")
+            what = f"{n}. {label}" if not clip.endswith("e") else f"{n}. ↳ meaning: {items[int(n) - 1]['df']}"
+            choices.append((("✅ " if clip in have else "⏳ ") + what, clip))
+        keys = [c for _, c in choices]
+        return gr.update(choices=choices, value=cur if cur in keys else (keys[0] if keys else None))
+
+    def take_note(clip, own, prev, done=""):
+        if own:
+            return ("🎤 **This clip from the list is used in the video** (your own, or another take) — 🔄 New take "
+                    "replaces it with your ElevenLabs voice" + (", ↩️ Previous take with the kept take." if prev else "."))
+        return ((done + " — " if done else "") + "✅ This take is used in the video"
+                + (" · ↩️ the previous take is kept (free to switch back)" if prev else "") + ".")
+
+    def listen(clip, text, clips):
+        """Play the clip: the one in the list, else the cached take (never calls ElevenLabs)."""
+        if not clip:
+            return None, ""
+        have = clip_map(clips)
+        items = icards.parse_items(text)
+        try:
+            cached, prev = word_import.phrase_take(items, clip, DATA_DIR, None, "listen")
+        except Exception as e:
+            return None, f"⚠️ {_msg(e)}"
+        if clip in have:
+            if cached is None:  # nothing made for this text: your recording, or a take of text you changed since
+                return have[clip], ("🎤 **This clip from the list is used in the video** (your own, or made before "
+                                    "the text was changed) — 🔄 New take reads the current text with your voice.")
+            own = os.path.getsize(cached) != os.path.getsize(have[clip])
+            return have[clip], take_note(clip, own, prev)
+        if cached:
+            return cached, "Made before but not in the clip list yet — 🎬 Render video adds it (no credits)."
+        return None, "⏳ Not made yet — press **🎙️ Make the voices** (or 🔄 New take for just this one)."
+
+    def take(mode):
+        def fn(clip, text, clips, progress=gr.Progress()):
+            if not clip:
+                raise gr.Error("Pick a clip first.")
+            items = icards.parse_items(text)
+            try:
+                path, prev = word_import.phrase_take(items, clip, DATA_DIR,
+                                                     os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"), mode)
+            except Exception as e:
+                raise gr.Error(_msg(e))
+            new_list = [c for c in clips or [] if clip_map([c]).get(clip) is None] + [path]
+            done = "🔄 New take" if mode == "new" else "↩️ Switched to the other take"
+            return new_list, path, take_note(clip, False, prev, done)
+        return fn
+
     ui["v_make"].click(make_voices, [ui["items"], ui["audio"]], ui["audio"])
+    gr.on(triggers=[ui["items"].change, ui["audio"].change], fn=clip_choices,
+          inputs=[ui["items"], ui["audio"], ui["v_pick"]], outputs=ui["v_pick"], trigger_mode="always_last",
+          show_progress="hidden")
+    ui["v_pick"].input(listen, [ui["v_pick"], ui["items"], ui["audio"]], [ui["v_play"], ui["v_note"]],
+                       show_progress="hidden")
+    for btn, mode in ((ui["v_new"], "new"), (ui["v_back"], "back")):
+        btn.click(take(mode), [ui["v_pick"], ui["items"], ui["audio"]], [ui["audio"], ui["v_play"], ui["v_note"]])
     gr.on(triggers=[ui["items"].change, ui["audio"].change, ui["voice"].change], fn=voices_status,
           inputs=[ui["items"], ui["audio"], ui["voice"]], outputs=ui["v_status"], trigger_mode="always_last",
           show_progress="hidden")

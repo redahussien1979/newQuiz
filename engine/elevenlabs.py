@@ -137,12 +137,18 @@ def cached(cache_dir, key):
     return None
 
 
-def speak(text, cache_dir, settings, previous_text=None, next_text=None):
-    """(mp3 path, alignment) — from the cache, or made by ElevenLabs (and cached). With a context (previous_text /
-    next_text) the cache key includes it; without one the key is the same as always (no cached clip is paid twice)."""
+def speak_key(text, settings, previous_text=None, next_text=None):
+    """The cache key of a clip. With a context (previous_text / next_text) it includes it; without one it is the key
+    it always was (no cached clip is paid twice)."""
     s = settings
     said = text if not (previous_text or next_text) else "\x00".join([previous_text or "", text, next_text or ""])
-    k = cache_key(said, s["voice_id"], s["model"], s["speed"], s["stability"], s["similarity"])
+    return cache_key(said, s["voice_id"], s["model"], s["speed"], s["stability"], s["similarity"])
+
+
+def speak(text, cache_dir, settings, previous_text=None, next_text=None):
+    """(mp3 path, alignment) — from the cache, or made by ElevenLabs (and cached)."""
+    s = settings
+    k = speak_key(text, s, previous_text, next_text)
     hit = cached(cache_dir, k)
     if hit:
         return hit

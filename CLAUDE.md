@@ -183,7 +183,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   shown once the English is said; `app._ic_voices` via `word_import.phrase_voices`: each phrase read as a sentence
   (`_sentence` adds the full stop) inside an ElevenLabs context (`previous_text` / `next_text`, not spoken or charged;
   `elevenlabs.speak` keys the cache on it only when given) — a phrase read alone sounded flat and robotic; the card
-  effects play at 30 % while a clip speaks); Excel
+  effects play at 30 % while a clip speaks). 🎧 panel in the tab (`v_pick` / `v_play` / `v_new` / `v_back`): the Clip
+  menu lists every `phrase_jobs` clip (✅ in the list / ⏳ not made), picking one plays it (`phrase_take(..., "listen")`
+  never calls ElevenLabs), 🔄 New take = `phrase_take("new")` (old take kept as <key>.prev.mp3/json in DATA_DIR/tts),
+  ↩️ Previous take = `"back"` (swap, no credits); both copy the take to a fresh file and put it in the clip list); Excel
   `read_sheet` (English | Arabic name | English meaning | Arabic meaning | Title | Subtitle; cells sorted by language),
   template `projects/idioms_template.xlsx` (`write_template`), Render all = `_stream_batch` → OUT_DIR/idiom_cards_*
   (titles per video by `app._batch_titles`, as Words video)

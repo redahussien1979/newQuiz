@@ -219,11 +219,23 @@ def _sentence(text):
     return text if not text or text[-1] in ".!?…\"'”’)" else text + "."
 
 
+def phrase_jobs(items):
+    """What 🃏 Idiom cards' voice reads: [(clip, text, label, before, after)] — clip 'w<k>' = the k-th card's English,
+    'w<k>e' = its English meaning. Each phrase is read as a sentence, inside a context (ElevenLabs previous_text /
+    next_text, not spoken): the idiom as the next item of a lesson, followed by its meaning; the meaning right after
+    the idiom — so the voice sounds like a teacher presenting it, not a dictionary reading a label."""
+    jobs = []
+    for k, it in enumerate(items, 1):
+        en, df = _sentence(it["en"]), _sentence(it.get("df") or "")
+        jobs.append((f"w{k}", en, it["en"], "Here is the next one to learn.", df or None))
+        if df:
+            jobs.append((f"w{k}e", df, f"meaning of {it['en']}", en, None))
+    return jobs
+
+
 def phrase_voices(items, data_dir, out_dir, progress=None):
-    """🃏 Idiom cards: one ElevenLabs clip per card's English as out_dir/w<k>.mp3 and one per English meaning as
-    w<k>e.mp3. Each phrase is read as a sentence, inside a context (ElevenLabs previous_text / next_text, not spoken):
-    the idiom as the next item of a lesson, followed by its meaning; the meaning right after the idiom — so the voice
-    sounds like a teacher presenting it, not a dictionary reading a label. Returns the clip paths."""
+    """🃏 Idiom cards: one ElevenLabs clip per job of `phrase_jobs` as out_dir/<clip>.mp3 (the current take of each;
+    cached, so a clip costs credits only once). Returns the clip paths."""
     from .core import check_stop
     ok, msg = voice_ready(data_dir)
     if not ok:
@@ -231,22 +243,71 @@ def phrase_voices(items, data_dir, out_dir, progress=None):
     s = el.load_settings(data_dir)
     cache = os.path.join(data_dir, "tts")
     os.makedirs(out_dir, exist_ok=True)
-    jobs = []
-    for k, it in enumerate(items, 1):
-        en, df = _sentence(it["en"]), _sentence(it.get("df") or "")
-        jobs.append((en, f"w{k}.mp3", f"“{it['en']}”", "Here is the next one to learn.", df or None))
-        if df:
-            jobs.append((df, f"w{k}e.mp3", f"the meaning of “{it['en']}”", en, None))
+    jobs = phrase_jobs(items)
     paths = []
-    for done, (text, name, what, before, after) in enumerate(jobs):
+    for done, (clip, text, label, before, after) in enumerate(jobs):
         check_stop()  # ⏹ Stop between two clips
         if progress:
-            progress(done / len(jobs), f"🎙️ Voice of {what} ({done + 1} of {len(jobs)})")
+            progress(done / len(jobs), f"🎙️ Voice of “{label}” ({done + 1} of {len(jobs)})")
         mp3, _ = el.speak(text, cache, s, before, after)
-        dst = os.path.join(out_dir, name)
+        dst = os.path.join(out_dir, clip + ".mp3")
         shutil.copyfile(mp3, dst)
         paths.append(dst)
     return paths
+
+
+def _take_files(job, data_dir, s):
+    """(current mp3, current json, previous mp3, previous json) of a phrase job's voice with settings s."""
+    clip, text, label, before, after = job
+    base = os.path.join(data_dir, "tts", el.speak_key(text, s, before, after))
+    return base + ".mp3", base + ".json", base + ".prev.mp3", base + ".prev.json"
+
+
+def phrase_take(items, clip, data_dir, out_dir, mode="listen"):
+    """One 🃏 Idiom cards clip ('w3' / 'w3e'): mode 'listen' = the current take if it is made (never calls
+    ElevenLabs), 'new' = ElevenLabs reads it again (only this phrase is charged; the take it replaces is kept as the
+    previous take), 'back' = swap with the previous take (no credits; press again to come back). Returns (path of a
+    fresh copy in out_dir or None, has a previous take)."""
+    job = next((j for j in phrase_jobs(items) if j[0] == clip), None)
+    if job is None:
+        raise RuntimeError("That clip is not in the cards any more.")
+    s = el.load_settings(data_dir)
+    cm, cj, pm, pj = _take_files(job, data_dir, s)
+    have = lambda m, j: os.path.isfile(m) and os.path.isfile(j)  # noqa: E731
+    if mode == "new":
+        ok, msg = voice_ready(data_dir)
+        if not ok:
+            raise RuntimeError(msg)
+        if have(cm, cj):
+            os.replace(cm, pm)
+            os.replace(cj, pj)
+        try:
+            el.speak(job[1], os.path.join(data_dir, "tts"), s, job[3], job[4])
+        except Exception:
+            if have(pm, pj) and not have(cm, cj):  # ElevenLabs failed: keep the take we had
+                os.replace(pm, cm)
+                os.replace(pj, cj)
+            raise
+    elif mode == "back":
+        if not have(pm, pj):
+            raise RuntimeError("There is no previous take of this clip yet — 🔄 New take makes one.")
+        tm, tj = cm + ".swap", cj + ".swap"
+        if have(cm, cj):
+            os.replace(cm, tm)
+            os.replace(cj, tj)
+        os.replace(pm, cm)
+        os.replace(pj, cj)
+        if have(tm, tj):
+            os.replace(tm, pm)
+            os.replace(tj, pj)
+    if not have(cm, cj):
+        return None, have(pm, pj)
+    if mode == "listen":
+        return cm, have(pm, pj)
+    os.makedirs(out_dir, exist_ok=True)  # a fresh file: the video and the player both see the new take
+    dst = os.path.join(out_dir, clip + ".mp3")
+    shutil.copyfile(cm, dst)
+    return dst, have(pm, pj)
 
 
 TEMPLATE_ROWS = [("English", "Arabic", "IPA (optional)", "Sample sentence (optional)", "Title (optional)",
