@@ -186,7 +186,12 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   effects play at 30 % while a clip speaks). 🎧 panel in the tab (`v_pick` / `v_play` / `v_new` / `v_back`): the Clip
   menu lists every `phrase_jobs` clip (✅ in the list / ⏳ not made), picking one plays it (`phrase_take(..., "listen")`
   never calls ElevenLabs), 🔄 New take = `phrase_take("new")` (old take kept as <key>.prev.mp3/json in DATA_DIR/tts),
-  ↩️ Previous take = `"back"` (swap, no credits); both copy the take to a fresh file and put it in the clip list); Excel
+  ↩️ Previous take = `"back"` (swap, no credits); both copy the take to a fresh file and put it in the clip list).
+  Voice per project: `idiomcards.voice_id` (`v_voice`, empty = the saved 🔑 voice; `word_import._voice_settings`
+  overrides it in `phrase_voices` / `phrase_take`; the cache key includes the voice), 🔄 Load my voices
+  (`el.list_voices`), ▶ Hear this voice = the first idiom (`phrase_take("make")`, cached, reused by Make the voices);
+  `voice_changed` keeps your own recordings (`is_made_clip` = md5 match with a DATA_DIR/tts take) and fills the list
+  with the new voice's already-made takes (copied as w<k>.mp3); Excel
   `read_sheet` (English | Arabic name | English meaning | Arabic meaning | Title | Subtitle; cells sorted by language),
   template `projects/idioms_template.xlsx` (`write_template`), Render all = `_stream_batch` → OUT_DIR/idiom_cards_*
   (titles per video by `app._batch_titles`, as Words video)

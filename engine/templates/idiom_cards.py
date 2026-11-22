@@ -402,6 +402,7 @@ EXAMPLE = {
         "audio": [],
         "audio_gain": 1.0,
         "voice_on": False,
+        "voice_id": "",
     },
 }
 

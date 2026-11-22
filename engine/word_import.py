@@ -233,14 +233,22 @@ def phrase_jobs(items):
     return jobs
 
 
-def phrase_voices(items, data_dir, out_dir, progress=None):
+def _voice_settings(data_dir, voice_id=None):
+    """The saved ElevenLabs settings, with another voice when one is given (🃏 Idiom cards' own Voice menu)."""
+    s = el.load_settings(data_dir)
+    if voice_id:
+        s["voice_id"] = str(voice_id).strip()
+    return s
+
+
+def phrase_voices(items, data_dir, out_dir, progress=None, voice_id=None):
     """🃏 Idiom cards: one ElevenLabs clip per job of `phrase_jobs` as out_dir/<clip>.mp3 (the current take of each;
-    cached, so a clip costs credits only once). Returns the clip paths."""
+    cached, so a clip costs credits only once), in voice_id (empty = the saved voice). Returns the clip paths."""
     from .core import check_stop
     ok, msg = voice_ready(data_dir)
     if not ok:
         raise RuntimeError(msg)
-    s = el.load_settings(data_dir)
+    s = _voice_settings(data_dir, voice_id)
     cache = os.path.join(data_dir, "tts")
     os.makedirs(out_dir, exist_ok=True)
     jobs = phrase_jobs(items)
@@ -263,15 +271,16 @@ def _take_files(job, data_dir, s):
     return base + ".mp3", base + ".json", base + ".prev.mp3", base + ".prev.json"
 
 
-def phrase_take(items, clip, data_dir, out_dir, mode="listen"):
+def phrase_take(items, clip, data_dir, out_dir, mode="listen", voice_id=None):
     """One 🃏 Idiom cards clip ('w3' / 'w3e'): mode 'listen' = the current take if it is made (never calls
-    ElevenLabs), 'new' = ElevenLabs reads it again (only this phrase is charged; the take it replaces is kept as the
-    previous take), 'back' = swap with the previous take (no credits; press again to come back). Returns (path of a
-    fresh copy in out_dir or None, has a previous take)."""
+    ElevenLabs), 'make' = the current take, made if missing (charged once), 'new' = ElevenLabs reads it again (only
+    this phrase is charged; the take it replaces is kept as the previous take), 'back' = swap with the previous take
+    (no credits; press again to come back). voice_id = another voice than the saved one. Returns (path — the cached
+    take for 'listen' / 'make', a fresh copy in out_dir otherwise — or None, has a previous take)."""
     job = next((j for j in phrase_jobs(items) if j[0] == clip), None)
     if job is None:
         raise RuntimeError("That clip is not in the cards any more.")
-    s = el.load_settings(data_dir)
+    s = _voice_settings(data_dir, voice_id)
     cm, cj, pm, pj = _take_files(job, data_dir, s)
     have = lambda m, j: os.path.isfile(m) and os.path.isfile(j)  # noqa: E731
     if mode == "new":
@@ -288,6 +297,11 @@ def phrase_take(items, clip, data_dir, out_dir, mode="listen"):
                 os.replace(pm, cm)
                 os.replace(pj, cj)
             raise
+    elif mode == "make" and not have(cm, cj):
+        ok, msg = voice_ready(data_dir)
+        if not ok:
+            raise RuntimeError(msg)
+        el.speak(job[1], os.path.join(data_dir, "tts"), s, job[3], job[4])
     elif mode == "back":
         if not have(pm, pj):
             raise RuntimeError("There is no previous take of this clip yet — 🔄 New take makes one.")
@@ -302,12 +316,30 @@ def phrase_take(items, clip, data_dir, out_dir, mode="listen"):
             os.replace(tj, pj)
     if not have(cm, cj):
         return None, have(pm, pj)
-    if mode == "listen":
+    if mode in ("listen", "make"):
         return cm, have(pm, pj)
     os.makedirs(out_dir, exist_ok=True)  # a fresh file: the video and the player both see the new take
     dst = os.path.join(out_dir, clip + ".mp3")
     shutil.copyfile(cm, dst)
     return dst, have(pm, pj)
+
+
+def is_made_clip(path, data_dir):
+    """True when the file is a take ElevenLabs made (a copy of a cached clip in DATA_DIR/tts), False for your own
+    recording."""
+    import hashlib
+    try:
+        size = os.path.getsize(path)
+        cache = os.path.join(data_dir, "tts")
+        same = [os.path.join(cache, f) for f in os.listdir(cache)
+                if f.endswith(".mp3") and os.path.getsize(os.path.join(cache, f)) == size]
+        if not same:
+            return False
+        digest = lambda f: hashlib.md5(open(f, "rb").read()).digest()  # noqa: E731
+        mine = digest(path)
+        return any(digest(f) == mine for f in same)
+    except OSError:
+        return False
 
 
 TEMPLATE_ROWS = [("English", "Arabic", "IPA (optional)", "Sample sentence (optional)", "Title (optional)",

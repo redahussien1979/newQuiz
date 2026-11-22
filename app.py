@@ -92,7 +92,7 @@ NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", 
            "pause"]
 WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "voice_on", "arabic_font", "ar_style", "kind", "ex_reveal", "pop_fx", "touches", "bubble_style"]
 IC_KEYS = ["title", "subtitle", "items", "look", "marker", "transition", "pace", "touches", "arabic_font", "audio",
-           "audio_gain", "voice_on"]
+           "audio_gain", "voice_on", "voice_id"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS, "wordsvideo": WV_KEYS,
         "idiomcards": IC_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
@@ -588,7 +588,8 @@ def _ic_voices(project, progress=None):
         raise ValueError("🎙️ The voices are ticked but cannot be made: " + why + " — or untick 🎙️ to render "
                          "without voices.")
     made = word_import.phrase_voices(items, DATA_DIR,
-                                   os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"), progress)
+                                   os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"), progress,
+                                   d.get("voice_id") or None)
     d["audio"] = [c for c in d.get("audio") or [] if clip_key(c)] + [m for m in made if clip_key(m) not in have]
 
 
@@ -2084,6 +2085,10 @@ def _ic_template_path():
     return path
 
 
+def _saved_voice_label(s):
+    return f"My saved voice — {s['voice_name'] or s['voice_id'] or 'none yet'} (🔑 ElevenLabs voice in English Texts)"
+
+
 def idiom_cards_ui():
     """🃏 Idiom cards sub-tab (English Words): its own project, cards, design and sheet import."""
     with gr.Row(equal_height=True):
@@ -2120,6 +2125,14 @@ def idiom_cards_ui():
         v_status = gr.Markdown("")
         v_make = gr.Button("🎙️ Make the voices", min_width=170, scale=0)
     with gr.Accordion("🎧 Listen to the voices before rendering — and redo the ones you don't like", open=True):
+        sv = el.load_settings(DATA_DIR)
+        with gr.Row(equal_height=True):
+            v_voice = gr.Dropdown([(_saved_voice_label(sv), "")], value="", allow_custom_value=True, scale=3,
+                                  label="Voice of this video",
+                                  info="Saved with the project (English Texts / Words video keep theirs). 🔄 lists "
+                                       "every voice in your ElevenLabs account — or paste a voice ID")
+            v_load = gr.Button("🔄 Load my voices", min_width=150, scale=1)
+            v_hear = gr.Button("▶ Hear this voice", min_width=150, scale=1)
         with gr.Row(equal_height=True):
             v_pick = gr.Dropdown([], label="Clip", scale=3,
                                  info="✅ = in the video · ⏳ = not made yet (🎙️ Make the voices)")
@@ -2157,14 +2170,14 @@ def idiom_cards_ui():
                     visible=False, height=260)
     return dict(proj=proj, title=title, sub=sub, items=items, look=look, marker=marker, transition=transition,
                 pace=pace, touches=touches, ar_font=ar_font, audio=audio, gain=gain, voice=voice, v_status=v_status,
-                v_make=v_make, v_pick=v_pick, v_new=v_new, v_back=v_back, v_play=v_play, v_note=v_note, sheet=sheet, tab=tab, start=start, count=count, per=per, info=info, part=part,
+                v_make=v_make, v_voice=v_voice, v_load=v_load, v_hear=v_hear, v_pick=v_pick, v_new=v_new, v_back=v_back, v_play=v_play, v_note=v_note, sheet=sheet, tab=tab, start=start, count=count, per=per, info=info, part=part,
                 load=load, go=go, zip=zipb, files=files)
 
 
 def ic_fields(ui):
     """The Idiom cards' own fields in IC_KEYS order."""
     return [ui["title"], ui["sub"], ui["items"], ui["look"], ui["marker"], ui["transition"], ui["pace"],
-            ui["touches"], ui["ar_font"], ui["audio"], ui["gain"], ui["voice"]]
+            ui["touches"], ui["ar_font"], ui["audio"], ui["gain"], ui["voice"], ui["v_voice"]]
 
 
 def wire_idiom_cards(ui, pv, fields):
@@ -2256,7 +2269,7 @@ def wire_idiom_cards(ui, pv, fields):
 
         yield from _stream_batch(request, plan, progress)
 
-    def voices_status(text, clips, on):
+    def voices_status(text, clips, on, voice=""):
         items = icards.parse_items(text)
         if not items:
             return ""
@@ -2269,13 +2282,15 @@ def wire_idiom_cards(ui, pv, fields):
             ok, why = word_import.voice_ready(DATA_DIR)
             if not ok:
                 return "⚠️ " + why
+            if voice:
+                why = "🎙️ Voice: **the one picked in 🎧 below** (this video's own)"
             return (f"🎙️ **Voices on** — 🎬 Render video first makes the {miss} missing clip{'s' if miss != 1 else ''} "
                     f"(each costs credits only once). {why}")
         if not have:
             return "No voice: music and sound effects only (tick 🎙️ or add clips w1, w2 … to read the idioms aloud)."
         return f"⚠️ **{miss} voice clip{'s' if miss != 1 else ''} missing** (the 🎙️ box is unticked)."
 
-    def make_voices(text, clips, progress=gr.Progress()):
+    def make_voices(text, clips, voice, progress=gr.Progress()):
         items = icards.parse_items(text)
         if not items:
             raise gr.Error("Write or import the idioms first.")
@@ -2285,7 +2300,7 @@ def wire_idiom_cards(ui, pv, fields):
         try:
             made = word_import.phrase_voices(items, DATA_DIR,
                                            os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"),
-                                           lambda x, d: progress(x, desc=d))
+                                           lambda x, d: progress(x, desc=d), voice or None)
         except Exception as e:
             raise gr.Error(_msg(e))
         gr.Info(f"🎙️ {len(made)} voice clips are ready.", duration=5)
@@ -2319,14 +2334,14 @@ def wire_idiom_cards(ui, pv, fields):
         return ((done + " — " if done else "") + "✅ This take is used in the video"
                 + (" · ↩️ the previous take is kept (free to switch back)" if prev else "") + ".")
 
-    def listen(clip, text, clips):
+    def listen(clip, text, clips, voice):
         """Play the clip: the one in the list, else the cached take (never calls ElevenLabs)."""
         if not clip:
             return None, ""
         have = clip_map(clips)
         items = icards.parse_items(text)
         try:
-            cached, prev = word_import.phrase_take(items, clip, DATA_DIR, None, "listen")
+            cached, prev = word_import.phrase_take(items, clip, DATA_DIR, None, "listen", voice or None)
         except Exception as e:
             return None, f"⚠️ {_msg(e)}"
         if clip in have:
@@ -2340,13 +2355,14 @@ def wire_idiom_cards(ui, pv, fields):
         return None, "⏳ Not made yet — press **🎙️ Make the voices** (or 🔄 New take for just this one)."
 
     def take(mode):
-        def fn(clip, text, clips, progress=gr.Progress()):
+        def fn(clip, text, clips, voice, progress=gr.Progress()):
             if not clip:
                 raise gr.Error("Pick a clip first.")
             items = icards.parse_items(text)
             try:
                 path, prev = word_import.phrase_take(items, clip, DATA_DIR,
-                                                     os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"), mode)
+                                                     os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}"), mode,
+                                                     voice or None)
             except Exception as e:
                 raise gr.Error(_msg(e))
             new_list = [c for c in clips or [] if clip_map([c]).get(clip) is None] + [path]
@@ -2354,17 +2370,72 @@ def wire_idiom_cards(ui, pv, fields):
             return new_list, path, take_note(clip, False, prev, done)
         return fn
 
-    ui["v_make"].click(make_voices, [ui["items"], ui["audio"]], ui["audio"])
+    ui["v_make"].click(make_voices, [ui["items"], ui["audio"], ui["v_voice"]], ui["audio"])
     gr.on(triggers=[ui["items"].change, ui["audio"].change], fn=clip_choices,
           inputs=[ui["items"], ui["audio"], ui["v_pick"]], outputs=ui["v_pick"], trigger_mode="always_last",
           show_progress="hidden")
-    ui["v_pick"].input(listen, [ui["v_pick"], ui["items"], ui["audio"]], [ui["v_play"], ui["v_note"]],
+    ui["v_pick"].input(listen, [ui["v_pick"], ui["items"], ui["audio"], ui["v_voice"]], [ui["v_play"], ui["v_note"]],
                        show_progress="hidden")
     for btn, mode in ((ui["v_new"], "new"), (ui["v_back"], "back")):
-        btn.click(take(mode), [ui["v_pick"], ui["items"], ui["audio"]], [ui["audio"], ui["v_play"], ui["v_note"]])
-    gr.on(triggers=[ui["items"].change, ui["audio"].change, ui["voice"].change], fn=voices_status,
-          inputs=[ui["items"], ui["audio"], ui["voice"]], outputs=ui["v_status"], trigger_mode="always_last",
-          show_progress="hidden")
+        btn.click(take(mode), [ui["v_pick"], ui["items"], ui["audio"], ui["v_voice"]],
+                  [ui["audio"], ui["v_play"], ui["v_note"]])
+
+    def load_voices(cur):
+        sv = el.load_settings(DATA_DIR)
+        if not sv["api_key"]:
+            raise gr.Error(word_import.voice_ready(DATA_DIR)[1])
+        try:
+            vs = el.list_voices(sv["api_key"])
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        choices = [(_saved_voice_label(sv), "")] + vs
+        gr.Info(f"{len(vs)} voices found in your account — pick one, then ▶ Hear this voice.", duration=5)
+        return gr.update(choices=choices, value=cur if any(i == cur for _, i in choices) else "")
+
+    def hear(voice, text):
+        """The first idiom in this voice (made once and cached: making the voices later reuses it, no extra cost)."""
+        items = icards.parse_items(text)
+        if not items:
+            raise gr.Error("Write or import the idioms first.")
+        try:
+            path, _ = word_import.phrase_take(items, "w1", DATA_DIR, None, "make", voice or None)
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        return path, (f"▶ “{items[0]['en']}” in this voice — like it? Keep it picked and press 🎙️ Make the voices "
+                      "(this clip is reused, no extra cost).")
+
+    def voice_changed(voice, text, clips):
+        """Another voice: the made clips in the list are swapped for that voice's takes (when made before, free) or
+        taken out (made again by 🎙️ Make the voices / 🎬 Render video); your own recordings stay."""
+        items = icards.parse_items(text)
+        out_dir = os.path.join(MEDIA_DIR, f"idiom_cards_voice_{_stamp()}")
+        keep = [c for c in clips or [] if clip_map([c]) and not word_import.is_made_clip(c, DATA_DIR)]  # your own
+        own = clip_map(keep)
+        made = 0
+        for clip, *_ in word_import.phrase_jobs(items):
+            if clip in own:
+                continue
+            path, _ = word_import.phrase_take(items, clip, DATA_DIR, None, "listen", voice or None)
+            if path:  # made in this voice before: free, under its clip name (w3.mp3) so the video finds it
+                os.makedirs(out_dir, exist_ok=True)
+                dst = os.path.join(out_dir, clip + ".mp3")
+                shutil.copyfile(path, dst)
+                keep.append(dst)
+                made += 1
+        out = sum(1 for clip, *_ in word_import.phrase_jobs(items) if clip not in clip_map(keep))
+        note = "🗣️ Voice changed" + (f" — {made} clip{'s' if made != 1 else ''} already made in this voice (free)"
+                                      if made else "") + (
+            f" — **{out} clip{'s' if out != 1 else ''} to make**: press 🎙️ Make the voices (or 🎬 Render video does it)"
+            if out else " — every clip is ready") + "."
+        return keep, None, note
+
+    ui["v_load"].click(load_voices, ui["v_voice"], ui["v_voice"])
+    ui["v_hear"].click(hear, [ui["v_voice"], ui["items"]], [ui["v_play"], ui["v_note"]])
+    ui["v_voice"].input(voice_changed, [ui["v_voice"], ui["items"], ui["audio"]],
+                        [ui["audio"], ui["v_play"], ui["v_note"]])
+    gr.on(triggers=[ui["items"].change, ui["audio"].change, ui["voice"].change, ui["v_voice"].change],
+          fn=voices_status, inputs=[ui["items"], ui["audio"], ui["voice"], ui["v_voice"]], outputs=ui["v_status"],
+          trigger_mode="always_last", show_progress="hidden")
     ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
     src = [ui["sheet"], ui["tab"], ui["start"], ui["count"], ui["per"]]
     gr.on(triggers=[c.change for c in src], fn=check, inputs=src, outputs=[ui["info"], ui["part"], ui["go"]],
