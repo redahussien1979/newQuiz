@@ -2593,9 +2593,10 @@ def para_tab():
             voice = gr.Dropdown([(s["voice_name"] or s["voice_id"], s["voice_id"])], value=s["voice_id"],
                                 allow_custom_value=True, label="Voice", scale=3,
                                 info="🔄 lists every voice in your account — or paste a voice ID")
-            load_v = gr.Button("🔄 Load my voices", scale=1, min_width=150)
+            load_v = gr.Button("🔄 Load my voices + models", scale=1, min_width=150)
         with gr.Row():
-            model = gr.Dropdown(el.MODELS, value=s["model"], label="Model")
+            model = gr.Dropdown(el.model_choices(DATA_DIR, s["model"]), value=s["model"], allow_custom_value=True,
+                                label="Model", info="🔄 lists the models of your account — or paste a model ID")
             speed = gr.Slider(0.7, 1.2, value=s["speed"], step=0.05, label="Speed")
         with gr.Row():
             stab = gr.Slider(0, 1, value=s["stability"], step=0.05, label="Stability",
@@ -2741,16 +2742,26 @@ def wire_paragraphs(ui, pv, fields):
         el.save_settings(DATA_DIR, **s)
         gr.Info("Voice settings saved on this computer.", duration=4)
 
-    def load_voices(key, voice):
+    def load_voices(key, voice, model):
+        key = (key or "").strip()
         try:
-            vs = el.list_voices((key or "").strip())
+            vs = el.list_voices(key)
         except Exception as e:
             raise gr.Error(_msg(e))
         name = next((n for n, i in vs if i == voice), None)
         if name:
             el.save_settings(DATA_DIR, voice_name=name.split(" — ")[0])
-        gr.Info(f"{len(vs)} voices found in your account.", duration=4)
-        return gr.update(choices=vs, value=voice if any(i == voice for _, i in vs) else (vs[0][1] if vs else voice))
+        try:  # the models: a failure here keeps the menu as it was (the voices are still loaded)
+            ms = el.list_models(key)
+        except Exception as e:
+            ms = []
+            gr.Warning(f"Could not read the models of your account: {_msg(e)}", duration=6)
+        if ms:
+            el.save_models(DATA_DIR, ms)
+        gr.Info(f"{len(vs)} voices" + (f" and {len(ms)} models" if ms else "") + " found in your account.",
+                duration=4)
+        return (gr.update(choices=vs, value=voice if any(i == voice for _, i in vs) else (vs[0][1] if vs else voice)),
+                gr.update(choices=el.model_choices(DATA_DIR, model), value=model))
 
     def do_listen(text, alias, *vi):
         paras = para.parse(text)
@@ -2889,7 +2900,7 @@ def wire_paragraphs(ui, pv, fields):
     ui["mk_xl"].click(make_sheet, [t, stj], ui["xl_file"])
     ui["up_xl"].upload(read_sheet, [ui["up_xl"], t, stj, pk], [stj, t, ui["ht"], ui["words"]])
     ui["save_k"].click(save_voice, voice_in, None)
-    ui["load_v"].click(load_voices, [ui["key"], ui["voice"]], ui["voice"])
+    ui["load_v"].click(load_voices, [ui["key"], ui["voice"], ui["model"]], [ui["voice"], ui["model"]])
     ui["listen"].click(do_listen, [t, ui["alias"]] + voice_in, ui["sample"])
     ui["gen"].click(generate, [t, ui["alias"]] + voice_in, ui["info"]).then(
         show_meter, [t, stj, ui["alias"]] + voice_in + fields, ui["meter"])
