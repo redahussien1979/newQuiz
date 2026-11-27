@@ -280,6 +280,13 @@ def phrase_take(items, clip, data_dir, out_dir, mode="listen", voice_id=None):
     job = next((j for j in phrase_jobs(items) if j[0] == clip), None)
     if job is None:
         raise RuntimeError("That clip is not in the cards any more.")
+    return _job_take(job, data_dir, out_dir, mode, voice_id)
+
+
+def _job_take(job, data_dir, out_dir, mode, voice_id, on_take=None):
+    """phrase_take for one job (clip, text, label, before, after); on_take(mp3, alignment json) is called for the
+    current take after it is made or swapped (📄 Torn pad keeps the word timings of a sentence)."""
+    clip = job[0]
     s = _voice_settings(data_dir, voice_id)
     cm, cj, pm, pj = _take_files(job, data_dir, s)
     have = lambda m, j: os.path.isfile(m) and os.path.isfile(j)  # noqa: E731
@@ -316,12 +323,86 @@ def phrase_take(items, clip, data_dir, out_dir, mode="listen", voice_id=None):
             os.replace(tj, pj)
     if not have(cm, cj):
         return None, have(pm, pj)
+    if on_take and mode != "listen":
+        on_take(cm, cj)
     if mode in ("listen", "make"):
         return cm, have(pm, pj)
     os.makedirs(out_dir, exist_ok=True)  # a fresh file: the video and the player both see the new take
     dst = os.path.join(out_dir, clip + ".mp3")
     shutil.copyfile(cm, dst)
     return dst, have(pm, pj)
+
+
+# ------------------------------------------------------------------ 📄 Torn pad: two voices
+def pad_jobs(items, word_by="12", sent_by="12"):
+    """What 📄 Torn pad's two voices read: [(clip, text, label, before, after, voice)] — 'w<k>' / 'w<k>e' = Voice 1
+    reads word k / its sentence, 'w<k>_v2' / 'w<k>e_v2' = Voice 2. The word is read as a sentence inside a context
+    (not spoken, not charged) so it sounds presented, not like a label; the sentence follows the word."""
+    from .templates.torn_pad import clip_name, needed, spoken
+    jobs = []
+    for k, kind, v in needed(items, word_by, sent_by):
+        it = items[k - 1]
+        word, ex = _sentence(it["en"]), spoken(it.get("ex"))
+        if kind == "w":
+            jobs.append((clip_name(k, "w", v), word, it["en"], "Here is the next word to learn.", ex or None, v))
+        else:
+            jobs.append((clip_name(k, "e", v), ex, f"sentence of {it['en']}", word, None, v))
+    return jobs
+
+
+def _pad_timings(text):
+    """on_take for a sentence clip: keep when each word is spoken (by the audio's content, so copies find it)."""
+    def fn(mp3, js):
+        import json
+        from .templates.words_video import save_timings
+        try:
+            with open(js, encoding="utf-8") as f:
+                al = json.load(f)
+            words, spans, pos = text.split(), [], 0
+            for wd in words:
+                a = text.index(wd, pos)
+                spans.append((a, a + len(wd)))
+                pos = a + len(wd)
+            save_timings(mp3, words, el.word_times(spans, text, al))
+        except Exception:
+            pass  # without them the words are spread over the clip
+    return fn
+
+
+def _pad_voice(job, voices):
+    """The voice id of a job's reader (voices = {1: id, 2: id}; empty = the saved voice)."""
+    return (voices or {}).get(job[5]) or None
+
+
+def pad_voices(items, data_dir, out_dir, voices=None, word_by="12", sent_by="12", skip=(), progress=None):
+    """📄 Torn pad: the clips of `pad_jobs` that are not in `skip` (clip names) as out_dir/<clip>.mp3, each in its
+    reader's voice (cached: a clip costs credits only once). Returns the clip paths."""
+    from .core import check_stop
+    ok, msg = voice_ready(data_dir)
+    if not ok:
+        raise RuntimeError(msg)
+    jobs = [j for j in pad_jobs(items, word_by, sent_by) if j[0] not in set(skip)]
+    os.makedirs(out_dir, exist_ok=True)
+    paths = []
+    for done, job in enumerate(jobs):
+        check_stop()  # ⏹ Stop between two clips
+        if progress:
+            progress(done / len(jobs), f"🎙️ Voice {job[5]}: “{job[2]}” ({done + 1} of {len(jobs)})")
+        on = _pad_timings(job[1]) if "e" in job[0].split("_")[0] else None
+        mp3, _ = _job_take(job[:5], data_dir, out_dir, "make", _pad_voice(job, voices), on)
+        dst = os.path.join(out_dir, job[0] + ".mp3")
+        shutil.copyfile(mp3, dst)
+        paths.append(dst)
+    return paths
+
+
+def pad_take(items, clip, data_dir, out_dir, mode="listen", voices=None, word_by="12", sent_by="12"):
+    """phrase_take for one 📄 Torn pad clip ('w3', 'w3e_v2' …), in its reader's voice."""
+    job = next((j for j in pad_jobs(items, word_by, sent_by) if j[0] == clip), None)
+    if job is None:
+        raise RuntimeError("That clip is not in the video any more.")
+    on = _pad_timings(job[1]) if "e" in clip.split("_")[0] else None
+    return _job_take(job[:5], data_dir, out_dir, mode, _pad_voice(job, voices), on)
 
 
 def is_made_clip(path, data_dir):

@@ -1,0 +1,38 @@
+{
+  "template": "tornpad",
+  "settings": {
+    "theme": "Royal Blue",
+    "language": "ar",
+    "fps": 30,
+    "music": "Lo-fi Chill",
+    "music_gain": 0.5,
+    "music_file": "",
+    "voice_file": "",
+    "voice_offset": 0.5,
+    "voice_gain": 1.0,
+    "handle": "@logolept AR EN",
+    "font_file": "",
+    "intro_sound": "None",
+    "tick_sound": "Classic",
+    "tick_gain": 1.0
+  },
+  "ending": {
+    "intro": "",
+    "question": "",
+    "cta": ""
+  },
+  "tornpad": {
+    "title": "",
+    "subtitle": "",
+    "words": "Retrospect | استرجاع الماضي / نظرة إلى الوراء | In retrospect, the decision to expand too rapidly proved to be a critical mistake. | بالنظر إلى الوراء، تبيّن أن قرار التوسع السريع كان خطأً جسيماً.\nSanity | السلامة العقلية / العقلانية | Amid the daily pressures, he relied on meditation to preserve his sanity. | وسط الضغوط اليومية، اعتمد على التأمل للحفاظ على صحته العقلية.\nSolitude | العزلة / الانفراد بالنفس | The writer retreated to a mountain cabin, seeking solitude for creative inspiration. | انسحب الكاتب إلى كوخ جبلي، باحثاً عن العزلة للإلهام الإبداعي.\nSpecter | الشبح / الطيف | The specter of inflation continues to haunt the global economy. | يواصل شبح التضخم تهديد الاقتصاد العالمي.\nTragedy | المأساة | The collapse of the bridge was one of the greatest tragedies in the city's history. | كان انهيار الجسر من أفجع المآسي في تاريخ المدينة.",
+    "sheet_color": "sage",
+    "word_by": "12",
+    "sent_by": "12",
+    "voice_on": true,
+    "voice1": "",
+    "voice2": "",
+    "audio": [],
+    "audio_gain": 1.0,
+    "arabic_font": ""
+  }
+}

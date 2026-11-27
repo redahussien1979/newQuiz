@@ -37,6 +37,7 @@ from engine.templates.news import ACCENT_CHOICES as NW_ACCENTS, LOOK_CHOICES as 
 from engine.templates.news import length_report as nw_length, PAUSE_CHOICES as NW_PAUSES, RECAP_CHOICES as NW_RECAPS
 from engine.templates import words_video as wvid
 from engine.templates import idiom_cards as icards
+from engine.templates import torn_pad as tpad
 from engine.templates.vocab import clip_key as vocab_clip_key
 from engine import batch
 from engine import countries
@@ -93,8 +94,10 @@ NW_KEYS = ["video", "look", "accent", "headline", "tag", "label", "brand_name", 
 WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "audio", "audio_gain", "voice_on", "arabic_font", "ar_style", "kind", "ex_reveal", "pop_fx", "touches", "bubble_style"]
 IC_KEYS = ["title", "subtitle", "items", "look", "marker", "transition", "pace", "touches", "arabic_font", "audio",
            "audio_gain", "voice_on", "voice_id"]
+TP_KEYS = ["title", "subtitle", "words", "sheet_color", "word_by", "sent_by", "voice_on", "voice1", "voice2", "audio",
+           "audio_gain", "arabic_font"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS, "wordsvideo": WV_KEYS,
-        "idiomcards": IC_KEYS}
+        "idiomcards": IC_KEYS, "tornpad": TP_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
                 "video"}
 MEDIA_LISTS = {"narration", "audio"}  # fields holding several files
@@ -113,7 +116,8 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "read_style": "clear", "text_size": "normal", "clips": "[]", "clip_index": 0, "speed": 1.0, "recap_style": "flashcards", "pause": "off",
             "design": "paper", "pick": "roulette", "voice_on": True, "arabic_font": "", "ar_style": "brush", "kind": "auto", "ex_reveal": "redbold", "pop_fx": "confetti",
             "touches": ["corner", "deck", "tint", "grain", "focus", "brand", "stress", "number", "drift"],
-            "bubble_style": "pill"}  # for projects saved before these options existed
+            "bubble_style": "pill", "sheet_color": "sage", "word_by": "12", "sent_by": "12", "voice1": "",
+            "voice2": ""}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -599,7 +603,44 @@ def _ic_missing(items, have):
         sum((i + 1, "e") not in have for i, it in enumerate(items) if it.get("df"))
 
 
-_VOICES = {"wordsvideo": _wv_voices, "idiomcards": _ic_voices}
+def _tp_voices(project, progress=None):
+    """📄 Torn pad with 🎙️ ticked: make the missing clips — the word and the sentence of every sheet in Voice 1
+    (w<k>, w<k>e) and Voice 2 (w<k>_v2, w<k>e_v2), as 'Word read by' / 'Sentence read by' ask — each in its own
+    ElevenLabs voice (cached: a clip costs credits only once); uploaded / earlier clips stay."""
+    d = project.get("tornpad", {})
+    if not d.get("voice_on"):
+        return
+    items = tpad.parse_words(d.get("words"))
+    have = _tp_clip_map(d.get("audio"))
+    miss = [j for j in word_import.pad_jobs(items, d.get("word_by"), d.get("sent_by")) if j[0] not in have]
+    if not items or not miss:
+        return
+    ok, why = word_import.voice_ready(DATA_DIR)
+    if not ok:
+        raise ValueError("🎙️ The voices are ticked but cannot be made: " + why + " — or untick 🎙️ to render "
+                         "without voices.")
+    made = word_import.pad_voices(items, DATA_DIR, os.path.join(MEDIA_DIR, f"torn_pad_voice_{_stamp()}"),
+                                  _tp_ids(d.get("voice1"), d.get("voice2")), d.get("word_by"), d.get("sent_by"),
+                                  set(have), progress)
+    d["audio"] = list(have.values()) + made
+
+
+def _tp_clip_map(clips):
+    """{'w3' / 'w3e' / 'w3_v2' / 'w3e_v2': path} of the 📄 Torn pad clips in a list (the last one of a name wins)."""
+    out = {}
+    for c in clips or []:
+        key = tpad.clip_key(c) if c and os.path.isfile(str(c)) else None
+        if key:
+            out[tpad.clip_name(*key)] = c
+    return out
+
+
+def _tp_ids(v1, v2):
+    """{1: Voice 1's id, 2: Voice 2's id} (empty = the saved voice)."""
+    return {1: str(v1 or "").strip(), 2: str(v2 or "").strip()}
+
+
+_VOICES = {"wordsvideo": _wv_voices, "idiomcards": _ic_voices, "tornpad": _tp_voices}
 
 
 def make_actions(tpl):
@@ -609,7 +650,7 @@ def make_actions(tpl):
         except Exception as e:
             raise gr.Error(str(e))
         msg = f"Video length: **{dur:.1f} s**"
-        if tpl in ("vocab", "text", "news", "wordsvideo", "idiomcards") and dur > 60:
+        if tpl in ("vocab", "text", "news", "wordsvideo", "idiomcards", "tornpad") and dur > 60:
             msg += " — ⚠️ over 60 s: fine for YouTube Shorts and Instagram Reels, but keep Facebook Reels under 60 s"
         return img, msg, gr.update(maximum=max(1.0, round(dur, 1)))
 
@@ -680,6 +721,9 @@ def make_actions(tpl):
         if tpl == "idiomcards":
             p["idiomcards"]["audio"] = _keep_media_list(p["idiomcards"].get("audio"),
                                                         os.path.join(MEDIA_DIR, f"idiom_cards_audio_{stamp}"))
+        if tpl == "tornpad":
+            p["tornpad"]["audio"] = _keep_media_list(p["tornpad"].get("audio"),
+                                                     os.path.join(MEDIA_DIR, f"torn_pad_audio_{stamp}"))
         if tpl == "vocab":
             p["vocab"]["audio"] = _keep_media_list(p["vocab"].get("audio"), os.path.join(MEDIA_DIR, f"words_audio_{stamp}"))
         if tpl == "mcq":
@@ -996,11 +1040,12 @@ def shared_fields(st, ending):
             st["intro_sound"], st["tick_sound"], st["tick_gain"]]
 
 
-def preview_panel(tpl, posts=False, words_video=False, idiom_cards=False):
+def preview_panel(tpl, posts=False, words_video=False, idiom_cards=False, torn_pad=False):
     """Right column: live picture / video, time slider and all render buttons — always visible. posts=True adds
     the 🖼️ Image posts preview, shown there instead while that sub-tab is open (post_col / video_col);
     words_video=True adds a second full preview for the 🎬 Words video sub-tab (`wv` = its own panel dict, in
-    `wv_col`); idiom_cards=True one for the 🃏 Idiom cards sub-tab (`ic`, in `ic_col`)."""
+    `wv_col`); idiom_cards=True one for the 🃏 Idiom cards sub-tab (`ic`, in `ic_col`); torn_pad=True one for the
+    📄 Torn pad sub-tab (`tp`, in `tp_col`)."""
     extra = {}
     with gr.Column(scale=2, min_width=340, elem_classes="preview-col"):
         if posts:
@@ -1017,6 +1062,10 @@ def preview_panel(tpl, posts=False, words_video=False, idiom_cards=False):
             with gr.Column(visible=False) as ic_col:
                 extra["ic"] = _preview_widgets("idiomcards")
             extra["ic_col"] = ic_col
+        if torn_pad:
+            with gr.Column(visible=False) as tp_col:
+                extra["tp"] = _preview_widgets("tornpad")
+            extra["tp_col"] = tp_col
         with gr.Column(visible=True) as video_col:
             main = _preview_widgets(tpl)
     return dict(main, video_col=video_col, **extra)
@@ -2448,6 +2497,388 @@ def wire_idiom_cards(ui, pv, fields):
                 [pv["vid"], pv["info"], ui["files"], ui["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"]],
                 **_progress_on(dep, pv["vid"]))
 
+
+# ------------------------------------------------------------------ English Words: 📄 Torn pad
+TP_HELP = ("**📄 Torn pad** — every word on its own sheet of torn paper, like a tear-off pad: the word rises in while "
+           "**Voice 1** says it, a red pen circles it while **Voice 2** says it, the Arabic meaning writes in from the "
+           "right, the sentence appears word by word as it is read (the word gets a yellow marker), its Arabic follows, "
+           "and the sheet is ripped off to show the next word. The 🔚 Ending is the last sheet. The preview on the "
+           "right is this video's own.")
+TP_WORDS_HELP = ("One sheet per line: `English | Arabic meaning | English sentence | Arabic sentence` — e.g. "
+                 "`Sanity | السلامة العقلية / العقلانية | He relied on meditation to preserve his sanity. | اعتمد على "
+                 "التأمل للحفاظ على صحته العقلية.` Two meanings: split them with ` / ` (a red bar between them). The word "
+                 "is found in the sentence by itself (also tragedy → tragedies); or mark it with *stars*.")
+
+
+def _tp_template_path():
+    path = os.path.join(APP_PROJ_DIR, "torn_pad_template.xlsx")
+    if not os.path.isfile(path):
+        try:
+            tpad.write_template(path)
+        except Exception:  # openpyxl missing: no template button
+            return None
+    return path
+
+
+def torn_pad_ui():
+    """📄 Torn pad sub-tab (English Words): its own project, words, two voices and sheet import."""
+    with gr.Row(equal_height=True):
+        gr.Markdown(TP_HELP)
+    proj = project_bar()
+    with gr.Row():
+        title = gr.Textbox(label="Title over the pad (optional)", placeholder="{count} Words to Sound Smarter",
+                           info="{count} = the number of words. 🎬 Render all from Excel: empty = each video's own sheet "
+                                "Title; typed here = the same for every video")
+        sub = gr.Textbox(label="Subtitle (optional)", rtl=True, placeholder="كلمات إنجليزية راقية")
+    words = gr.Textbox(lines=10, max_lines=60, label="Words", info=TP_WORDS_HELP)
+    with gr.Row():
+        look = gr.Dropdown(tpad.LOOK_CHOICES, value="sage", label="Paper colour")
+        ar_menu = [(f"{tpad.AR_DEFAULT} (default)", "")] + [c for c in word_posts.font_menus()[1][1:]
+                                                           if c[1] != tpad.AR_DEFAULT]
+        ar_font = gr.Dropdown(ar_menu, value="", label="Arabic font", info="Any font of your library that writes Arabic")
+    gr.Markdown("**🗣️ Two voices** — pick them from your ElevenLabs account (🔄 Load my voices). Empty = the saved "
+                "voice (🔑 ElevenLabs voice in 📖 English Texts → ✍️ Paragraphs).")
+    sv = el.load_settings(DATA_DIR)
+    with gr.Row(equal_height=True):
+        v1 = gr.Dropdown([(_saved_voice_label(sv), "")], value="", allow_custom_value=True, label="Voice 1", scale=3,
+                         info="Or paste a voice ID")
+        v1_hear = gr.Button("▶ Hear Voice 1", min_width=130, scale=1)
+    with gr.Row(equal_height=True):
+        v2 = gr.Dropdown([(_saved_voice_label(sv), "")], value="", allow_custom_value=True, label="Voice 2", scale=3,
+                         info="Pick a different voice (e.g. a man and a woman)")
+        v2_hear = gr.Button("▶ Hear Voice 2", min_width=130, scale=1)
+    with gr.Row(equal_height=True):
+        v_load = gr.Button("🔄 Load my voices", min_width=150, scale=0)
+        word_by = gr.Dropdown(tpad.READERS, value="12", label="Word read by")
+        sent_by = gr.Dropdown(tpad.READERS, value="12", label="Sentence read by")
+    voice = gr.Checkbox(value=True, label="🎙️ Read the words and sentences aloud with these voices",
+                        info="Ticked: 🎬 Render video (and ▶️ Quick motion) first makes the missing clips; each clip "
+                             "costs credits only once")
+    audio = gr.File(file_count="multiple", type="filepath", file_types=["audio"], height=110,
+                    label="Voice clips (made for you when the box is ticked — or your own: w1 = word 1 by Voice 1, "
+                          "w1e = its sentence; w1_v2 / w1e_v2 = the same by Voice 2)")
+    with gr.Row(equal_height=True):
+        v_status = gr.Markdown("")
+        v_make = gr.Button("🎙️ Make the voices", min_width=170, scale=0)
+    with gr.Accordion("🎧 Listen to the voices before rendering — and redo the ones you don't like", open=True):
+        with gr.Row(equal_height=True):
+            v_pick = gr.Dropdown([], label="Clip", scale=3,
+                                 info="✅ = in the video · ⏳ = not made yet (🎙️ Make the voices)")
+            v_new = gr.Button("🔄 New take", min_width=130, scale=1)
+            v_back = gr.Button("↩️ Previous take", min_width=130, scale=1)
+        v_play = gr.Audio(type="filepath", interactive=False, show_label=False, autoplay=True)
+        v_note = gr.Markdown("")
+    gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
+    with gr.Row(equal_height=True):
+        gr.Markdown("---\n**📥 Words from Excel** — columns **English | Arabic meaning | English sentence | Arabic "
+                    "sentence** (several meanings in one cell: split them with |; + optional **Title | Subtitle**: a "
+                    "title goes on until the next one). They are cut into videos of *Words per video*; **🎬 Render "
+                    "all** makes every video, each with its own voices. **Titles:** with the Title / Subtitle boxes "
+                    "empty (or holding what 📥 copied from the sheet) each video takes its own from the sheet; text you "
+                    "type yourself is used for every video — **{n}** = the video number, **{total}** = how many.")
+        tpl = _tp_template_path()
+        gr.DownloadButton("⬇️ Excel template", value=tpl, visible=bool(tpl), size="sm", min_width=130, scale=0)
+    with gr.Row():
+        sheet = gr.File(type="filepath", file_types=[".xlsx", ".xlsm", ".csv"], label="Words sheet (.xlsx or .csv)",
+                        height=110)
+        tab = gr.Dropdown([], label="Sheet (tab)", visible=False)
+    with gr.Row():
+        start = gr.Number(value=1, precision=0, minimum=1, label="Start at word #")
+        count = gr.Number(value=0, precision=0, minimum=0, label="How many words", info="0 = all of them")
+        per = gr.Slider(1, 12, value=4, step=1, label="Words per video",
+                        info="Cut in order into videos of this many (the last gets what is left). With both voices "
+                             "reading every sentence a word takes about 14 s: 4 words keep a video under 60 s")
+    info = gr.Markdown("Upload a sheet to see how many videos it makes.")
+    with gr.Row(equal_height=True):
+        part = gr.Dropdown([], label="Video to put in the editor", scale=2)
+        load = gr.Button("📥 Put it in the editor", min_width=170, scale=1)
+        go = gr.Button("🎬 Render all videos", variant="primary", interactive=False, min_width=200, scale=1)
+    zipb = gr.DownloadButton("📦 Download all (.zip)", visible=False, variant="primary")
+    files = gr.File(label="Rendered videos — each one appears here as soon as it finishes", file_count="multiple",
+                    visible=False, height=260)
+    return dict(proj=proj, title=title, sub=sub, words=words, look=look, ar_font=ar_font, v1=v1, v2=v2,
+                v1_hear=v1_hear, v2_hear=v2_hear, v_load=v_load, word_by=word_by, sent_by=sent_by, voice=voice,
+                audio=audio, v_status=v_status, v_make=v_make, v_pick=v_pick, v_new=v_new, v_back=v_back,
+                v_play=v_play, v_note=v_note, gain=gain, sheet=sheet, tab=tab, start=start, count=count, per=per,
+                info=info, part=part, load=load, go=go, zip=zipb, files=files)
+
+
+def tp_fields(ui):
+    """The Torn pad's own fields in TP_KEYS order."""
+    return [ui["title"], ui["sub"], ui["words"], ui["look"], ui["word_by"], ui["sent_by"], ui["voice"], ui["v1"],
+            ui["v2"], ui["audio"], ui["gain"], ui["ar_font"]]
+
+
+def wire_torn_pad(ui, pv, fields):
+    def picked(sheet, tab, start, count):
+        if not sheet:
+            raise ValueError("Upload a words sheet first.")
+        rows, problems = tpad.read_sheet(sheet, tab or None)
+        if not rows:
+            raise ValueError("The sheet has no usable rows." + (f" First problem: {problems[0]}" if problems else ""))
+        a = max(1, int(start or 1)) - 1
+        n = int(count or 0)
+        part = rows[a:a + n] if n > 0 else rows[a:]
+        if not part:
+            raise ValueError(f"The sheet has {len(rows)} words — 'Start at' is past the end.")
+        return rows, part, problems
+
+    def groups(part, per):
+        per = max(1, int(per or 4))
+        return [part[i:i + per] for i in range(0, len(part), per)]
+
+    def check(sheet, tab, start, count, per):
+        off = gr.update(value="🎬 Render all videos", interactive=False)
+        if not sheet:
+            return "Upload a sheet to see how many videos it makes.", gr.update(choices=[], value=None), off
+        try:
+            rows, part, problems = picked(sheet, tab, start, count)
+        except Exception as e:
+            return f"⚠️ {_msg(e)}", gr.update(choices=[], value=None), off
+        vids = groups(part, per)
+        a = max(1, int(start or 1))
+        sizes = [len(g) for g in vids]
+        how = (f"{len(vids)} video{'s' if len(vids) != 1 else ''} of {sizes[0]} word{'s' if sizes[0] != 1 else ''}"
+               if len(set(sizes)) == 1 else f"{len(vids)} videos ({' + '.join(map(str, sizes))} words)")
+        msg = (f"The sheet has **{len(rows)}** words — #{a}–#{a + len(part) - 1} make **{how}**."
+               + (f" ⚠️ {len(problems)} row(s) left out: {problems[0]}" if problems else ""))
+        choices = [(f"Video {k} — {g[0]['en']} … {g[-1]['en']} ({len(g)} words)", k) for k, g in enumerate(vids, 1)]
+        n = len(vids)
+        return msg, gr.update(choices=choices, value=1), gr.update(
+            value=f"🎬 Render all {n} video{'s' if n != 1 else ''}", interactive=True)
+
+    def load(sheet, tab, start, count, per, k, title, sub):
+        try:
+            rows, part, problems = picked(sheet, tab, start, count)
+            vids = groups(part, per)
+            k = int(k or 1)
+            if not 1 <= k <= len(vids):
+                raise ValueError("Pick a video first.")
+            grp = vids[k - 1]
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        gr.Info(f"Video {k} of {len(vids)} ({len(grp)} words) is in the editor."
+                + (f" 🎬 Render all makes all {len(vids)}." if len(vids) > 1 else ""), duration=7)
+        # this video's own clips: the old ones belong to other words
+        return (tpad.words_text(grp), None, title or grp[0].get("title") or "", sub or grp[0].get("sub") or "")
+
+    def start(request: gr.Request):
+        if not _claim(request):
+            raise gr.Error("Already working on a video — please wait for it to finish.", duration=4)
+        return (True, gr.update(selected="vid"), gr.update(interactive=False), gr.update(interactive=False),
+                gr.update(interactive=False), "⏳ Rendering… each video appears below when it is done.",
+                gr.update(value=None, visible=False), gr.update(value=None, visible=False))
+
+    def render_all(request: gr.Request, sheet, tab, start_at, count, per, *vals, progress=gr.Progress()):
+        def plan():
+            rows, part, problems = picked(sheet, tab, start_at, count)
+            vids = groups(part, per)
+            base = values_to_project("tornpad", vals)
+            if base["tornpad"].get("voice_on"):
+                ok, why = word_import.voice_ready(DATA_DIR)
+                if not ok:
+                    raise ValueError("🎙️ The voices are ticked but cannot be made: " + why)
+            out_dir = os.path.join(OUT_DIR, f"torn_pad_{_stamp()}")
+            os.makedirs(out_dir, exist_ok=True)
+            total = len(vids)
+
+            def jobs():
+                for k, grp in enumerate(vids, 1):
+                    proj = copy.deepcopy(base)
+                    d = proj["tornpad"]
+                    d["words"] = tpad.words_text(grp)
+                    d["audio"] = []  # this video's own voices
+                    d["title"], d["subtitle"] = _batch_titles(d, grp, part, k, total)
+                    _tp_voices(proj, lambda x, desc, k=k: (check_stop(), progress((k - 1 + 0.15 * x) / total,
+                                                                                  desc=f"Video {k} of {total}: {desc}")))
+                    yield f"Torn pad {k:02d} of {total:02d}", proj
+            return out_dir, total, jobs()
+
+        yield from _stream_batch(request, plan, progress)
+
+    def jobs_of(text, wby, sby):
+        items = tpad.parse_words(text)
+        return items, word_import.pad_jobs(items, wby, sby)
+
+    def voices_status(text, clips, on, v1, v2, wby, sby):
+        items, jobs = jobs_of(text, wby, sby)
+        if not items:
+            return ""
+        have = _tp_clip_map(clips)
+        miss = sum(1 for j in jobs if j[0] not in have)
+        same = ("" if "1" not in str(wby) + str(sby) or "2" not in str(wby) + str(sby) or (v1 or "") != (v2 or "")
+                else " ⚠️ Voice 1 and Voice 2 are the same voice — pick two different ones.")
+        if not miss:
+            return f"🎙️ ✅ All **{len(jobs)} clips** of the {len(items)} words are ready." + same
+        if on:
+            ok, why = word_import.voice_ready(DATA_DIR)
+            if not ok:
+                return "⚠️ " + why
+            return (f"🎙️ **Voices on** — 🎬 Render video first makes the {miss} missing clip{'s' if miss != 1 else ''} "
+                    f"(each costs credits only once)." + same)
+        if not have:
+            return "No voice: music and sound effects only (tick 🎙️ or add clips w1, w1e … to read the words aloud)."
+        return f"⚠️ **{miss} voice clip{'s' if miss != 1 else ''} missing** (the 🎙️ box is unticked)."
+
+    def make_voices(text, clips, v1, v2, wby, sby, progress=gr.Progress()):
+        items = tpad.parse_words(text)
+        if not items:
+            raise gr.Error("Write or import the words first.")
+        ok, why = word_import.voice_ready(DATA_DIR)
+        if not ok:
+            raise gr.Error(why)
+        have = _tp_clip_map(clips)
+        try:
+            made = word_import.pad_voices(items, DATA_DIR, os.path.join(MEDIA_DIR, f"torn_pad_voice_{_stamp()}"),
+                                          _tp_ids(v1, v2), wby, sby, set(have), lambda x, d: progress(x, desc=d))
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        gr.Info(f"🎙️ {len(made)} voice clip{'s' if len(made) != 1 else ''} made — every clip is ready.", duration=5)
+        return list(have.values()) + made
+
+    def clip_choices(text, clips, cur, wby, sby):
+        """The Clip menu: every clip the video reads, ✅ when it is in the video, ⏳ when not made yet."""
+        items, jobs = jobs_of(text, wby, sby)
+        have = _tp_clip_map(clips)
+        choices = []
+        for clip, _, label, _, _, voice_n in jobs:
+            k = int(clip[1:].split("_")[0].rstrip("e"))
+            what = f"{k}. {items[k - 1]['en']}" + (" — sentence" if "e" in clip.split("_")[0] else "")
+            choices.append((("✅ " if clip in have else "⏳ ") + f"{what} · Voice {voice_n}", clip))
+        keys = [c for _, c in choices]
+        return gr.update(choices=choices, value=cur if cur in keys else (keys[0] if keys else None))
+
+    def take_note(own, prev, done=""):
+        if own:
+            return ("🎤 **This clip from the list is used in the video** (your own, or another take) — 🔄 New take "
+                    "replaces it with the ElevenLabs voice" + (", ↩️ Previous take with the kept take." if prev else "."))
+        return ((done + " — " if done else "") + "✅ This take is used in the video"
+                + (" · ↩️ the previous take is kept (free to switch back)" if prev else "") + ".")
+
+    def listen(clip, text, clips, v1, v2, wby, sby):
+        """Play the clip: the one in the list, else the cached take (never calls ElevenLabs)."""
+        if not clip:
+            return None, ""
+        have = _tp_clip_map(clips)
+        items = tpad.parse_words(text)
+        try:
+            cached, prev = word_import.pad_take(items, clip, DATA_DIR, None, "listen", _tp_ids(v1, v2), wby, sby)
+        except Exception as e:
+            return None, f"⚠️ {_msg(e)}"
+        if clip in have:
+            if cached is None:
+                return have[clip], ("🎤 **This clip from the list is used in the video** (your own, or made before "
+                                    "the text or the voice was changed) — 🔄 New take reads the current text.")
+            return have[clip], take_note(os.path.getsize(cached) != os.path.getsize(have[clip]), prev)
+        if cached:
+            return cached, "Made before but not in the clip list yet — 🎬 Render video adds it (no credits)."
+        return None, "⏳ Not made yet — press **🎙️ Make the voices** (or 🔄 New take for just this one)."
+
+    def take(mode):
+        def fn(clip, text, clips, v1, v2, wby, sby, progress=gr.Progress()):
+            if not clip:
+                raise gr.Error("Pick a clip first.")
+            items = tpad.parse_words(text)
+            try:
+                path, prev = word_import.pad_take(items, clip, DATA_DIR,
+                                                  os.path.join(MEDIA_DIR, f"torn_pad_voice_{_stamp()}"), mode,
+                                                  _tp_ids(v1, v2), wby, sby)
+            except Exception as e:
+                raise gr.Error(_msg(e))
+            have = _tp_clip_map(clips)
+            have[clip] = path
+            done = "🔄 New take" if mode == "new" else "↩️ Switched to the other take"
+            return list(have.values()), path, take_note(False, prev, done)
+        return fn
+
+    def load_voices(c1, c2):
+        sv = el.load_settings(DATA_DIR)
+        if not sv["api_key"]:
+            raise gr.Error(word_import.voice_ready(DATA_DIR)[1])
+        try:
+            vs = el.list_voices(sv["api_key"])
+        except Exception as e:
+            raise gr.Error(_msg(e))
+        choices = [(_saved_voice_label(sv), "")] + vs
+        ids = {i for _, i in choices}
+        gr.Info(f"{len(vs)} voices found in your account — pick Voice 1 and Voice 2, then ▶ Hear them.", duration=5)
+        return (gr.update(choices=choices, value=c1 if c1 in ids else ""),
+                gr.update(choices=choices, value=c2 if c2 in ids else ""))
+
+    def hear(n):
+        def fn(text, v1, v2, wby, sby):
+            """Word 1 in this voice (made once and cached: making the voices later reuses it, no extra cost)."""
+            items = tpad.parse_words(text)
+            if not items:
+                raise gr.Error("Write or import the words first.")
+            clip = tpad.clip_name(1, "w", n)
+            try:  # with the readers asked for, else (this voice reads no word) word 1 in it all the same
+                job_by = str(wby) if str(n) in str(wby) else str(n)
+                path, _ = word_import.pad_take(items, clip, DATA_DIR, None, "make", _tp_ids(v1, v2), job_by, sby)
+            except Exception as e:
+                raise gr.Error(_msg(e))
+            return path, (f"▶ “{items[0]['en']}” in Voice {n} — like it? Press 🎙️ Make the voices (this clip is "
+                          "reused, no extra cost).")
+        return fn
+
+    def voices_changed(v1, v2, text, clips, wby, sby):
+        """Another voice: the made clips in the list are swapped for that voice's takes (when made before, free) or
+        taken out (made again by 🎙️ Make the voices / 🎬 Render video); your own recordings stay."""
+        items, jobs = jobs_of(text, wby, sby)
+        out_dir = os.path.join(MEDIA_DIR, f"torn_pad_voice_{_stamp()}")
+        own = {k: c for k, c in _tp_clip_map(clips).items() if not word_import.is_made_clip(c, DATA_DIR)}
+        keep, made = dict(own), 0
+        for job in jobs:
+            clip = job[0]
+            if clip in own:
+                continue
+            path, _ = word_import.pad_take(items, clip, DATA_DIR, None, "listen", _tp_ids(v1, v2), wby, sby)
+            if path:  # made in this voice before: free, under its clip name so the video finds it
+                os.makedirs(out_dir, exist_ok=True)
+                dst = os.path.join(out_dir, clip + ".mp3")
+                shutil.copyfile(path, dst)
+                keep[clip] = dst
+                made += 1
+        out = sum(1 for j in jobs if j[0] not in keep)
+        note = "🗣️ Voice changed" + (f" — {made} clip{'s' if made != 1 else ''} already made in this voice (free)"
+                                      if made else "") + (
+            f" — **{out} clip{'s' if out != 1 else ''} to make**: press 🎙️ Make the voices (or 🎬 Render video does it)"
+            if out else " — every clip is ready") + "."
+        return list(keep.values()), None, note
+
+    vin = [ui["v1"], ui["v2"], ui["word_by"], ui["sent_by"]]
+    ui["v_make"].click(make_voices, [ui["words"], ui["audio"]] + vin, ui["audio"])
+    gr.on(triggers=[ui["words"].change, ui["audio"].change, ui["word_by"].change, ui["sent_by"].change],
+          fn=clip_choices, inputs=[ui["words"], ui["audio"], ui["v_pick"], ui["word_by"], ui["sent_by"]],
+          outputs=ui["v_pick"], trigger_mode="always_last", show_progress="hidden")
+    ui["v_pick"].input(listen, [ui["v_pick"], ui["words"], ui["audio"]] + vin, [ui["v_play"], ui["v_note"]],
+                       show_progress="hidden")
+    for btn, mode in ((ui["v_new"], "new"), (ui["v_back"], "back")):
+        btn.click(take(mode), [ui["v_pick"], ui["words"], ui["audio"]] + vin,
+                  [ui["audio"], ui["v_play"], ui["v_note"]])
+    ui["v_load"].click(load_voices, [ui["v1"], ui["v2"]], [ui["v1"], ui["v2"]])
+    ui["v1_hear"].click(hear(1), [ui["words"]] + vin, [ui["v_play"], ui["v_note"]])
+    ui["v2_hear"].click(hear(2), [ui["words"]] + vin, [ui["v_play"], ui["v_note"]])
+    for dd in (ui["v1"], ui["v2"]):
+        dd.input(voices_changed, [ui["v1"], ui["v2"], ui["words"], ui["audio"], ui["word_by"], ui["sent_by"]],
+                 [ui["audio"], ui["v_play"], ui["v_note"]])
+    gr.on(triggers=[ui["words"].change, ui["audio"].change, ui["voice"].change, ui["v1"].change, ui["v2"].change,
+                    ui["word_by"].change, ui["sent_by"].change],
+          fn=voices_status, inputs=[ui["words"], ui["audio"], ui["voice"]] + vin, outputs=ui["v_status"],
+          trigger_mode="always_last", show_progress="hidden")
+    ui["sheet"].change(fill_tabs, ui["sheet"], ui["tab"], show_progress="hidden")
+    src = [ui["sheet"], ui["tab"], ui["start"], ui["count"], ui["per"]]
+    gr.on(triggers=[c.change for c in src], fn=check, inputs=src, outputs=[ui["info"], ui["part"], ui["go"]],
+          trigger_mode="always_last", show_progress="hidden")
+    ui["load"].click(load, src + [ui["part"], ui["title"], ui["sub"]],
+                     [ui["words"], ui["audio"], ui["title"], ui["sub"]])
+    dep = ui["go"].click(start, None, [pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"], pv["info"],
+                                       ui["files"], ui["zip"]], queue=False)
+    dep.success(render_all, src + fields,
+                [pv["vid"], pv["info"], ui["files"], ui["zip"], pv["busy"], pv["tabs"], pv["clip"], pv["rd"], ui["go"]],
+                **_progress_on(dep, pv["vid"]))
+
+
 # ------------------------------------------------------------------ English Texts
 TX_WORDS_HELP = ("One spoken word per line, like columns B–F of the sheet: `word | start | end | highlighted | arabic` "
                  "(times in seconds). Something in *highlighted* makes the word fly into the Word Bank; the same "
@@ -3874,6 +4305,9 @@ def build_ui():
                         with gr.Tab("🎬 Words video"):
                             with gr.Column(elem_classes="pane"):
                                 wv = words_video_ui()
+                        with gr.Tab("📄 Torn pad"):
+                            with gr.Column(elem_classes="pane"):
+                                tp = torn_pad_ui()
                         with gr.Tab("🃏 Idiom cards"):
                             with gr.Column(elem_classes="pane"):
                                 ic = idiom_cards_ui()
@@ -3894,7 +4328,7 @@ def build_ui():
                                                                  v_timer, v_tfx, v_recap, v_audio, v_again,
                                                                  v_lstyle, v_lhl, v_cboard, v_cmark, v_ccol, v_lpal,
                                                                  v_lfont, v_lex, v_lkar, v_lhide, v_lwait]
-                vc_pv = preview_panel("vocab", posts=True, words_video=True, idiom_cards=True)
+                vc_pv = preview_panel("vocab", posts=True, words_video=True, idiom_cards=True, torn_pad=True)
             wire(vc_proj, vc_pv, vc_fields)
             wire_vc_batch(vxl, vc_pv, vc_fields)
             wire_wl_import(wl, vc_pv, vc_fields, v_items, v_audio)
@@ -3905,15 +4339,19 @@ def build_ui():
             # 🃏 Idiom cards: the same — its own project + preview, shared 🎨 Style & sound and 🔚 Ending
             wire(ic["proj"], vc_pv["ic"], shared_fields(vc_st, vc_end) + ic_fields(ic))
             wire_idiom_cards(ic, vc_pv["ic"], shared_fields(vc_st, vc_end) + ic_fields(ic))
+            # 📄 Torn pad: the same — its own project + preview, shared 🎨 Style & sound and 🔚 Ending
+            wire(tp["proj"], vc_pv["tp"], shared_fields(vc_st, vc_end) + tp_fields(tp))
+            wire_torn_pad(tp, vc_pv["tp"], shared_fields(vc_st, vc_end) + tp_fields(tp))
 
             def right_side(evt: gr.SelectData):
-                """🖼️ Image posts open: the post preview fills the right column; 🎬 Words video / 🃏 Idiom cards:
-                their own video preview; else the English Words video preview."""
+                """🖼️ Image posts open: the post preview fills the right column; 🎬 Words video / 📄 Torn pad /
+                🃏 Idiom cards: their own video preview; else the English Words video preview."""
                 tab = str(evt.value)
                 on, wv_on, ic_on = "Image posts" in tab, "Words video" in tab, "Idiom cards" in tab
+                tp_on = "Torn pad" in tab
                 return (gr.update(visible=on), gr.update(visible=wv_on), gr.update(visible=ic_on),
-                        gr.update(visible=not (on or wv_on or ic_on)))
-            vc_tabs.select(right_side, None, [vc_pv["post_col"], vc_pv["wv_col"], vc_pv["ic_col"],
+                        gr.update(visible=tp_on), gr.update(visible=not (on or wv_on or ic_on or tp_on)))
+            vc_tabs.select(right_side, None, [vc_pv["post_col"], vc_pv["wv_col"], vc_pv["ic_col"], vc_pv["tp_col"],
                                               vc_pv["video_col"]], show_progress="hidden", queue=False)
             gr.on(triggers=[v_audio.change, v_items.change], fn=clips_report, inputs=[v_audio, v_items],
                   outputs=v_ainfo, trigger_mode="always_last", show_progress="hidden")
@@ -4073,6 +4511,8 @@ def build_ui():
             preset(fields, project_to_values(copy.deepcopy(TEMPLATES[tpl][2]), tpl))
         # 🃏 Idiom cards: only its own fields (🎨 Style & sound and 🔚 Ending are English Words')
         preset(ic_fields(ic), project_to_values(copy.deepcopy(TEMPLATES["idiomcards"][2]), "idiomcards")[len(SHARED_KEYS):])
+        # 📄 Torn pad: the same
+        preset(tp_fields(tp), project_to_values(copy.deepcopy(TEMPLATES["tornpad"][2]), "tornpad")[len(SHARED_KEYS):])
     return demo
 
 
