@@ -232,7 +232,10 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   `find_phrase`: inflections `_bases`/`_IRREG`, `(something)` = gap; a dictionary form is kept in `heads` = Word Bank
   label, the flight shows the words as written), `meter` (uses `make_video(..., layout_only=True)`), `project_for` -> normal text project.
   `engine/elevenlabs.py`: settings in DATA_DIR/elevenlabs.json (key never in projects), `/with-timestamps` TTS (urllib),
-  cache DATA_DIR/tts/<hash>.mp3+.json, `word_times` maps character times to screen words. Takes: `regenerate` keeps
+  cache DATA_DIR/tts/<hash>.mp3+.json, `word_times` maps character times to screen words.
+  Model menu = `model_choices` (the account's TTS models from `list_models` = GET /v1/models, saved by 🔄 Load my
+  voices + models in DATA_DIR/elevenlabs_models.json; else the fixed `MODELS`, incl. `eleven_v3`); Eleven v3 takes
+  stability 0 / 0.5 / 1 only (`_stability` rounds it). Takes: `regenerate` keeps
   the replaced take as <hash>.prev.*, `swap_takes` switches back (no credits); the tab's 🔊 player shows the
   selected paragraph's current take (never calls ElevenLabs on its own).
   Font `fonts/library/Literata`. `engine/text_batch.py` — workbook: every tab = one video (title / subtitle columns,

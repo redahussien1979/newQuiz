@@ -19,7 +19,8 @@ import urllib.request
 API = "https://api.elevenlabs.io"
 MODELS = [("Multilingual v2 (best quality)", "eleven_multilingual_v2"),
           ("Turbo v2.5 (faster, half the credits)", "eleven_turbo_v2_5"),
-          ("Flash v2.5 (fastest, half the credits)", "eleven_flash_v2_5")]
+          ("Flash v2.5 (fastest, half the credits)", "eleven_flash_v2_5"),
+          ("Eleven v3 (most expressive)", "eleven_v3")]  # the fixed menu; 🔄 fills it from the account (list_models)
 DEFAULTS = {"api_key": "", "voice_id": "UpphzPau5vxibPYV2NeV", "voice_name": "joe inglewood",
             "model": "eleven_multilingual_v2", "speed": 1.0, "stability": 0.5, "similarity": 0.75}
 
@@ -46,6 +47,42 @@ def save_settings(data_dir, **kw):
     with open(_settings_path(data_dir), "w", encoding="utf-8") as f:
         json.dump(s, f, indent=2)
     return s
+
+
+def _models_path(data_dir):
+    return os.path.join(data_dir, "elevenlabs_models.json")
+
+
+def model_choices(data_dir, current=None):
+    """The Model menu: the text-to-speech models last read from the account (list_models, saved by save_models), else
+    the fixed MODELS; the saved model is always in it (a model the account no longer lists stays selectable)."""
+    out = []
+    try:
+        with open(_models_path(data_dir), encoding="utf-8") as f:
+            out = [(str(n), str(i)) for n, i in json.load(f) if i]
+    except (OSError, ValueError, TypeError):
+        out = []
+    out = out or list(MODELS)
+    if current and all(i != current for _, i in out):
+        out.append((dict((i, n) for n, i in MODELS).get(current, current), current))
+    return out
+
+
+def save_models(data_dir, models):
+    os.makedirs(data_dir, exist_ok=True)
+    tmp = _models_path(data_dir) + ".part"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump([list(m) for m in models], f, indent=2, ensure_ascii=False)
+    os.replace(tmp, _models_path(data_dir))
+
+
+def _stability(model, value):
+    """Eleven v3 only takes stability 0.0 / 0.5 / 1.0 (Creative / Natural / Robust): the slider value is rounded to the
+    nearest of them; every other model gets it as set."""
+    v = float(value)
+    if str(model or "").startswith("eleven_v3"):
+        return min((0.0, 0.5, 1.0), key=lambda x: abs(x - v))
+    return v
 
 
 # ------------------------------------------------------------------ HTTP
@@ -88,6 +125,18 @@ def list_voices(key):
     return sorted(out, key=lambda x: x[0].lower())
 
 
+def list_models(key):
+    """[(name, model_id)] of the text-to-speech models the account can use, in ElevenLabs' own order (newest first)."""
+    data = _request("/v1/models", key)
+    out = []
+    for m in data if isinstance(data, list) else data.get("models", []):
+        mid = m.get("model_id")
+        if not mid or m.get("can_do_text_to_speech") is False:
+            continue
+        out.append((m.get("name") or mid, mid))
+    return out
+
+
 def synthesize(text, key, voice_id, model, speed=1.0, stability=0.5, similarity=0.75, previous_text=None,
                next_text=None):
     """(mp3 bytes, alignment) for text. alignment = dict(characters, character_start_times_seconds,
@@ -96,8 +145,9 @@ def synthesize(text, key, voice_id, model, speed=1.0, stability=0.5, similarity=
     phrase read alone otherwise comes out flat and robotic."""
     if not voice_id:
         raise RuntimeError("Choose a voice (or paste its voice ID).")
-    body = {"text": text, "model_id": model or DEFAULTS["model"],
-            "voice_settings": {"stability": float(stability), "similarity_boost": float(similarity),
+    model = model or DEFAULTS["model"]
+    body = {"text": text, "model_id": model,
+            "voice_settings": {"stability": _stability(model, stability), "similarity_boost": float(similarity),
                                "speed": float(speed), "use_speaker_boost": True}}
     if previous_text:
         body["previous_text"] = previous_text
