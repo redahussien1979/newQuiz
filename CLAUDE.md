@@ -195,7 +195,11 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   take's word timings); `app._tp_voices` makes the missing clips before Render / Quick motion. Excel `read_sheet`
   (English | Arabic (| = several) | Sentence | Arabic sentence | Title | Subtitle), template
   `projects/torn_pad_template.xlsx`, Render all = `_stream_batch` → OUT_DIR/torn_pad_* (4 words per video by default:
-  ~14 s a word with both voices reading the sentence)
+  ~14 s a word with both voices reading the sentence). 🎵 Background music in the tab (`m_music` / `m_gain` / `m_file`)
+  = a mirror of 🎨 Style & sound's music fields (`app.mirror_music`: `.input` one way, `.change` back — never
+  bounces; 🎨 sits in the sub-tab "…" overflow, the user could not find it). The English Words project bar
+  (`vc_proj["row"]`, `project_bar()` returns its row) is hidden on Words video / Torn pad / Idiom cards (their own bar
+  saves their project); 💾 Save also shows a `gr.Info` notice (the info line can be rewritten by the live preview)
 - `engine/templates/idiom_cards.py` — template `idiomcards`, English Words sub-tab 🃏 Idiom cards (after 📄 Torn pad;
   `app.idiom_cards_ui` / `wire_idiom_cards`, own project bar, shares 🎨 Style & sound + 🔚 Ending; its preview =
   `preview_panel(..., idiom_cards=True)` → `pv["ic"]` in `ic_col`, `right_side` shows one of post / wv / ic / video;

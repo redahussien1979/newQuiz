@@ -732,7 +732,12 @@ def make_actions(tpl):
         path = os.path.join(PROJ_DIR, f"{tpl}_{stamp}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(p, f, ensure_ascii=False, indent=2)
-        return f"💾 Project saved to `{_where(path)}`"
+        msg = f"💾 Project saved to `{_where(path)}`"
+        try:  # also as a notice: the line under the preview may be rewritten by the live preview a moment later
+            gr.Info(msg.replace("`", ""), duration=8)
+        except Exception:
+            pass
+        return msg
 
     def load(file):
         path = file if isinstance(file, str) else getattr(file, "name", None)
@@ -902,11 +907,11 @@ POST_H = "calc(100vh - 150px)"  # the square post preview takes the whole right 
 
 
 def project_bar():
-    with gr.Row(equal_height=True):
+    with gr.Row(equal_height=True) as row:
         ex_btn = gr.Button("✨ Load example", size="sm", elem_classes="compact-btn")
         open_btn = gr.UploadButton("📂 Open project", file_types=[".json"], size="sm", elem_classes="compact-btn")
         save_btn = gr.Button("💾 Save project", size="sm", elem_classes="compact-btn")
-    return dict(ex=ex_btn, open=open_btn, save=save_btn)
+    return dict(ex=ex_btn, open=open_btn, save=save_btn, row=row)
 
 
 EN_HANDLE = "@logolept AR EN"  # the English tabs' channel handle (English Words, Texts, News)
@@ -2503,7 +2508,9 @@ TP_HELP = ("**📄 Torn pad** — every word on its own sheet of torn paper, lik
            "**Voice 1** says it, a red pen circles it while **Voice 2** says it, the Arabic meaning writes in from the "
            "right, the sentence appears word by word as it is read (the word gets a yellow marker), its Arabic follows, "
            "and the sheet is ripped off to show the next word. The 🔚 Ending is the last sheet. The preview on the "
-           "right is this video's own.")
+           "right is this video's own. **Music** (built-in or your own file, and its volume): the **🎨 Style & sound** "
+           "tab — it gets quieter by itself while a voice speaks. **💾 Save project** below keeps everything (words, "
+           "voices and their clips, design, music); **📂 Open project** brings it all back.")
 TP_WORDS_HELP = ("One sheet per line: `English | Arabic meaning | English sentence | Arabic sentence` — e.g. "
                  "`Sanity | السلامة العقلية / العقلانية | He relied on meditation to preserve his sanity. | اعتمد على "
                  "التأمل للحفاظ على صحته العقلية.` Two meanings: split them with ` / ` (a red bar between them). The word "
@@ -2572,6 +2579,13 @@ def torn_pad_ui():
         v_play = gr.Audio(type="filepath", interactive=False, show_label=False, autoplay=True)
         v_note = gr.Markdown("")
     gain = gr.Slider(0, 2, value=1.0, step=0.05, label="Voice volume")
+    with gr.Accordion("🎵 Background music", open=True):
+        gr.Markdown("The same setting as in 🎨 Style & sound (either place changes both), saved with the project. The "
+                    "music gets quieter by itself while a voice speaks.")
+        with gr.Row():
+            m_music = gr.Dropdown(MOODS, value="Lo-fi Chill", label="Built-in music", info="None = no music")
+            m_gain = gr.Slider(0, 2, value=0.5, step=0.05, label="Music volume")
+        m_file = gr.Audio(type="filepath", label="Or your own music file (replaces the built-in music)")
     with gr.Row(equal_height=True):
         gr.Markdown("---\n**📥 Words from Excel** — columns **English | Arabic meaning | English sentence | Arabic "
                     "sentence** (several meanings in one cell: split them with |; + optional **Title | Subtitle**: a "
@@ -2603,7 +2617,20 @@ def torn_pad_ui():
                 v1_hear=v1_hear, v2_hear=v2_hear, v_load=v_load, word_by=word_by, sent_by=sent_by, voice=voice,
                 audio=audio, v_status=v_status, v_make=v_make, v_pick=v_pick, v_new=v_new, v_back=v_back,
                 v_play=v_play, v_note=v_note, gain=gain, sheet=sheet, tab=tab, start=start, count=count, per=per,
-                info=info, part=part, load=load, go=go, zip=zipb, files=files)
+                info=info, part=part, load=load, go=go, zip=zipb, files=files, m_music=m_music, m_gain=m_gain,
+                m_file=m_file)
+
+
+def mirror_music(tp, st):
+    """📄 Torn pad's 🎵 Background music = a second view of 🎨 Style & sound's music fields: what you change in one
+    is copied to the other (user edits only, so the two never bounce), and a loaded project / example updates both."""
+    same = lambda v: v  # noqa: E731
+    for a, b in ((tp["m_music"], st["music"]), (tp["m_gain"], st["music_gain"])):
+        a.input(same, a, b, queue=False, show_progress="hidden")
+        b.change(same, b, a, queue=False, show_progress="hidden")
+    tp["m_file"].upload(same, tp["m_file"], st["music_file"], queue=False, show_progress="hidden")
+    tp["m_file"].clear(lambda: None, None, st["music_file"], queue=False, show_progress="hidden")
+    st["music_file"].change(same, st["music_file"], tp["m_file"], queue=False, show_progress="hidden")
 
 
 def tp_fields(ui):
@@ -4345,6 +4372,7 @@ def build_ui():
             # 📄 Torn pad: the same — its own project + preview, shared 🎨 Style & sound and 🔚 Ending
             wire(tp["proj"], vc_pv["tp"], shared_fields(vc_st, vc_end) + tp_fields(tp))
             wire_torn_pad(tp, vc_pv["tp"], shared_fields(vc_st, vc_end) + tp_fields(tp))
+            mirror_music(tp, vc_st)
 
             def right_side(evt: gr.SelectData):
                 """🖼️ Image posts open: the post preview fills the right column; 🎬 Words video / 📄 Torn pad /
@@ -4352,10 +4380,14 @@ def build_ui():
                 tab = str(evt.value)
                 on, wv_on, ic_on = "Image posts" in tab, "Words video" in tab, "Idiom cards" in tab
                 tp_on = "Torn pad" in tab
+                # Words video / Torn pad / Idiom cards save their own project (their own bar): the English Words bar
+                # above the sub-tabs is hidden there, so 💾 always saves the video you are looking at
+                own = wv_on or ic_on or tp_on
                 return (gr.update(visible=on), gr.update(visible=wv_on), gr.update(visible=ic_on),
-                        gr.update(visible=tp_on), gr.update(visible=not (on or wv_on or ic_on or tp_on)))
+                        gr.update(visible=tp_on), gr.update(visible=not (on or own)), gr.update(visible=not own))
             vc_tabs.select(right_side, None, [vc_pv["post_col"], vc_pv["wv_col"], vc_pv["ic_col"], vc_pv["tp_col"],
-                                              vc_pv["video_col"]], show_progress="hidden", queue=False)
+                                              vc_pv["video_col"], vc_proj["row"]], show_progress="hidden",
+                           queue=False)
             gr.on(triggers=[v_audio.change, v_items.change], fn=clips_report, inputs=[v_audio, v_items],
                   outputs=v_ainfo, trigger_mode="always_last", show_progress="hidden")
             v_add.click(add_item, [v_items, v_type], v_items)
@@ -4516,6 +4548,8 @@ def build_ui():
         preset(ic_fields(ic), project_to_values(copy.deepcopy(TEMPLATES["idiomcards"][2]), "idiomcards")[len(SHARED_KEYS):])
         # 📄 Torn pad: the same
         preset(tp_fields(tp), project_to_values(copy.deepcopy(TEMPLATES["tornpad"][2]), "tornpad")[len(SHARED_KEYS):])
+        vs = TEMPLATES["vocab"][2]["settings"]  # 🎵 shows 🎨 Style & sound's music (English Words' example at start)
+        preset([tp["m_music"], tp["m_gain"]], [vs.get("music") or "Tension", vs.get("music_gain", 1.0)])
     return demo
 
 
