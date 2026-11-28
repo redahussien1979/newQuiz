@@ -178,7 +178,16 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   the first reading's word times (`words_video.clip_word_times`; the word = `find_phrase` or *stars*, yellow
   `_marker_band` swipe when said), Arabic sentence wipes in, later readings get a gliding white pill (`_reader`),
   then the sheet is ripped off (`TEAR`, rip sound) over the next one; 🔚 Ending = `_EndSheet`. No IPA, no divider
-  (the user's choice). `tornpad.words` = `English | Arabic meaning(s, " / ") | English sentence | Arabic sentence`
+  (the user's choice). Layout (the user wants it exact): every element placed by its INK (`_ink` / `_tight`), centred
+  left-right, the whole block centred on the green paper's measured middle (`_sheet_mid` = mean of the two torn edges;
+  check: the content layer's alpha bbox centre = mid ± 0.5 px); gaps `_Sheet.GAPS` ink to ink. The sentence and its
+  Arabic share ONE width B (`_sentence_layout`: widths searched, `_breaks` = DP least squared space stretch, lone last
+  word / short stub penalised, `_widow`); every line but the last justified to B by its ink edges (English by its
+  spaces; Arabic = `text._ar_justified` with kashidas, re-justified once so its ink is exactly B), the last centred;
+  Arabic on a fixed baseline (`text._ar_line`, now with an optional `weight`; meanings + red bars on one baseline);
+  sizes step down (`combos`) until it fits AND `flaw` = 0 (no widow, spaces <= ~2.15x), else the least flawed fit.
+  Pen oval sized to clear the word's corners. Brand under the pad `tornpad.brand_mark` (`BRANDS`: handle only =
+  default, since Facebook / Reels already show the page logo / logo + handle / none). `tornpad.words` = `English | Arabic meaning(s, " / ") | English sentence | Arabic sentence`
   (`parse_words`: Arabic before the sentence = meanings, after = translation). Two voices: `voice1` / `voice2` (empty
   = the saved 🔑 voice), `word_by` / `sent_by` (`READERS`: "12" / "21" / "1" / "2"); clips `w<k>` / `w<k>e` (Voice 1)
   and `w<k>_v2` / `w<k>e_v2` (Voice 2) = `tpad.clip_key` / `clip_name`; `word_import.pad_jobs` / `pad_voices` /
