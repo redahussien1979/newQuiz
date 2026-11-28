@@ -22,9 +22,10 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 from ..audio import SR, _lowpass, audio_length
-from ..core import ARABIC_RE, H, ROOT, W, _state, get_font, global_fade, parse_lines, text_img_in, to_rgb
+from ..core import ARABIC_RE, H, ROOT, W, _state, get_font, global_fade, parse_lines, to_rgb
 from ..list_designs import _colored
 from ..paragraphs import find_phrase
+from .text import _AR_PAD, _ar_justified, _ar_line
 from ..word_posts import _marker_band, _smooth_noise
 
 NAME = "Torn Pad"
@@ -42,6 +43,8 @@ LOOK_CHOICES = [("Sage green (default)", "sage"), ("Sky blue", "sky"), ("Sand", 
                 ("Lavender", "lavender"), ("Mint", "mint"), ("A different colour on every sheet", "cycle")]
 CYCLE = ("sage", "sky", "sand", "blush", "lavender", "mint")
 # who reads: "12" = Voice 1 then Voice 2 …
+BRANDS = [("Handle only (Facebook / Reels show your logo already)", "handle"), ("Logo + handle", "logo"),
+          ("Nothing", "none")]
 READERS = [("Voice 1, then Voice 2", "12"), ("Voice 2, then Voice 1", "21"), ("Voice 1 only", "1"),
            ("Voice 2 only", "2")]
 
@@ -324,7 +327,17 @@ def _sheet(col, seed):
     rgb = rgb * paper[..., None] + np.array((250, 250, 246), np.float32) * fibre[..., None]
     a = np.clip(paper + fibre, 0, 1)
     im = Image.fromarray(np.dstack([np.clip(rgb, 0, 255), a[..., None] * 255]).astype(np.uint8), "RGBA")
+    _MID[(col, seed)] = float(top.mean() + bot.mean()) / 2  # the middle of the green paper (image pixels)
     return im, pad
+
+
+_MID = {}
+
+
+def _sheet_mid(col, seed):
+    """The y of the middle of a sheet's green paper (between its two torn edges), in the sheet image's pixels."""
+    _sheet(col, seed)
+    return _MID[(col, seed)]
 
 
 @lru_cache(8)
@@ -400,8 +413,69 @@ def _marker(w, h, seed):
 
 
 # ------------------------------------------------------------------ one sheet
+# ------------------------------------------------------------------ measuring + justified lines
+def _ink(im):
+    """(left, top, right, bottom) of the ink of an image (its alpha), or the whole image."""
+    return im.getchannel("A").getbbox() or (0, 0, im.width, im.height)
+
+
+def _tight(im):
+    return im.crop(_ink(im))
+
+
+def _ar_adv(txt, size, font, weight="Bold"):
+    """The advance width of an Arabic text as text._ar_line draws it."""
+    return _ar_line(txt, size, INK, font, weight).width - 2 * _AR_PAD
+
+
+def _ar_space(size, font, weight="Bold"):
+    """The width of one space between two Arabic words (as text._ar_justified measures it)."""
+    return max(4, _ar_adv("ب ب", size, font, weight) - 2 * _ar_adv("ب", size, font, weight))
+
+
+def _widow(lines):
+    """1 when the last of several lines holds one word, else 0."""
+    return 1 if len(lines) > 1 and lines[-1][1] - lines[-1][0] == 1 else 0
+
+
+def _breaks(widths, space, width, last_min=0.6):
+    """Justified lines `width` wide: [(i0, i1)] word ranges with the least squared stretch of the spaces (1 = the
+    spaces doubled) over the lines; the last line is not stretched, but one shorter than last_min of the width costs
+    too, and so does a line of one word. (lines, cost); lines None when it cannot be done."""
+    n = len(widths)
+    inf = float("inf")
+    best, prev = [0.0] + [inf] * n, [0] * (n + 1)
+    for j in range(1, n + 1):
+        ln = -space
+        for i in range(j - 1, -1, -1):
+            ln += widths[i] + space
+            if ln > width:
+                if i < j - 1:
+                    break
+                c = 1e6  # one word wider than the line
+            elif j == n:  # the last line: not stretched, but never a lone word or a short stub
+                c = 12 * (max(0.0, last_min * width - ln) / width) ** 2 + (3.0 if j - i == 1 and i > 0 else 0.0)
+            elif j - i > 1:
+                c = ((width - ln) / ((j - i - 1) * space)) ** 2
+            else:
+                c = 50 * ((width - ln) / width) ** 2
+            if best[i] + c < best[j]:
+                best[j], prev[j] = best[i] + c, i
+    if best[n] == inf:
+        return None, inf
+    lines, j = [], n
+    while j > 0:
+        lines.append((prev[j], j))
+        j = prev[j]
+    return lines[::-1], best[n]
+
+
 class _Sheet:
-    """Everything of one word's sheet that does not change per frame + its timing (local time 0 = sheet in place)."""
+    """Everything of one word's sheet that does not change per frame + its timing (local time 0 = sheet in place).
+    Every element is placed by its ink: centred left-right on the sheet, the whole block centred top-bottom on the
+    middle of the green paper (`_sheet_mid`); positions are in the sheet image's pixels."""
+
+    GAPS = dict(kick=44, word=40, ar=66, ex=50)  # the space under each element (ink to ink)
 
     def __init__(self, video, k, it):
         self.v, self.k = video, k
@@ -413,24 +487,10 @@ class _Sheet:
     # -------------------------------------------------------- layout
     def _lay_out(self, it):
         v = self.v
-        word = it["en"]
-        size = 146
-        while True:
-            f = get_font(size, "Bold", v.word_font)
-            if f.getlength(word) <= TEXT_W - 60 or size <= 70:
-                break
-            size -= 6
-        self.wf = f
-        self.letters = [(ch, f.getlength(word[:i])) for i, ch in enumerate(word)]
-        self.word_w = f.getlength(word)
-        bb = f.getbbox(word)
-        self.word_top, self.word_bot = bb[1], bb[3]
-        self.ar = v.ar_lines(it["ar"])
         text = str(it.get("ex") or "")
-        stars = "*" in text
         toks = spoken(text).split()
         self.toks = toks
-        if stars:  # the *starred* words are the highlight
+        if "*" in text:  # the *starred* words are the highlight
             hit, inside = set(), False
             for i, raw in enumerate(_clean(text).split()):
                 if raw.startswith("*"):
@@ -441,65 +501,200 @@ class _Sheet:
                     inside = False
             self.hit = {i for i in hit if i < len(toks)}
         else:
-            span = find_phrase({"words": toks}, word) if toks else None
+            span = find_phrase({"words": toks}, it["en"]) if toks else None
             self.hit = set(range(span[0], span[1] + 1)) if span else set()
-        self.ex_ar_txt = it.get("ex_ar") or ""
-        # the sentence block: shrink until everything fits the sheet
-        for sc in (1.0, 0.92, 0.84, 0.76, 0.68):
-            self._sentence_layout(sc)
-            if self.total <= SHEET_H - 150:
-                break
-        self.y = {}
-        y = 60 + (SHEET_H - 60 - self.total) / 2 + 10
-        for name, h in self.blocks:
-            self.y[name] = y
-            y += h
-        self.circ = dict(cy=self.y["word"] + 15 + (self.word_bot - self.word_top) / 2,
-                         rx=round(self.word_w / 2 + 40, 1), ry=round((self.word_bot - self.word_top) / 2 + 40, 1))
+        self.kick = v.kicker_img(self.k, _tone(self.col, 0.62))
+        self.ar = v.ar_lines(it["ar"])
+        ex_ar = it.get("ex_ar") or ""
+        room = SHEET_H - 190
+        # the biggest sizes that fit the sheet AND set the text cleanly (no lone last word, spaces at most ~2x); a
+        # sentence that cannot be set cleanly at any size takes the least flawed layout that fits
+        combos = ((1.0, 1.0), (1.0, 0.96), (1.0, 0.92), (1.0, 0.88), (1.0, 0.84), (0.9, 0.84), (0.9, 0.8),
+                  (0.8, 0.74), (0.72, 0.66), (0.66, 0.6))
+        fits = []
+        for wk, sc in combos:
+            self._word_layout(it["en"], wk)
+            self._sentence_layout(sc, ex_ar)
+            heights = self._heights()
+            total = sum(h for _, h in heights) + sum(self.GAPS[n] for n, _ in heights[:-1])
+            if total <= room:
+                if not self.flaw:
+                    break
+                fits.append((self.flaw + 4 * (1 - sc), wk, sc))
+        else:
+            if fits:
+                _, wk, sc = min(fits)
+                self._word_layout(it["en"], wk)
+                self._sentence_layout(sc, ex_ar)
+                heights = self._heights()
+                total = sum(h for _, h in heights) + sum(self.GAPS[n] for n, _ in heights[:-1])
+        mid = _sheet_mid(self.col, self.seed)
+        y = mid - total / 2
+        self.top = {}
+        for name, h in heights:
+            self.top[name] = y
+            y += h + self.GAPS.get(name, 0)
+        self._place_all()
 
-    def _sentence_layout(self, sc):
+    def _word_layout(self, word, k):
+        v = self.v
+        size = int(146 * k)
+        while True:
+            f = get_font(size, "Bold", v.word_font)
+            if f.getlength(word) <= TEXT_W - 80 or size <= 60:
+                break
+            size -= 4
+        self.wf = f
+        self.letters = [(ch, f.getlength(word[:i])) for i, ch in enumerate(word)]
+        self.word_w = f.getlength(word)
+        self._wimg = None
+        wi = self._word_img()
+        self.w_ink = _ink(wi)
+        wh = self.w_ink[3] - self.w_ink[1]
+        hw = (self.w_ink[2] - self.w_ink[0]) / 2
+        # an oval whose first pass clears the word's corners by ~14 px (corner inside: (x/rx)² + (y/ry)² <= 1)
+        rx = min(500.0, hw + 72)
+        cx_, cy_ = hw + 14, wh / 2 + 12
+        ry = cy_ / math.sqrt(max(0.05, 1 - (cx_ / rx) ** 2))
+        rx, ry = round(rx, 1), round(max(wh / 2 + 34, min(ry, wh / 2 + 120)), 1)
+        self.circ = (rx, ry)
+        self.c_ink = _ink(_pen_full(rx, ry, self.seed, 6.0))
+        self.word_h = max(wh, self.c_ink[3] - self.c_ink[1])
+
+    def _sentence_layout(self, sc, ex_ar):
+        """The sentence and its translation: ONE width for both blocks (`_breaks` over a range of widths, the least
+        stretch for the two together), every line but the last justified to it — the English by its spaces, the
+        Arabic with kashidas first (text._ar_justified) — the last line centred."""
         v = self.v
         fs = int(round(48 * sc))
+        self.fs = fs
         self.sf = get_font(fs, "Medium", MONTSERRAT)
         self.sfb = get_font(fs, "Bold", MONTSERRAT)
-        self.lh = int(round(66 * sc))
+        self.lh = int(round(fs * 1.38))
         toks = self.toks
-        space = self.sf.getlength(" ")
-        widths = [(self.sfb if i in self.hit else self.sf).getlength(t) for i, t in enumerate(toks)]
+        font = lambda i: self.sfb if i in self.hit else self.sf  # noqa: E731
+        ew = [font(i).getlength(t) for i, t in enumerate(toks)]
+        esp = self.sf.getlength(" ")
+        afs = int(round(46 * sc))
+        self.afs = afs
+        self.ar_col = _tone(self.col, 0.72)
+        aw = [_ar_adv(w, afs, v.ar_font) for w in ex_ar.split()]
+        asp = _ar_space(afs, v.ar_font) if aw else 0
+        one_e = sum(ew) + esp * (len(ew) - 1) <= TEXT_W if ew else True
+        one_a = sum(aw) + asp * (len(aw) - 1) <= TEXT_W if aw else True
+        if one_e and one_a:
+            best = (TEXT_W, [(0, len(ew))] if ew else [], [(0, len(aw))] if aw else [])
+        else:
+            best, low = None, max(ew + aw + [TEXT_W * 0.55])
+            for B in range(int(low), TEXT_W + 1, 6):
+                le, ce = _breaks(ew, esp, B) if ew else ([], 0.0)
+                la, ca = _breaks(aw, asp, B) if aw else ([], 0.0)
+                if le is None or la is None:
+                    continue
+                # the English spaces show every stretch; the Arabic takes most of it in kashidas (but a lone last
+                # word is as bad in either language)
+                cost = ce + 0.15 * ca + 0.1 * (len(le) + len(la)) + 0.1 * (TEXT_W - B) / TEXT_W \
+                    + 2.5 * _widow(la)
+                if best is None or cost < best[0]:
+                    best = (cost, B, le, la)
+            best = best[1:] if best else (TEXT_W, [(0, len(ew))], [(0, len(aw))])
+        B, le, la = best
+        self.B = B
+        stretch = max([(B - sum(ew[a:b]) - esp * (b - a - 1)) / ((b - a - 1) * esp)
+                       for a, b in le[:-1] if b - a > 1] + [0.0])
+        self.flaw = 3.0 * (_widow(le) + _widow(la)) + max(0.0, stretch - 1.15) ** 2
+        self.elines = [[(i, toks[i], ew[i]) for i in range(a, b)] for a, b in le]
+        self.esp = esp
+        words = ex_ar.split()
+        self.alines_txt = [" ".join(words[a:b]) for a, b in la]
 
-        def flow(limit):
-            lines, cur, cw = [], [], 0
-            for i, t in enumerate(toks):
-                tw = widths[i]
-                if cur and cw + space + tw > limit:
-                    lines.append((cur, cw))
-                    cur, cw = [], 0
-                cur.append((i, t, tw))
-                cw += (space if len(cur) > 1 else 0) + tw
-            if cur:
-                lines.append((cur, cw))
-            return lines
-        lines = flow(TEXT_W)
-        if toks:  # the narrowest width with the same number of lines: even lines, no lone last word
-            lo, hi = max(widths), TEXT_W
-            while hi - lo > 2:
-                mid = (lo + hi) / 2
-                if len(flow(mid)) <= len(lines):
-                    hi = mid
+    def _heights(self):
+        out = [("kick", self.kick[1]), ("word", self.word_h)]
+        self.ar_h = sum(im.height for im in self.ar) + 18 * (len(self.ar) - 1)
+        out.append(("ar", self.ar_h))
+        if self.elines:
+            ascent = min(self._tb(i)[1] for i, _, _ in self.elines[0])
+            descent = max(self._tb(i)[3] for i, _, _ in self.elines[-1])
+            self.e_asc = -ascent
+            out.append(("ex", self.lh * (len(self.elines) - 1) + descent - ascent))
+        if self.alines_txt:
+            self._ar_sentence()
+            out.append(("exar", self.a_bot - self.a_top))
+        return out
+
+    def _tb(self, i):
+        """The ink box of sentence word i around its baseline."""
+        f = self.sfb if i in self.hit else self.sf
+        return f.getbbox(self.toks[i], anchor="ls")
+
+    def _ar_sentence(self):
+        """The translation's line images (justified to B, the last centred), ink-exact: a justified line whose ink
+        comes out a few pixels off B is justified again to the corrected width."""
+        v, B = self.v, self.B
+        n = len(self.alines_txt)
+        self.alines = []
+        pitch = int(round(self.afs * 1.6))
+        for j, txt in enumerate(self.alines_txt):
+            if j < n - 1 and len(txt.split()) > 1:
+                im = _ar_justified([txt, txt], self.afs, self.ar_col, v.ar_font, int(B))[0]
+                x0, _, x1, _ = _ink(im)
+                if x1 - x0 != int(B):
+                    im = _ar_justified([txt, txt], self.afs, self.ar_col, v.ar_font, int(2 * B - (x1 - x0)))[0]
+                just = True
+            else:
+                im = _ar_line(txt, self.afs, self.ar_col, v.ar_font)
+                just = False
+            self.alines.append([im, just, j * pitch])
+        inks = [_ink(im) for im, _, _ in self.alines]
+        self.a_top = min(y + b[1] for (im, _, y), b in zip(self.alines, inks))
+        self.a_bot = max(y + b[3] for (im, _, y), b in zip(self.alines, inks))
+
+    def _place_all(self):
+        """Absolute positions (sheet image pixels) of every piece, from the element tops."""
+        cx = W / 2
+        # kicker: text + dashes
+        self.kick_xy = (cx - self.kick[0].width / 2, self.top["kick"])
+        # word + circle: both centred on the word's ink centre
+        w0, w1, w2, w3 = self.w_ink
+        wcy = self.top["word"] + self.word_h / 2
+        self.word_xy = (cx - (w0 + w2) / 2, wcy - (w1 + w3) / 2)
+        m = _pen_full(self.circ[0], self.circ[1], self.seed, 6.0)  # the oval's centre = its image's centre
+        self.circ_xy = (cx - m.width / 2, wcy - m.height / 2)
+        # Arabic meaning(s)
+        y = self.top["ar"]
+        self.ar_xy = []
+        for im in self.ar:
+            self.ar_xy.append((cx - im.width / 2, y))
+            y += im.height + 18
+        # the sentence: every line but the last justified to [L, R] by its ink, the last one centred
+        L, R = cx - self.B / 2, cx + self.B / 2
+        self.tok_xy = {}  # i -> (x, baseline, advance, ink left, ink right)
+        if self.elines:
+            base = self.top["ex"] + self.e_asc
+            for n, line in enumerate(self.elines):
+                bb = [self._tb(i) for i, _, _ in line]
+                adv = [w for _, _, w in line]
+                if n < len(self.elines) - 1 and len(line) > 1:
+                    x_first = L - bb[0][0]
+                    x_last = R - bb[-1][2]
+                    g = (x_last - x_first - sum(adv[:-1])) / (len(line) - 1)
                 else:
-                    lo = mid
-            lines = flow(hi)
-        self.slines, self.space = lines, space
-        self.ex_ar = v.ar_wrap(self.ex_ar_txt, int(round(46 * sc))) if self.ex_ar_txt else []
-        self.ex_ar_step = [im.height - int(54 * sc) for im in self.ex_ar]
-        blocks = [("kick", 40), ("gap", 70), ("word", self.word_bot - self.word_top + 30), ("gap", 70),
-                  ("ar", sum(im.height - 40 for im in self.ar))]
-        if lines:
-            blocks += [("gap", 80), ("ex", self.lh * len(lines))]
-        if self.ex_ar:
-            blocks += [("gap", 34), ("exar", sum(self.ex_ar_step))]
-        self.blocks = blocks
-        self.total = sum(h for _, h in blocks)
+                    g = self.esp
+                    ink_w = sum(adv[:-1]) + g * (len(line) - 1) + bb[-1][2] - bb[0][0]
+                    x_first = cx - ink_w / 2 - bb[0][0]
+                x = x_first
+                for (i, tok, w), b in zip(line, bb):
+                    self.tok_xy[i] = (x, base, w, x + b[0], x + b[2])
+                    x += w + g
+                base += self.lh
+        # the translation: justified lines by their ink right edge (= R), the last centred
+        if self.alines_txt:
+            y0 = self.top["exar"] - self.a_top
+            self.alines_xy = []
+            for im, just, dy in self.alines:
+                i0, _, i2, _ = _ink(im)
+                x = (R - i2) if just else (cx - (i0 + i2) / 2)
+                self.alines_xy.append((x, y0 + dy))
 
     # -------------------------------------------------------- timing
     def _time(self, it):
@@ -541,37 +736,23 @@ class _Sheet:
             self.word_t = {i: first[i][0] - 0.06 for i in range(len(self.toks))}
             self.t_mark = first[min(self.hit)][0] if self.hit else None
             self.t_exar = first[-1][1] + 0.3
-            end = max(tv + 0.7, self.t_exar + (2.0 if self.ex_ar else 1.2))
+            end = max(tv + 0.7, self.t_exar + (2.0 if self.alines_txt else 1.2))
         else:
             self.word_t, self.t_mark, self.t_exar = {}, None, None
             end = max(tv + 0.6, self.t_ar + 2.6)
         self.D = end + TEAR
 
     # -------------------------------------------------------- drawing
-    def boxes(self):
-        out, y = {}, self.y.get("ex", 0)
-        for line, lw in self.slines:
-            x = W / 2 - lw / 2
-            for i, tok, tw in line:
-                out[i] = (x, y, tw)
-                x += tw + self.space
-            y += self.lh
-        return out
-
     def draw(self, t, pad):
         """The content of the sheet at local time t, as an RGBA layer the size of the sheet image."""
         layer = Image.new("RGBA", (W, SHEET_H + 2 * pad), (0, 0, 0, 0))
         d = ImageDraw.Draw(layer)
-        oy = pad
-        sub = _tone(self.col, 0.62)
-        self.v.kicker(layer, d, oy + self.y["kick"], self.k, t, sub, self.D)
+        self.v.draw_kicker(layer, d, self.kick, self.kick_xy, self.k, t, _tone(self.col, 0.62), self.D)
         # the word: letters rise in one after another (one image once they have all landed)
-        base = W / 2 - self.word_w / 2
-        wy = oy + self.y["word"] - self.word_top + 15
+        X, Y = self.word_xy
         n = len(self.letters)
         if t >= self.t_letters + 0.045 * (n - 1) + 0.5:
-            im = self._word_img()
-            layer.alpha_composite(im, (int(base - 10), int(wy - 10)))
+            layer.alpha_composite(self._word_img(), (int(round(X)), int(round(Y))))
         else:
             for i, (ch, lx) in enumerate(self.letters):
                 p = _prog(t, self.t_letters + 0.045 * i, 0.5)
@@ -583,56 +764,49 @@ class _Sheet:
                 gw, gh = gl.size
                 g2 = gl.resize((max(1, int(gw * sc)), max(1, int(gh * sc))), Image.BICUBIC)
                 ox, oyy = (gw - g2.width) / 2, (gh - g2.height) * 0.75
-                layer.alpha_composite(g2, (int(base + lx - 10 + ox), int(wy - 10 + (1 - e) * 70 + oyy)))
+                layer.alpha_composite(g2, (int(round(X + lx + ox)), int(round(Y + (1 - e) * 70 + oyy))))
         # the red pen circle
         p = _prog(t, self.t_circle, 0.55)
         if p > 0:
-            c = self.circ
-            m = _pen_loop(c["rx"], c["ry"], _out(p), self.seed)
-            layer.alpha_composite(m, (int(W / 2 - m.width / 2), int(oy + c["cy"] - m.height / 2)))
+            m = _pen_loop(self.circ[0], self.circ[1], _out(p), self.seed)
+            layer.alpha_composite(m, (int(round(self.circ_xy[0])), int(round(self.circ_xy[1]))))
         # the Arabic meaning, wiped in right to left
-        y = oy + self.y["ar"] - 20
         p = _prog(t, self.t_ar, 0.7)
-        for li, im in enumerate(self.ar):
+        for li, (im, (x, y)) in enumerate(zip(self.ar, self.ar_xy)):
             q = _clamp(p * len(self.ar) - li)
             if q > 0:
-                layer.alpha_composite(_wipe_rtl(im, _out(q)), (int(W / 2 - im.width / 2), int(y)))
-            y += im.height - 40
-        if self.slines:
-            self._reader(layer, t, oy)
-            y = oy + self.y["ex"]
-            for line, lw in self.slines:
-                x = W / 2 - lw / 2
-                for i, tok, tw in line:
+                layer.alpha_composite(_wipe_rtl(im, _out(q)), (int(round(x)), int(round(y))))
+        if self.elines:
+            self._reader(layer, t)
+            for line in self.elines:
+                for i, tok, _ in line:
                     p = _prog(t, self.word_t[i], 0.32)
-                    if p > 0:
-                        e = _out(p)
-                        hit = i in self.hit
-                        f_ = self.sfb if hit else self.sf
-                        if hit and self.t_mark is not None:
-                            m = _prog(t, self.t_mark, 0.42)
-                            if m > 0:
-                                core = tok.rstrip(".,;:!?\"')”’")
-                                mw = f_.getlength(core)
-                                band, bp = _marker(int(mw + 20), int(self.lh * 0.76), self.k * 7 + i)
-                                vis = int(band.width * _out(m))
-                                if vis > 0:
-                                    layer.alpha_composite(band.crop((0, 0, vis, band.height)),
-                                                          (int(x - 10 - bp), int(y + self.lh * 0.12 - bp)))
-                        col = (20, 24, 22) if hit else INK
-                        d.text((x, y + (1 - e) * 18), tok, font=f_, fill=col + (int(255 * e),))
-                    x += tw + self.space
-                y += self.lh
-        if self.ex_ar:
-            y = oy + self.y["exar"] - 15
+                    if p <= 0:
+                        continue
+                    e = _out(p)
+                    x, base, w, il, ir = self.tok_xy[i]
+                    hit = i in self.hit
+                    f_ = self.sfb if hit else self.sf
+                    if hit and self.t_mark is not None:
+                        m = _prog(t, self.t_mark, 0.42)
+                        if m > 0:  # the marker covers the letters, not the comma / full stop after them
+                            core = tok.rstrip(".,;:!?\"')”’")
+                            cb = f_.getbbox(core, anchor="ls")
+                            band, bp = _marker(int(cb[2] - cb[0] + 20), int(self.fs * 1.04), self.k * 7 + i)
+                            vis = int(band.width * _out(m))
+                            if vis > 0:
+                                layer.alpha_composite(band.crop((0, 0, vis, band.height)),
+                                                      (int(round(x + cb[0] - 10 - bp)),
+                                                       int(round(base - self.fs * 0.8 - bp))))
+                    col = (20, 24, 22) if hit else INK
+                    d.text((x, base + (1 - e) * 18), tok, font=f_, fill=col + (int(255 * e),), anchor="ls")
+        if self.alines_txt:
             p = _prog(t, self.t_exar, 0.8)
-            ink = _tone(self.col, 0.72)
-            for li, im in enumerate(self.ex_ar):
-                q = _clamp(p * len(self.ex_ar) * 1.2 - li * 0.6)
+            n = len(self.alines)
+            for li, ((im, _, _), (x, y)) in enumerate(zip(self.alines, self.alines_xy)):
+                q = _clamp(p * n * 1.2 - li * 0.6)
                 if q > 0:
-                    layer.alpha_composite(_wipe_rtl(_colored(im.getchannel("A"), ink), _out(q)),
-                                          (int(W / 2 - im.width / 2), int(y)))
-                y += self.ex_ar_step[li]
+                    layer.alpha_composite(_wipe_rtl(im, _out(q)), (int(round(x)), int(round(y))))
         return layer
 
     def _glyph(self, ch, alpha):
@@ -641,7 +815,7 @@ class _Sheet:
         return gl
 
     def _word_img(self):
-        if getattr(self, "_wimg", None) is None:
+        if self._wimg is None:
             im = Image.new("RGBA", (int(self.word_w + 60), int(self.wf.size * 1.6)), (0, 0, 0, 0))
             dd = ImageDraw.Draw(im)
             for ch, lx in self.letters:  # the same places as while they rise in (no jump when they land)
@@ -649,45 +823,44 @@ class _Sheet:
             self._wimg = im
         return self._wimg
 
-    def _reader(self, layer, t, oy):
+    def _reader(self, layer, t):
         """On the second (and later) reading a soft light pill glides behind the word being said."""
-        boxes = None
         for times in self.reads[1:]:
             if not (times[0][0] - 0.25 <= t <= times[-1][1] + 0.35):
                 continue
-            boxes = boxes or self.boxes()
             a = _clamp(min((t - times[0][0] + 0.25) / 0.25, (times[-1][1] + 0.35 - t) / 0.35))
             j = 0
             while j < len(times) - 1 and t >= times[j + 1][0]:
                 j += 1
-            x0, y0, w0 = boxes[j]
+            _, b0, _, l0, r0 = self.tok_xy[j]
             if j < len(times) - 1:  # glide into the next word during the last 0.12 s of this one
                 g = _clamp((t - (times[j + 1][0] - 0.12)) / 0.12)
                 g = g * g * (3 - 2 * g)
-                x1, y1, w1 = boxes[j + 1]
-                if abs(y1 - y0) > 1:  # the next line: no slide across the page
+                _, b1, _, l1, r1 = self.tok_xy[j + 1]
+                if abs(b1 - b0) > 1:  # the next line: no slide across the page
                     g = 1.0 if g >= 0.5 else 0.0
-                x0, y0, w0 = x0 + (x1 - x0) * g, y0 + (y1 - y0) * g, w0 + (w1 - w0) * g
-            ph = int(self.lh * 0.94)
-            pill = Image.new("RGBA", (int(w0 + 28), ph), (0, 0, 0, 0))
-            ImageDraw.Draw(pill).rounded_rectangle([0, 0, pill.width - 1, ph - 1], int(ph * 0.3),
+                b0, l0, r0 = b0 + (b1 - b0) * g, l0 + (l1 - l0) * g, r0 + (r1 - r0) * g
+            ph = int(self.fs * 1.3)
+            pw = int(r0 - l0 + 28)
+            pill = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+            ImageDraw.Draw(pill).rounded_rectangle([0, 0, pw - 1, ph - 1], int(ph * 0.3),
                                                    fill=(255, 255, 255, int(150 * a)))
-            layer.alpha_composite(pill, (int(x0 - 14), int(oy + y0 + self.lh * 0.03)))
+            layer.alpha_composite(pill, (int(round(l0 - 14)), int(round(b0 - self.fs * 0.98))))
 
 
 class _EndSheet:
     """The 🔚 Ending as the last sheet: small intro line, the question (a [colour] line in red), the call to action
-    on a red pill."""
+    on a red pill — each item centred by its ink, the block centred on the green paper."""
 
     def __init__(self, video, k, intro, q, cta):
         self.v, self.k = video, k
         self.col = video.colour(k)
         self.seed = 11 + k
-        self.items = []  # (image, height step)
+        self.items = []  # (kind, tight image)
         sub = _tone(self.col, 0.62)
         if intro:
             im = video.ar_line(intro, 44, sub, "Bold") if ARABIC_RE.search(intro) else video.line(intro, 44, sub)
-            self.items.append(("intro", im, 70))
+            self.items.append(("intro", _tight(im)))
         n = len(q)
         size = 92 if n <= 2 else 76
         for s, col in q:
@@ -699,38 +872,42 @@ class _EndSheet:
                 while z > 44 and get_font(int(z), "Bold", video.word_font).getlength(s) > TEXT_W:
                     z -= 2
                 im = video.line(s, z, c, "Bold", video.word_font)
-            self.items.append(("q", im, int(size * 1.18)))
+            self.items.append(("q", _tight(im)))
         if cta:
-            txt = video.ar_line(cta, 46, (255, 255, 255), "Bold") if ARABIC_RE.search(cta) else \
-                video.line(cta, 44, (255, 255, 255), "Bold")
-            if txt.width > TEXT_W - 40:
-                txt = txt.resize((TEXT_W - 40, int(txt.height * (TEXT_W - 40) / txt.width)), Image.LANCZOS)
-            pw, ph = txt.width + 70, 96
+            txt = _tight(video.ar_line(cta, 46, (255, 255, 255), "Bold") if ARABIC_RE.search(cta) else
+                         video.line(cta, 44, (255, 255, 255), "Bold"))
+            if txt.width > TEXT_W - 80:
+                txt = txt.resize((TEXT_W - 80, max(1, int(txt.height * (TEXT_W - 80) / txt.width))), Image.LANCZOS)
+            ph = txt.height + 50
+            pw = txt.width + 80
             pill = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
             ImageDraw.Draw(pill).rounded_rectangle([0, 0, pw - 1, ph - 1], ph // 2, fill=PEN + (255,))
             pill.alpha_composite(txt, ((pw - txt.width) // 2, (ph - txt.height) // 2))
-            self.items.append(("cta", pill, ph + 20))
-        heights = [step for _, _, step in self.items]
-        gaps = 40 * (len(self.items) - 1)
-        self.y0 = 60 + (SHEET_H - 60 - sum(heights) - gaps) / 2
+            self.items.append(("cta", pill))
+        gaps = [44 if b[0] == "cta" else (34 if a[0] == "intro" else 26) for a, b in zip(self.items, self.items[1:])]
+        total = sum(im.height for _, im in self.items) + sum(gaps)
+        y = _sheet_mid(self.col, self.seed) - total / 2
+        self.ys = []
+        for j, (_, im) in enumerate(self.items):
+            self.ys.append(y)
+            y += im.height + (gaps[j] if j < len(gaps) else 0)
         self.D = END_LEN
         self.voices = []
         self.t_letters = 0.3
 
     def draw(self, t, pad):
         layer = Image.new("RGBA", (W, SHEET_H + 2 * pad), (0, 0, 0, 0))
-        y = pad + self.y0
-        for j, (kind, im, step) in enumerate(self.items):
+        for j, ((kind, im), y) in enumerate(zip(self.items, self.ys)):
             p = _prog(t, 0.25 + 0.22 * j, 0.5)
-            if p > 0:
-                e = _back(p, 1.2) if kind == "cta" else _out(p)
-                img = _fade(im, _clamp(p * 1.8))
-                if kind == "cta" and e != 1:
-                    s_ = max(0.05, 0.7 + 0.3 * e)
-                    img = img.resize((max(1, int(im.width * s_)), max(1, int(im.height * s_))), Image.BICUBIC)
-                cy = y + step / 2 + (1 - e) * 26 * (kind != "cta")
-                layer.alpha_composite(img, (int(W / 2 - img.width / 2), int(cy - img.height / 2)))
-            y += step + 40
+            if p <= 0:
+                continue
+            e = _back(p, 1.2) if kind == "cta" else _out(p)
+            img = _fade(im, _clamp(p * 1.8))
+            cy = y + im.height / 2 + (1 - e) * 26 * (kind != "cta")
+            if kind == "cta" and e != 1:
+                s_ = max(0.05, 0.7 + 0.3 * e)
+                img = img.resize((max(1, int(im.width * s_)), max(1, int(im.height * s_))), Image.BICUBIC)
+            layer.alpha_composite(img, (int(round(W / 2 - img.width / 2)), int(round(cy - img.height / 2))))
         return layer
 
 
@@ -754,6 +931,7 @@ EXAMPLE = {
         "audio": [],
         "audio_gain": 1.0,
         "arabic_font": "",
+        "brand_mark": "handle",
     },
 }
 
@@ -776,6 +954,8 @@ class TornPad:
         self.sent_by = readers(d.get("sent_by"))
         self.audio_gain = float(d.get("audio_gain") or 1.0)
         self.handle = str(s.get("handle") or "").strip()
+        bm = d.get("brand_mark") or "handle"
+        self.brand = bm if bm in dict((v, k) for k, v in BRANDS) else "handle"
         picked = _state["font"] if s.get("font_file") else None  # a 🎨 Style & sound font replaces the word's
         self.word_font = picked or PLAYFAIR
         from .idiom_cards import _arabic_font
@@ -818,88 +998,81 @@ class TornPad:
         f = get_font(int(size), weight, font or MONTSERRAT)
         asc, desc = f.getmetrics()
         w = int(math.ceil(f.getlength(txt)))
-        im = Image.new("RGBA", (w + 20, asc + desc + 20), (0, 0, 0, 0))
-        ImageDraw.Draw(im).text((10, 10 + asc), txt, font=f, fill=tuple(col) + (255,), anchor="ls")
+        im = Image.new("RGBA", (w + 40, asc + desc + 40), (0, 0, 0, 0))
+        ImageDraw.Draw(im).text((20, 20 + asc), txt, font=f, fill=tuple(col) + (255,), anchor="ls")
         return im
 
     def ar_line(self, txt, size, col, weight="Black"):
-        """Arabic meanings ([list] or one text) -> one image, the first on the right, red bars between them."""
+        """Arabic meanings ([list] or one text) -> one tight image, the first on the right, red bars between them;
+        every part on ONE baseline (text._ar_line: a fixed baseline per font and size)."""
         parts = [p for p in (txt if isinstance(txt, (list, tuple)) else [txt]) if p]
-        ims = [_crop_x(text_img_in(self.ar_font, p, int(size), col, weight)) for p in parts]
+        ims = [_ar_line(p, int(size), col, self.ar_font, weight) for p in parts]
         gap, bw = int(size * 0.42), max(6, int(size * 0.11))
-        total = sum(i.width for i in ims) + (len(ims) - 1) * (2 * gap + bw)
-        h = max(i.height for i in ims)
-        out = Image.new("RGBA", (max(1, total), h), (0, 0, 0, 0))
+        adv = [im.width - 2 * _AR_PAD for im in ims]
+        total = sum(adv) + (len(ims) - 1) * (2 * gap + bw)
+        h = ims[0].height
+        out = Image.new("RGBA", (int(total) + 2 * _AR_PAD, h), (0, 0, 0, 0))
+        f = get_font(int(size), weight, self.ar_font)
+        baseline = int(size * 0.25) + f.getmetrics()[0]  # as text._ar_line draws it
         d = ImageDraw.Draw(out)
-        x = total
-        for j, im in enumerate(ims):
-            x -= im.width
-            out.alpha_composite(im, (x, (h - im.height) // 2))
+        x = total + _AR_PAD
+        for j, (im, a) in enumerate(zip(ims, adv)):
+            x -= a
+            out.alpha_composite(im, (int(round(x - _AR_PAD)), 0))
             if j < len(ims) - 1:
                 x -= gap + bw
-                cy = h / 2 + size * 0.05
-                d.rounded_rectangle([x, cy - size * 0.5, x + bw, cy + size * 0.42], bw / 2, fill=PEN)
+                d.rounded_rectangle([x, baseline - size * 0.7, x + bw, baseline + size * 0.16], bw / 2, fill=PEN)
                 x -= gap
-        return out
+        return _tight(out)
 
     def ar_lines(self, means):
-        """The meanings at the biggest size that fits one line; else one meaning per line (or a long one wrapped)."""
+        """The meanings at the biggest size that fits one line; else one meaning per line (or a long one on balanced
+        lines), all centred."""
         for size in range(88, 50, -2):
             im = self.ar_line(means, size, INK)
             if im.width <= TEXT_W:
                 return [im]
         if len(means) > 1:
             return [self.ar_line([m], 58, INK) for m in means]
-        return self.ar_wrap(means[0], 64, weight="Black", col=INK)
+        words = means[0].split()
+        widths = [_ar_adv(w, 60, self.ar_font, "Black") for w in words]
+        lines, _ = _breaks(widths, _ar_space(60, self.ar_font, "Black"), TEXT_W, last_min=0.8)
+        return [self.ar_line(" ".join(words[a:b]), 60, INK) for a, b in lines or [(0, len(words))]]
 
-    def ar_wrap(self, txt, size, weight="Bold", col=INK):
-        """A long Arabic text on balanced lines (fewest lines, the widest as narrow as possible)."""
-        words = txt.split()
-        best = None
-        for lines in range(1, 5):
-            if lines > len(words):
-                break
-            # all splits into `lines` lines are too many to try: greedy by characters, then measured
-            target = len(txt) / lines
-            out, cur = [], []
-            for w in words:
-                if cur and len(" ".join(cur + [w])) > target * 1.1 and len(out) < lines - 1:
-                    out.append(cur)
-                    cur = []
-                cur.append(w)
-            out.append(cur)
-            ims = [_crop_x(text_img_in(self.ar_font, " ".join(c), size, col, weight)) for c in out]
-            best = ims
-            if max(i.width for i in ims) <= TEXT_W:
-                return ims
-        return [im.resize((min(im.width, TEXT_W), int(im.height * min(1, TEXT_W / im.width))), Image.LANCZOS)
-                for im in best]
-
-    def kicker(self, layer, d, y, k, t, col, dur):
-        """WORD 01 / 05 + the progress dashes (the current one fills while the sheet is up)."""
-        if k >= self.n:  # the ending sheet: no counter
-            return
+    def kicker_img(self, k, col):
+        """(WORD 01 / 05 as a tight letter-spaced image, the height of the text + dashes) — None on the ending."""
         kf = get_font(26, "Bold", INTER)
         txt = f"WORD  {k + 1:02d} / {self.n:02d}"
-        tw = kf.getlength(txt) + 3 * len(txt)
-        a = _out(_prog(t, 0.05 if k else 0.35, 0.4))
-        x = W / 2 - tw / 2
+        im = Image.new("RGBA", (int(kf.getlength(txt) + 4 * len(txt) + 40), 60), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        x = 20
         for ch in txt:
-            d.text((x, y), ch, font=kf, fill=col + (int(255 * a),))
+            d.text((x, 40), ch, font=kf, fill=tuple(col) + (255,), anchor="ls")
             x += kf.getlength(ch) + 3
-        seg = min(46, 640 / self.n - 10)
+        im = _tight(im)
+        return im, im.height + 16 + 6
+
+    def draw_kicker(self, layer, d, kick, xy, k, t, col, dur):
+        """The counter text, then the progress dashes under it (the current one fills while the sheet is up)."""
+        im, h = kick
+        a = _out(_prog(t, 0.05 if k else 0.35, 0.4))
+        if a <= 0:
+            return
+        x, y = xy
+        layer.alpha_composite(_fade(im, a), (int(round(x)), int(round(y))))
+        seg = min(46.0, 640 / self.n - 10)
         gp = 10
         bx = W / 2 - (self.n * seg + (self.n - 1) * gp) / 2
-        by = y + 44
+        by = y + im.height + 16
         for j in range(self.n):
             x0 = bx + j * (seg + gp)
-            d.rounded_rectangle([x0, by, x0 + seg, by + 6], 3, fill=col + (int(70 * a),))
+            d.rounded_rectangle([x0, by, x0 + seg, by + 6], 3, fill=tuple(col) + (int(70 * a),))
             fill = 1.0 if j < k else (_prog(t, 0.2, dur - TEAR - 0.4) if j == k else 0)
             if fill > 0:
                 d.rounded_rectangle([x0, by, x0 + max(6, seg * fill), by + 6], 3, fill=PEN + (int(255 * a),))
 
     def _header(self):
-        """The title (+ Arabic subtitle) over the pad, above the sheets."""
+        """The title (+ subtitle) over the pad, each line centred by its ink."""
         if not (self.title or self.subtitle):
             return None
         ims = []
@@ -907,37 +1080,35 @@ class TornPad:
             z = 64
             while z > 36 and get_font(z, "Bold", self.word_font).getlength(self.title) > TEXT_W:
                 z -= 2
-            ims.append(self.line(self.title, z, INK_WORD, "Bold", self.word_font))
+            ims.append(_tight(self.line(self.title, z, INK_WORD, "Bold", self.word_font)))
         if self.subtitle:
             ims.append(self.ar_line(self.subtitle, 40, (96, 104, 96), "Bold") if ARABIC_RE.search(self.subtitle)
-                       else self.line(self.subtitle, 36, (96, 104, 96), "SemiBold"))
-        h = sum(i.height for i in ims) - 10 * (len(ims) - 1)
+                       else _tight(self.line(self.subtitle, 36, (96, 104, 96), "SemiBold")))
+        gap = 18
+        h = sum(i.height for i in ims) + gap * (len(ims) - 1)
         out = Image.new("RGBA", (W, h), (0, 0, 0, 0))
         y = 0
         for im in ims:
-            out.alpha_composite(im, (int(W / 2 - im.width / 2), y))
-            y += im.height - 10
+            out.alpha_composite(im, (int(round(W / 2 - im.width / 2)), y))
+            y += im.height + gap
         return out
 
     def _handle(self):
-        if not self.handle:
+        """The brand under the pad (`brand_mark`): the handle alone (default: Facebook / Reels already show the
+        page's logo next to its name), the logo + the handle, or nothing."""
+        if self.brand == "none" or not self.handle:
             return None
-        f = get_font(30, "SemiBold", INTER)
-        tw = int(f.getlength(self.handle))
-        lg = None
-        if os.path.isfile(LOGO):
-            lg = Image.open(LOGO).convert("RGBA")
-            lg = lg.resize((44, max(1, int(44 * lg.height / lg.width))), Image.LANCZOS)
-        off = 58 if lg else 0
-        im = Image.new("RGBA", (tw + off + 10, 52), (0, 0, 0, 0))
-        if lg:
-            im.alpha_composite(lg, (0, (im.height - lg.height) // 2))
-        if ARABIC_RE.search(self.handle):
-            txt = _crop_x(text_img_in(self.ar_font, self.handle, 30, (70, 80, 70), "Bold"))
-            im = im.resize((off + txt.width + 10, max(52, txt.height)))
-            im.alpha_composite(txt, (off, (im.height - txt.height) // 2))
-        else:
-            ImageDraw.Draw(im).text((off, im.height / 2), self.handle, font=f, fill=(70, 80, 70, 255), anchor="lm")
+        col = (86, 96, 86)
+        txt = _tight(self.ar_line(self.handle, 30, col, "Bold") if ARABIC_RE.search(self.handle)
+                     else self.line(self.handle, 30, col, "SemiBold", INTER))
+        if self.brand != "logo" or not os.path.isfile(LOGO):
+            return txt
+        lg = Image.open(LOGO).convert("RGBA")
+        lg = lg.resize((46, max(1, int(46 * lg.height / lg.width))), Image.LANCZOS)
+        h = max(lg.height, txt.height)
+        im = Image.new("RGBA", (lg.width + 14 + txt.width, h), (0, 0, 0, 0))
+        im.alpha_composite(lg, (0, (h - lg.height) // 2))
+        im.alpha_composite(txt, (lg.width + 14, (h - txt.height) // 2))
         return im
 
     # ------------------------------------------------------------ frame

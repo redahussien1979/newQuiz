@@ -382,13 +382,13 @@ def _prep_in(font, txt):
         _state["font"] = old
 
 
-def _ar_line(txt, size, col, font):
+def _ar_line(txt, size, col, font, weight="Bold"):
     """Arabic text on a FIXED baseline: every image of the same font and size has the same height and its baseline at
     the same y (the font's ascent), so words and lines drawn separately still sit on one baseline. Shaped right to
     left by the app's engine (RAQM, or arabic-reshaper + python-bidi without it). Width = advance + _AR_PAD each side."""
     font = _ar_font_for(font, txt)
     t2, kw = _prep_in(font, txt)
-    f = get_font(int(size), "Bold", font)
+    f = get_font(int(size), weight, font)
     asc, desc = f.getmetrics()
     d0 = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     w = int(math.ceil(d0.textlength(t2, font=f, **kw)))
@@ -398,21 +398,21 @@ def _ar_line(txt, size, col, font):
     return im
 
 
-def _ar_justified(lines, size, col, font, width):
+def _ar_justified(lines, size, col, font, width, weight="Bold"):
     """Line images exactly `width` wide (the last line: natural width), words placed right to left on one baseline.
     Slack goes into kashidas first (at most 2 per word, the longest words first, one round at a time so they spread
     over the line), the rest evenly into the spaces."""
     out = []
-    adv = lambda t: _ar_line(t, size, col, font).width - 2 * _AR_PAD
+    adv = lambda t: _ar_line(t, size, col, font, weight).width - 2 * _AR_PAD
     space = max(4, adv("ب ب") - 2 * adv("ب"))
     tw = max(1, adv("بـب") - adv("بب"))
     kashida = _has_tatweel(font)
     for n, line in enumerate(lines):
         words = line.split()
         if n == len(lines) - 1 or len(words) < 2:
-            out.append(_ar_line(line, size, col, font))
+            out.append(_ar_line(line, size, col, font, weight))
             continue
-        imgs = [_ar_line(w, size, col, font) for w in words]
+        imgs = [_ar_line(w, size, col, font, weight) for w in words]
         slack = width - sum(im.width - 2 * _AR_PAD for im in imgs) - space * (len(words) - 1)
         if kashida and slack > 0:
             pts = [_kashida_points(w) for w in words]
@@ -430,7 +430,7 @@ def _ar_justified(lines, size, col, font, width):
             for k, c in enumerate(count):
                 if c:
                     j = pts[k][0]
-                    imgs[k] = _ar_line(words[k][:j] + TATWEEL * c + words[k][j:], size, col, font)
+                    imgs[k] = _ar_line(words[k][:j] + TATWEEL * c + words[k][j:], size, col, font, weight)
         inner = [im.width - 2 * _AR_PAD for im in imgs]
         gap = (width - sum(inner)) / (len(words) - 1)
         line_im = Image.new("RGBA", (width + 2 * _AR_PAD, imgs[0].height), (0, 0, 0, 0))

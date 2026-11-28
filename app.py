@@ -95,7 +95,7 @@ WV_KEYS = ["title", "subtitle", "words", "design", "pace", "pick", "recap", "aud
 IC_KEYS = ["title", "subtitle", "items", "look", "marker", "transition", "pace", "touches", "arabic_font", "audio",
            "audio_gain", "voice_on", "voice_id"]
 TP_KEYS = ["title", "subtitle", "words", "sheet_color", "word_by", "sent_by", "voice_on", "voice1", "voice2", "audio",
-           "audio_gain", "arabic_font"]
+           "audio_gain", "arabic_font", "brand_mark"]
 KEYS = {"quiz": QZ_KEYS, "mcq": MQ_KEYS, "vocab": VC_KEYS, "text": TX_KEYS, "news": NW_KEYS, "wordsvideo": WV_KEYS,
         "idiomcards": IC_KEYS, "tornpad": TP_KEYS}
 MEDIA_FIELDS = {"music_file", "voice_file", "font_file", "image", "answer_image", "outline", "reading_audio", "logo",
@@ -117,7 +117,7 @@ DEFAULTS = {"colors": "style", "narration_gain": 1.0, "timer_fx": [], "unit": ""
             "design": "paper", "pick": "roulette", "voice_on": True, "arabic_font": "", "ar_style": "brush", "kind": "auto", "ex_reveal": "redbold", "pop_fx": "confetti",
             "touches": ["corner", "deck", "tint", "grain", "focus", "brand", "stress", "number", "drift"],
             "bubble_style": "pill", "sheet_color": "sage", "word_by": "12", "sent_by": "12", "voice1": "",
-            "voice2": ""}  # for projects saved before these options existed
+            "voice2": "", "brand_mark": "handle"}  # for projects saved before these options existed
 
 NARRATION_HELP = """**Read the questions aloud with your own recordings.** Name each clip after what it reads:
 `q1` = question 1 · `q1a` `q1b` `q1c` `q1d` = its options (or `q1_1` … `q1_4`) · `q1e` = its explanation.
@@ -2536,6 +2536,9 @@ def torn_pad_ui():
         ar_menu = [(f"{tpad.AR_DEFAULT} (default)", "")] + [c for c in word_posts.font_menus()[1][1:]
                                                            if c[1] != tpad.AR_DEFAULT]
         ar_font = gr.Dropdown(ar_menu, value="", label="Arabic font", info="Any font of your library that writes Arabic")
+        brand = gr.Dropdown(tpad.BRANDS, value="handle", label="Brand under the pad",
+                            info="The handle comes from 🎨 Style & sound. Facebook / Reels already show your page logo "
+                                 "next to its name — a second logo in the video looks doubled")
     gr.Markdown("**🗣️ Two voices** — pick them from your ElevenLabs account (🔄 Load my voices). Empty = the saved "
                 "voice (🔑 ElevenLabs voice in 📖 English Texts → ✍️ Paragraphs).")
     sv = el.load_settings(DATA_DIR)
@@ -2596,7 +2599,7 @@ def torn_pad_ui():
     zipb = gr.DownloadButton("📦 Download all (.zip)", visible=False, variant="primary")
     files = gr.File(label="Rendered videos — each one appears here as soon as it finishes", file_count="multiple",
                     visible=False, height=260)
-    return dict(proj=proj, title=title, sub=sub, words=words, look=look, ar_font=ar_font, v1=v1, v2=v2,
+    return dict(proj=proj, title=title, sub=sub, words=words, look=look, ar_font=ar_font, brand=brand, v1=v1, v2=v2,
                 v1_hear=v1_hear, v2_hear=v2_hear, v_load=v_load, word_by=word_by, sent_by=sent_by, voice=voice,
                 audio=audio, v_status=v_status, v_make=v_make, v_pick=v_pick, v_new=v_new, v_back=v_back,
                 v_play=v_play, v_note=v_note, gain=gain, sheet=sheet, tab=tab, start=start, count=count, per=per,
@@ -2606,7 +2609,7 @@ def torn_pad_ui():
 def tp_fields(ui):
     """The Torn pad's own fields in TP_KEYS order."""
     return [ui["title"], ui["sub"], ui["words"], ui["look"], ui["word_by"], ui["sent_by"], ui["voice"], ui["v1"],
-            ui["v2"], ui["audio"], ui["gain"], ui["ar_font"]]
+            ui["v2"], ui["audio"], ui["gain"], ui["ar_font"], ui["brand"]]
 
 
 def wire_torn_pad(ui, pv, fields):
