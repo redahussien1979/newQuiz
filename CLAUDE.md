@@ -3,7 +3,7 @@
 Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / TikTok / Reels) with Pillow + NumPy + FFmpeg.
 
 ## Layout
-- `engine/templates/` — `timeline.py` (Timeline Collision), `quiz.py` (Clue Quiz), `mcq.py` (Multiple Choice),
+- `engine/templates/` — `timeline.py` (Timeline Collision), `quiz.py` (Clue Quiz), `mcq.py` (Multiple Choice), `torn_pad.py`,
   `vocab.py` (English Words); registered in `engine/templates/__init__.py`
 - `engine/core.py` — drawing, text (Arabic shaping), themes, easing, encoding
 - `engine/audio.py` — synthesized SFX, music beds, voiceover ducking, mixing
@@ -168,7 +168,26 @@ Gradio app (`app.py`) that renders 1080x1920 animated Shorts (YouTube Shorts / T
   = each video's own sheet Title / Subtitle, typed text = every video) → files + zip in OUT_DIR/words_videos_*. Looks `DESIGNS` (paper default / sky / mint / blush / slate = a little dark; the user does not want
   glass, aurora or dark looks); fonts Poppins (a 🎨 Style & sound font replaces it) + `wordsvideo.arabic_font` (any
   library family, default `AR_DEFAULT` = Noto Sans Arabic, `_arabic_font`)
-- `engine/templates/idiom_cards.py` — template `idiomcards`, English Words sub-tab 🃏 Idiom cards (after 🎬 Words video;
+- `engine/templates/torn_pad.py` — template `tornpad`, English Words sub-tab 📄 Torn pad (right after 🎬 Words video;
+  `app.torn_pad_ui` / `wire_torn_pad`, own project bar, shares 🎨 Style & sound + 🔚 Ending; preview =
+  `preview_panel(..., torn_pad=True)` → `pv["tp"]` in `tp_col`; fields preset at build time). A tear-off pad: one torn
+  sheet per word (`_sheet` = torn top + bottom edges with paper fibres, `LOOKS` / `sheet_color`, "cycle" = one colour per
+  sheet) on a light paper background; per sheet (`_Sheet`, local time): letters rise in (Playfair; a 🎨 font replaces
+  it) while Voice 1 says the word, a red pen loop draws itself (`_pen_loop`) while Voice 2 says it, Arabic meanings
+  wipe in RTL (`ar_line`: red bars between meanings, biggest size on one line), the sentence appears word by word on
+  the first reading's word times (`words_video.clip_word_times`; the word = `find_phrase` or *stars*, yellow
+  `_marker_band` swipe when said), Arabic sentence wipes in, later readings get a gliding white pill (`_reader`),
+  then the sheet is ripped off (`TEAR`, rip sound) over the next one; 🔚 Ending = `_EndSheet`. No IPA, no divider
+  (the user's choice). `tornpad.words` = `English | Arabic meaning(s, " / ") | English sentence | Arabic sentence`
+  (`parse_words`: Arabic before the sentence = meanings, after = translation). Two voices: `voice1` / `voice2` (empty
+  = the saved 🔑 voice), `word_by` / `sent_by` (`READERS`: "12" / "21" / "1" / "2"); clips `w<k>` / `w<k>e` (Voice 1)
+  and `w<k>_v2` / `w<k>e_v2` (Voice 2) = `tpad.clip_key` / `clip_name`; `word_import.pad_jobs` / `pad_voices` /
+  `pad_take` (`_job_take` = the take logic shared with Idiom cards' `phrase_take`; `_pad_timings` saves a sentence
+  take's word timings); `app._tp_voices` makes the missing clips before Render / Quick motion. Excel `read_sheet`
+  (English | Arabic (| = several) | Sentence | Arabic sentence | Title | Subtitle), template
+  `projects/torn_pad_template.xlsx`, Render all = `_stream_batch` → OUT_DIR/torn_pad_* (4 words per video by default:
+  ~14 s a word with both voices reading the sentence)
+- `engine/templates/idiom_cards.py` — template `idiomcards`, English Words sub-tab 🃏 Idiom cards (after 📄 Torn pad;
   `app.idiom_cards_ui` / `wire_idiom_cards`, own project bar, shares 🎨 Style & sound + 🔚 Ending; its preview =
   `preview_panel(..., idiom_cards=True)` → `pv["ic"]` in `ic_col`, `right_side` shows one of post / wv / ic / video;
   its own fields are `preset` at build time). Felt board (`LOOKS`, `_felt` cached per look, camera drift) with a white
